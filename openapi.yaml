@@ -93,7 +93,8 @@ paths:
         С sandbox выбирается роль в своём демо. inviteCode без sandbox создаёт только
         guest в scope приглашения, игнорируя запрошенные привилегии; live-приглашение
         даёт 403. Демо-сессия 24 часа, scope хранится 7 суток. Не более MAX_DEMO_SPACES
-        (по умолчанию 1000) demo scope.
+        (по умолчанию 1000) demo scope. DEMO_ENABLED=false также отзывает существующие
+        демо-сессии и скрывает публичные демо-приглашения.
       responses:
         '200':
           description: Успешно
@@ -497,6 +498,59 @@ paths:
           "$ref": "#/components/responses/500"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/export-link":
+    post:
+      operationId: createExportLink
+      summary: Создать одноразовую ссылку CSV для MAX Bridge
+      description: Bearer owner/restaurant, только approved. Тело не требуется. TTL60
+        секунд, одна действующая ссылка на user/event; новая заменяет старую. Передать
+        url в WebApp.downloadFile(url, filename) по пользовательскому клику.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      responses:
+        '200':
+          description: Одноразовая ссылка
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ExportLink"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '500':
+          "$ref": "#/components/responses/500"
+  "/api/downloads/{downloadToken}":
+    get:
+      operationId: consumeExportLink
+      summary: Однократно скачать CSV по короткоживущей ссылке
+      description: 'Без Bearer: token в пути является capability. Проверяются срок,
+        действующая роль владельца, scope, approved и revision. Ссылка расходуется
+        атомарно; неизвестная, использованная, истёкшая или отозванная возвращает404.
+        Cache-Control private,no-store; Referrer-Policy no-referrer.'
+      security: []
+      parameters:
+      - "$ref": "#/components/parameters/downloadToken"
+      responses:
+        '200':
+          description: CSV-файл
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="banquet-kitchen.csv"
+          content:
+            text/csv:
+              schema:
+                type: string
+        '404':
+          "$ref": "#/components/responses/404"
+        '500':
+          "$ref": "#/components/responses/500"
 components:
   securitySchemes:
     SessionBearer:
@@ -533,6 +587,13 @@ components:
       required: true
       schema:
         type: string
+    downloadToken:
+      name: downloadToken
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{43}$"
   schemas:
     Error:
       type: object
@@ -1234,6 +1295,15 @@ components:
           type: boolean
       required:
       - ok
+    ExportLink:
+      type: object
+      required:
+      - url
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Одноразовая capability на 60 секунд; не логировать и не публиковать.
   responses:
     '400':
       description: Некорректные данные, JSON или отсутствие expectedRevision.

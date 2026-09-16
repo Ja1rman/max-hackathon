@@ -10,7 +10,7 @@ api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 2
+  user_version: 3
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -130,6 +130,18 @@ tables:
       created_at: INTEGER NOT NULL (Unix milliseconds)
     purpose: SHA-256 идентичности события. INSERT OR IGNORE до API-вызова, at-most-once
       welcome, хранение7д.
+  download_tokens:
+    columns:
+      token_hash: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      event_revision: INTEGER NOT NULL
+      expires_at: INTEGER NOT NULL (Unix milliseconds)
+    unique:
+    - - event_id
+      - user_id
+    purpose: SHA256 одноразовой capability60сек; новая ссылка заменяет предыдущую
+      для пользователя/события; consume проверяет scope, роль, status и revision.
 json_schema_references:
   MenuItem: openapi.yaml#/components/schemas/MenuItem
   API_event: openapi.yaml#/components/schemas/Event
@@ -166,6 +178,9 @@ authorization:
   csv: owner или restaurant, только approved.
   demo_invite: Создаёт только guest; demo запрещён доступ к live. Sandbox — секрет
     переключения ролей только собственной демонстрации.
+  export_link: 'POST /api/events/{id}/export-link: owner/restaurant approved -> {url}.
+    GET /api/downloads/{token}: без bearer, одноразовая capability60сек; проверяются
+    permissions, scope, approved, revision;404 на отозванную/использованную/истёкшую.'
 lifecycle:
   initial: collecting
   selection_open: status=collecting AND deadline > now
@@ -215,6 +230,9 @@ retention:
   housekeeping: 'При старте и затем раз в час: истёкшие сессии, старые demo scopes
     с каскадными данными, старые webhook claims.'
   live_events: Автоматический срок удаления отсутствует.
+  export_link_seconds: 60
+  demo_disabled: DEMO_ENABLED=false отзывает выданные demo sessions и скрывает demo
+    invite previews.
 operational:
   database_default: data/banquet.sqlite
   docker_database: "/data/banquet.sqlite in banquet_data"
