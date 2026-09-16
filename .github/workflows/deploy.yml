@@ -46,7 +46,7 @@ jobs:
               printf '%s\n' '### Автоматическое развёртывание пропущено' ''
               printf '%s\n' 'Проверки кода выполнены. Этот запуск не обновлял сервер: не настроены repository secrets.' ''
               printf -- '- `%s`\n' "${missing[@]}"
-              printf '\n%s\n' 'Владелец должен создать отдельный SSH-ключ для развёртывания, добавить публичную часть на сервер, а приватную — в repository secret DEPLOY_SSH_KEY. Личный SSH-ключ пользователя не переносится в GitHub.'
+              printf '\n%s\n' 'Нужно настроить отдельный SSH-ключ для развёртывания: публичную часть добавить на сервер, а приватную — в repository secret DEPLOY_SSH_KEY. Личный SSH-ключ пользователя не переносится в GitHub.'
               printf '\n%s\n' 'После настройки секретов повторите workflow Deploy production для main. Инструкция: docs/DEPLOYMENT.md.'
             } >> "$GITHUB_STEP_SUMMARY"
             echo '::notice title=Deployment skipped::Repository deployment secrets are missing. No deployment was attempted; see the job summary.'
