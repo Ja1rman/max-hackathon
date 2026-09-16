@@ -1,0 +1,1299 @@
+---
+openapi: 3.1.0
+info:
+  title: За столом — API
+  version: 1.0.0
+  description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
+    — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
+    <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
+    доверяет X-Real-IP только за настроенным reverse proxy. Неизвестные JSON-поля
+    не назначают роли, цену или scope. Отсутствуют удаление, отмена, reopen, оплата
+    и интеграции POS. Публичный server URL — назначение развёртывания, не заявление
+    о его готовности.'
+servers:
+- url: https://mail.lonelycraft.ru/banquet
+  description: Назначение production через nginx, который удаляет /banquet
+- url: http://localhost:3100
+  description: Локальный Docker Compose
+- url: http://localhost:3000
+  description: Прямой Node.js backend
+security:
+- SessionBearer: []
+paths:
+  "/healthz":
+    get:
+      operationId: health
+      summary: Проверка процесса и SQLite
+      description: ''
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Health"
+        '500':
+          "$ref": "#/components/responses/500"
+      security: []
+  "/api/config":
+    get:
+      operationId: config
+      summary: Публичная конфигурация интерфейса
+      description: ''
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Config"
+        '500':
+          "$ref": "#/components/responses/500"
+      security: []
+  "/api/auth/max":
+    post:
+      operationId: loginMax
+      summary: Обмен подписанных данных MAX на сессию
+      description: HMAC-SHA256 по алгоритму MAX; auth_date не старше часа и не более
+        30 секунд в будущем. MAX user ID из RESTAURANT_ADMIN_IDS получает restaurant,
+        остальные organizer. Live-сессия 7 суток; не более 10 активных сессий на пользователя.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Session"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '429':
+          "$ref": "#/components/responses/429"
+        '503':
+          "$ref": "#/components/responses/503"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MaxLogin"
+      security: []
+  "/api/auth/demo":
+    post:
+      operationId: loginDemo
+      summary: Создать демо, сменить роль или войти по демо-приглашению
+      description: Без sandbox создаётся отдельный scope с синтетическими данными.
+        С sandbox выбирается роль в своём демо. inviteCode без sandbox создаёт только
+        guest в scope приглашения, игнорируя запрошенные привилегии; live-приглашение
+        даёт 403. Демо-сессия 24 часа, scope хранится 7 суток. Не более MAX_DEMO_SPACES
+        (по умолчанию 1000) demo scope.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/DemoSession"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '429':
+          "$ref": "#/components/responses/429"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/DemoLogin"
+      security: []
+  "/api/max/webhook":
+    post:
+      operationId: maxWebhook
+      summary: Принять событие MAX и ответить ссылкой Mini App
+      description: Проверка секрета до чтения тела. Persistent claim перед ответом
+        обеспечивает не более одной попытки welcome на событие. Тайм-аут MAX API 8
+        секунд; ошибка доставки после claim подтверждается 200 без автоматической
+        повторной отправки.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/WebhookAck"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '503':
+          "$ref": "#/components/responses/503"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MaxUpdate"
+      security:
+      - MaxWebhookSecret: []
+  "/api/invites/{code}":
+    get:
+      operationId: previewInvite
+      summary: Посмотреть сведения и снимок меню по приглашению
+      description: 'Публично: основные сведения мероприятия и меню. Имена, пожелания,
+        бюджет, сумма и сводка участников отсутствуют. Просмотр доступен и после закрытия
+        сбора, пока мероприятие существует.'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/InvitePreview"
+        '404':
+          "$ref": "#/components/responses/404"
+        '500':
+          "$ref": "#/components/responses/500"
+      security: []
+      parameters:
+      - "$ref": "#/components/parameters/code"
+  "/api/me":
+    get:
+      operationId: me
+      summary: Текущий пользователь
+      description: ''
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '401':
+          "$ref": "#/components/responses/401"
+        '500':
+          "$ref": "#/components/responses/500"
+  "/api/restaurants":
+    get:
+      operationId: restaurants
+      summary: Рестораны и текущий каталог своего scope
+      description: Все роли видят каталог только своего scope. sampleMenu обозначает
+        пример каталога и сбрасывается при первой его правке.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/Restaurant"
+        '401':
+          "$ref": "#/components/responses/401"
+        '500':
+          "$ref": "#/components/responses/500"
+  "/api/events":
+    get:
+      operationId: events
+      summary: Доступные текущему пользователю банкеты
+      description: Владелец, участник или ресторанная роль в том же scope. Сортировка
+        created_at DESC; без пагинации.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/Event"
+        '401':
+          "$ref": "#/components/responses/401"
+        '500':
+          "$ref": "#/components/responses/500"
+    post:
+      operationId: createEvent
+      summary: Создать банкет и снимок доступного меню
+      description: Только organizer. Создание события и event_menu в транзакции. Не
+        более 30 событий на демо-организатора или 500 на live-организатора.
+      responses:
+        '201':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Event"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '429':
+          "$ref": "#/components/responses/429"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/EventCreate"
+  "/api/events/{eventId}":
+    get:
+      operationId: event
+      summary: Банкет, персональный выбор и разрешённая сводка
+      description: ''
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/EventDetail"
+        '401':
+          "$ref": "#/components/responses/401"
+        '404':
+          "$ref": "#/components/responses/404"
+        '500':
+          "$ref": "#/components/responses/500"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/invites/{code}/join":
+    post:
+      operationId: joinInvite
+      summary: Присоединить текущего пользователя к банкету
+      description: Тело не требуется и не обрабатывается. Повтор для уже присоединившегося
+        идемпотентен, в том числе после утверждения/дедлайна. Новое присоединение
+        только в открытый банкет своего scope, максимум 1000 участников.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Joined"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '500':
+          "$ref": "#/components/responses/500"
+      parameters:
+      - "$ref": "#/components/parameters/code"
+  "/api/events/{eventId}/selection":
+    put:
+      operationId: saveSelection
+      summary: Полностью заменить собственный выбор
+      description: До дедлайна, только collecting. Нужно ранее присоединиться; владелец
+        присоединяется автоматически. Обновление транзакционное, revision увеличивается,
+        цена берётся из event_menu.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SelectionSaved"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SelectionPut"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/approve":
+    post:
+      operationId: approveEvent
+      summary: Утвердить заказ от имени владельца
+      description: Только owner. Для collecting необходима текущая expectedRevision
+        и минимум один submitted гость. Можно утвердить после дедлайна, без всех ответов,
+        сверх ориентира бюджета. Already approved возвращается без изменения. Менять
+        выбор после утверждения нельзя.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Event"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Approve"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/restaurants/{restaurantId}/menu":
+    post:
+      operationId: createMenuItem
+      summary: Добавить блюдо в каталог
+      description: Только restaurant в своём scope; максимум 500 блюд. Это изменение
+        текущего каталога, не снимков существующих событий.
+      responses:
+        '201':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MenuItem"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '429':
+          "$ref": "#/components/responses/429"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MenuItemCreate"
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+  "/api/restaurants/{restaurantId}/menu/{itemId}":
+    patch:
+      operationId: patchMenuItem
+      summary: Изменить блюдо в каталоге
+      description: ''
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MenuItem"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MenuItemPatch"
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      - "$ref": "#/components/parameters/itemId"
+  "/api/events/{eventId}/export.csv":
+    get:
+      operationId: exportCsv
+      summary: Скачать утверждённый заказ для кухни
+      description: 'Только owner или restaurant того же scope, статус approved. UTF-8
+        BOM, разделитель ;, CRLF. Секции: банкет/дата, суммарные количества/суммы,
+        позиции по гостям с пожеланиями. CSV суммы в рублях с 2 знаками; формулы в
+        текстовых полях нейтрализуются.'
+      responses:
+        '200':
+          description: CSV-файл
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              example: attachment; filename="banquet-kitchen.csv"
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '500':
+          "$ref": "#/components/responses/500"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+components:
+  securitySchemes:
+    SessionBearer:
+      type: http
+      scheme: bearer
+      description: Токен приложения из /api/auth/max или /api/auth/demo, не MAX_BOT_TOKEN.
+    MaxWebhookSecret:
+      type: apiKey
+      in: header
+      name: X-Max-Bot-Api-Secret
+  parameters:
+    code:
+      name: code
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[A-Za-z0-9_-]{24}$"
+    eventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+    restaurantId:
+      name: restaurantId
+      in: path
+      required: true
+      schema:
+        type: string
+    itemId:
+      name: itemId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+      - error
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+      required:
+      - status
+    Config:
+      type: object
+      properties:
+        demoEnabled:
+          type: boolean
+        maxConfigured:
+          type: boolean
+          description: Наличие MAX_BOT_TOKEN; не доказывает доступность webhook, модерацию
+            или правильность токена.
+        botUsername:
+          type: string
+      required:
+      - demoEnabled
+      - maxConfigured
+      - botUsername
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        name:
+          type: string
+          maxLength: 160
+        role:
+          type: string
+          enum:
+          - organizer
+          - guest
+          - restaurant
+        demo:
+          type: boolean
+      required:
+      - id
+      - name
+      - role
+      - demo
+    Session:
+      type: object
+      properties:
+        token:
+          type: string
+          description: Bearer-секрет приложения. Хранится в БД только в SHA-256; не
+            токен MAX.
+        user:
+          "$ref": "#/components/schemas/User"
+      required:
+      - token
+      - user
+    DemoSession:
+      allOf:
+      - "$ref": "#/components/schemas/Session"
+      - type: object
+        properties:
+          sandbox:
+            type:
+            - string
+            - 'null'
+            description: Секрет демо-пространства для переключения ролей; null при
+              входе гостя по приглашению.
+          eventId:
+            type: string
+            description: Непрозрачный идентификатор из ответа API; не интерпретировать
+              как UUID без префикса.
+        required:
+        - sandbox
+    MaxLogin:
+      type: object
+      properties:
+        initData:
+          type: string
+          minLength: 1
+          maxLength: 16384
+          description: Исходная строка window.WebApp.initData без повторной JSON-сериализации
+            вложенного user.
+      required:
+      - initData
+    DemoLogin:
+      type: object
+      properties:
+        role:
+          type: string
+          enum:
+          - organizer
+          - guest
+          - restaurant
+          default: organizer
+        sandbox:
+          type: string
+          maxLength: 128
+          description: Для продолжения собственного демо. Не передавать null.
+        inviteCode:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{24}$"
+        name:
+          type: string
+          maxLength: 80
+          description: Имя нового демо-гостя по приглашению; по умолчанию Новый гость.
+    MenuItem:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        category:
+          type: string
+          minLength: 1
+          maxLength: 80
+        price:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Цена за порцию, целые копейки.
+        weight:
+          type: string
+          maxLength: 40
+        emoji:
+          type: string
+          maxLength: 12
+        allergens:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+          maxItems: 20
+        available:
+          type: boolean
+        vegetarian:
+          type: boolean
+      required:
+      - id
+      - name
+      - description
+      - category
+      - price
+      - weight
+      - emoji
+      - allergens
+      - available
+      - vegetarian
+    MenuItemCreate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        category:
+          type: string
+          minLength: 1
+          maxLength: 80
+        price:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Цена за порцию, целые копейки.
+        weight:
+          type: string
+          maxLength: 40
+        emoji:
+          type: string
+          maxLength: 12
+        allergens:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+          maxItems: 20
+        available:
+          type: boolean
+        vegetarian:
+          type: boolean
+      required:
+      - name
+      - category
+      - price
+      description: "Описание/вес по умолчанию пустые, emoji \U0001F37D️, available
+        true, vegetarian false, allergens []."
+    MenuItemPatch:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        description:
+          type: string
+          maxLength: 500
+        category:
+          type: string
+          minLength: 1
+          maxLength: 80
+        price:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: Цена за порцию, целые копейки.
+        weight:
+          type: string
+          maxLength: 40
+        emoji:
+          type: string
+          maxLength: 12
+        allergens:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 80
+          maxItems: 20
+        available:
+          type: boolean
+        vegetarian:
+          type: boolean
+      description: Частичная правка каталога; снимки меню существующих банкетов не
+        изменяются.
+    Restaurant:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        name:
+          type: string
+        description:
+          type: string
+        address:
+          type: string
+        sampleMenu:
+          type: boolean
+        menu:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MenuItem"
+      required:
+      - id
+      - name
+      - description
+      - address
+      - sampleMenu
+      - menu
+    PublicEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        title:
+          type: string
+        date:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - collecting
+          - approved
+        restaurantId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        restaurantName:
+          type: string
+        demo:
+          type: boolean
+        sampleMenu:
+          type: boolean
+        menuSnapshot:
+          const: true
+          type: boolean
+      required:
+      - id
+      - title
+      - date
+      - deadline
+      - status
+      - restaurantId
+      - restaurantName
+      - demo
+      - sampleMenu
+      - menuSnapshot
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        title:
+          type: string
+        date:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum:
+          - collecting
+          - approved
+        restaurantId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        restaurantName:
+          type: string
+        demo:
+          type: boolean
+        sampleMenu:
+          type: boolean
+        menuSnapshot:
+          const: true
+          type: boolean
+        expectedGuests:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        total:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+        responded:
+          type: integer
+          minimum: 0
+        joined:
+          type: integer
+          minimum: 0
+        approvedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        isOwner:
+          type: boolean
+        revision:
+          type: integer
+          minimum: 0
+        budget:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+        inviteCode:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{24}$"
+      required:
+      - id
+      - title
+      - date
+      - deadline
+      - status
+      - restaurantId
+      - restaurantName
+      - demo
+      - sampleMenu
+      - menuSnapshot
+      - expectedGuests
+      - total
+      - responded
+      - joined
+      - approvedAt
+      - isOwner
+      - revision
+      description: budget и inviteCode присутствуют только для владельца или ресторанной
+        роли. total/responded/joined доступны также присоединившемуся гостю.
+    EventCreate:
+      type: object
+      properties:
+        restaurantId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        title:
+          type: string
+          minLength: 1
+          maxLength: 120
+        date:
+          type: string
+          format: date-time
+        deadline:
+          type: string
+          format: date-time
+        expectedGuests:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        budget:
+          type: integer
+          minimum: 0
+          maximum: 10000000000
+          default: 0
+          description: Копейки. Мягкий ориентир без блокировки превышения.
+      required:
+      - restaurantId
+      - title
+      - date
+      - deadline
+      - expectedGuests
+      description: date и deadline должны быть в будущем; deadline не позже date.
+        Выбранный ресторан должен иметь хотя бы одно доступное блюдо.
+    SelectionItem:
+      type: object
+      properties:
+        menuItemId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 20
+        price:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+        name:
+          type: string
+      required:
+      - menuItemId
+      - quantity
+      - price
+      - name
+    Selection:
+      type: object
+      properties:
+        submitted:
+          type: boolean
+        notes:
+          type: string
+          maxLength: 1000
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SelectionItem"
+        total:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+      required:
+      - submitted
+      - notes
+      - items
+      - total
+    Guest:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        name:
+          type: string
+        submitted:
+          type: boolean
+        notes:
+          type: string
+          maxLength: 1000
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SelectionItem"
+        total:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+      required:
+      - id
+      - name
+      - submitted
+      - notes
+      - items
+      - total
+    SummaryItem:
+      type: object
+      properties:
+        menuItemId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+        name:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+      required:
+      - menuItemId
+      - name
+      - quantity
+      - total
+    EventDetail:
+      type: object
+      properties:
+        event:
+          "$ref": "#/components/schemas/Event"
+        menu:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MenuItem"
+        guests:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Guest"
+        selection:
+          "$ref": "#/components/schemas/Selection"
+        summary:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SummaryItem"
+        inviteCode:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{24}$"
+        inviteUrl:
+          type: string
+          format: uri
+        maxInviteUrl:
+          type:
+          - string
+          - 'null'
+          format: uri
+      required:
+      - event
+      - menu
+      - guests
+      - selection
+      - summary
+      description: Владелец и ресторан видят всех guests, summary и ссылки приглашения.
+        Гость видит только себя, summary=[], ссылки отсутствуют. selection всегда
+        описывает текущего пользователя либо пустой выбор.
+    InvitePreview:
+      type: object
+      properties:
+        event:
+          "$ref": "#/components/schemas/PublicEvent"
+        menu:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MenuItem"
+      required:
+      - event
+      - menu
+    Joined:
+      type: object
+      properties:
+        eventId:
+          type: string
+          description: Непрозрачный идентификатор из ответа API; не интерпретировать
+            как UUID без префикса.
+      required:
+      - eventId
+    SelectionPut:
+      type: object
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            properties:
+              menuItemId:
+                type: string
+                description: Непрозрачный идентификатор из ответа API; не интерпретировать
+                  как UUID без префикса.
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 20
+            required:
+            - menuItemId
+            - quantity
+        notes:
+          type: string
+          maxLength: 1000
+      required:
+      - items
+      description: Полная замена собственного выбора. menuItemId уникальны и принадлежат
+        снимку меню; сервер игнорирует присланную цену и рассчитывает сумму сам. Сумма
+        выбора <=10000000000 копеек.
+    SelectionSaved:
+      type: object
+      properties:
+        success:
+          type: boolean
+          const: true
+        total:
+          type: integer
+          minimum: 0
+          description: Целые копейки RUB; 69000 означает 690,00 руб.
+      required:
+      - success
+      - total
+    Approve:
+      type: object
+      properties:
+        expectedRevision:
+          type: integer
+          minimum: 0
+          maximum: 10000000000
+      required:
+      - expectedRevision
+      description: Обязательна для collecting. Значение revision из просмотренного
+        EventDetail; изменение гостями даёт 409. Для повторного утверждения approved
+        тело необязательно.
+    MaxUpdate:
+      type: object
+      properties:
+        update_type:
+          type: string
+        timestamp:
+          type: integer
+        chat_id:
+          type: integer
+        payload:
+          type:
+          - string
+          - 'null'
+        user:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            is_bot:
+              type: boolean
+        message:
+          type: object
+          properties:
+            sender:
+              type: object
+              properties:
+                user_id:
+                  type: integer
+                is_bot:
+                  type: boolean
+            recipient:
+              type: object
+              properties:
+                chat_type:
+                  type: string
+            body:
+              type: object
+              properties:
+                mid:
+                  type: string
+                text:
+                  type: string
+      description: Объект Update MAX. Обрабатываются bot_started и message_created
+        из личного диалога человека. Остальные корректные JSON-объекты подтверждаются
+        200 и игнорируются.
+      additionalProperties: true
+    WebhookAck:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          const: true
+        ignored:
+          type: boolean
+        duplicate:
+          type: boolean
+      required:
+      - ok
+  responses:
+    '400':
+      description: Некорректные данные, JSON или отсутствие expectedRevision.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '401':
+      description: Отсутствует/истекла сессия, неверная MAX-подпись, sandbox либо
+        webhook secret.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '403':
+      description: Недостаточно прав или другой scope.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '404':
+      description: Ресурс не найден, недоступен пользователю либо демо отключено.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '409':
+      description: Состояние заказа не допускает действие, дедлайн истёк, нет блюд/ответов
+        или устарела ревизия.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '413':
+      description: JSON-тело превышает 65536 байт.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '415':
+      description: 'Ожидается Content-Type: application/json.'
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '429':
+      description: Лимит входов, демо-пространств, банкетов либо блюд превышен.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '500':
+      description: Внутренняя ошибка; технические детали не возвращаются клиенту.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"
+    '503':
+      description: MAX не настроен либо хранилище дедупликации временно недоступно.
+      content:
+        application/json:
+          schema:
+            "$ref": "#/components/schemas/Error"

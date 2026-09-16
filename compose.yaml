@@ -1,0 +1,42 @@
+name: banquet
+
+services:
+  app:
+    image: ${BANQUET_IMAGE:-banquet:local}
+    build:
+      context: .
+      args:
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-/}
+    env_file:
+      - ${BANQUET_ENV_FILE:-.env}
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATABASE_PATH: /data/banquet.sqlite
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3100}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
+    ports:
+      - "127.0.0.1:3100:3000"
+    volumes:
+      - banquet_data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 512m
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  banquet_data:
+    name: banquet_data

@@ -1,0 +1,101 @@
+name: Deploy production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: banquet-production
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  configuration:
+    needs: checks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      deploy_ready: ${{ steps.preflight.outputs.ready }}
+    steps:
+      - name: Check repository deployment secrets
+        id: preflight
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          missing=()
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS; do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} > 0 )); then
+            printf 'ready=false\n' >> "$GITHUB_OUTPUT"
+            {
+              printf '%s\n' '### Автоматическое развёртывание пропущено' ''
+              printf '%s\n' 'Проверки кода выполнены. Этот запуск не обновлял сервер: не настроены repository secrets.' ''
+              printf -- '- `%s`\n' "${missing[@]}"
+              printf '\n%s\n' 'Владелец должен создать отдельный SSH-ключ для развёртывания, добавить публичную часть на сервер, а приватную — в repository secret DEPLOY_SSH_KEY. Личный SSH-ключ пользователя не переносится в GitHub.'
+              printf '\n%s\n' 'После настройки секретов повторите workflow Deploy production для main. Инструкция: docs/DEPLOYMENT.md.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo '::notice title=Deployment skipped::Repository deployment secrets are missing. No deployment was attempted; see the job summary.'
+          else
+            printf 'ready=true\n' >> "$GITHUB_OUTPUT"
+            printf '%s\n' 'Deployment configuration is present. The production job will connect and verify the release.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  deploy:
+    needs: [checks, configuration]
+    if: github.ref == 'refs/heads/main' && needs.configuration.outputs.deploy_ready == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://mail.lonelycraft.ru/banquet/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package tracked application files
+        run: git archive --format=tar.gz --output="$RUNNER_TEMP/banquet-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
+      - name: Deploy over verified SSH
+        shell: bash
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          : "${DEPLOY_HOST:?Set the DEPLOY_HOST secret}"
+          : "${DEPLOY_USER:?Set the DEPLOY_USER secret}"
+          : "${DEPLOY_SSH_KEY:?Set the DEPLOY_SSH_KEY secret}"
+          : "${DEPLOY_KNOWN_HOSTS:?Set the DEPLOY_KNOWN_HOSTS secret}"
+          [[ "$DEPLOY_HOST" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          key="$RUNNER_TEMP/banquet-deploy-key"
+          known_hosts="$RUNNER_TEMP/banquet-known-hosts"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts"
+          ssh_options=(-i "$key" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$known_hosts" -o BatchMode=yes -o ConnectTimeout=15)
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          release="/srv/banquet/releases/$GITHUB_SHA"
+          ssh "${ssh_options[@]}" "$remote" "mkdir -p '$release'"
+          scp "${ssh_options[@]}" "$RUNNER_TEMP/banquet-$GITHUB_SHA.tar.gz" "$remote:$release/source.tar.gz"
+          ssh "${ssh_options[@]}" "$remote" "tar -xzf '$release/source.tar.gz' -C '$release' && sudo -n bash '$release/scripts/deploy.sh' '$GITHUB_SHA'"
+      - name: Remove temporary SSH credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/banquet-deploy-key" "$RUNNER_TEMP/banquet-known-hosts"

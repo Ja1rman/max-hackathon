@@ -1,0 +1,226 @@
+---
+document: За столом — модель хранения и обмена
+version: 1.0.0
+sources:
+- server/store.mjs
+- server/auth.mjs
+- server/index.mjs
+- server/max-bot.mjs
+api_contract: "./openapi.yaml"
+fixture: "./fixtures/demo.json"
+engine:
+  product: SQLite via Node.js24 node:sqlite DatabaseSync
+  user_version: 2
+  pragmas:
+    foreign_keys: 'ON'
+    journal_mode: WAL
+    busy_timeout: 5000
+  migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
+    DEFAULT0. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    совместимой при откате кода.
+  indexes:
+  - events_scope_idx ON events(scope)
+  - guests_user_idx ON guests(user_id)
+  - sessions_expiry_idx ON sessions(expires_at)
+tables:
+  scopes:
+    columns:
+      id: TEXT PRIMARY KEY
+      secret_hash: TEXT UNIQUE NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    purpose: live — общее рабочее пространство; demo_UUID — отдельная демонстрация.
+      SHA-256 sandbox только для демо.
+  users:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      external_id: TEXT NULL
+      name: TEXT NOT NULL
+      role: TEXT NOT NULL
+      demo: INTEGER NOT NULL DEFAULT 0
+    purpose: MAX ID хранится строкой; id=max_<MAX ID>. Роль restaurant для live пересчитывается
+      по allowlist при каждом запросе.
+  sessions:
+    columns:
+      token_hash: TEXT PRIMARY KEY
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      expires_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: SHA-256 от bearer, открытый token возвращается только при входе. Демо24ч/live7д;
+      максимум10 активных.
+  restaurants:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      description: TEXT NOT NULL
+      address: TEXT NOT NULL
+      sample_menu: INTEGER NOT NULL DEFAULT 1
+    purpose: Один пример при первичном создании scope; API регистрации/редактирования
+      ресторана отсутствует.
+  menu_items:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      data: TEXT NOT NULL (JSON MenuItem)
+    purpose: Текущий каталог. menuItem ID и доступность валидируются сервером; до500
+      блюд на ресторан.
+  events:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      owner_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      title: TEXT NOT NULL
+      date: TEXT NOT NULL (ISO-8601 UTC)
+      deadline: TEXT NOT NULL (ISO-8601 UTC)
+      expected_guests: INTEGER NOT NULL
+      budget: INTEGER NOT NULL (kopecks)
+      status: TEXT NOT NULL DEFAULT 'collecting'
+      invite_code: TEXT UNIQUE NOT NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+      approved_at: TEXT NULL (ISO-8601 UTC)
+      revision: INTEGER NOT NULL DEFAULT 0
+    purpose: Сбор либо утверждённый заказ. invite_code24base64url. Дедлайн не меняет
+      status автоматически.
+  event_menu:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      item_id: TEXT NOT NULL
+      data: TEXT NOT NULL (JSON MenuItem)
+    primary_key:
+    - event_id
+    - item_id
+    purpose: Неизменяемый снимок доступных блюд при создании банкета. item_id намеренно
+      не FK на текущий каталог.
+  guests:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      submitted: INTEGER NOT NULL DEFAULT 0
+      notes: TEXT NOT NULL DEFAULT ''
+      updated_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - user_id
+    purpose: Членство и состояние ответа. Один пользователь — одна строка на событие,
+      максимум1000.
+  selections:
+    columns:
+      event_id: TEXT NOT NULL
+      user_id: TEXT NOT NULL
+      menu_item_id: TEXT NOT NULL
+      quantity: INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 20)
+      price: INTEGER NOT NULL CHECK(price >= 0)
+      name: TEXT NOT NULL
+    primary_key:
+    - event_id
+    - user_id
+    - menu_item_id
+    foreign_keys:
+    - columns:
+      - event_id
+      - user_id
+      references: guests(event_id,user_id)
+      on_delete: CASCADE
+    purpose: Снимок цены/названия из event_menu, полная замена выбора атомарно. В
+      одном выборе1..50 уникальных блюд.
+  max_webhook_claims:
+    columns:
+      key: TEXT PRIMARY KEY
+      created_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: SHA-256 идентичности события. INSERT OR IGNORE до API-вызова, at-most-once
+      welcome, хранение7д.
+json_schema_references:
+  MenuItem: openapi.yaml#/components/schemas/MenuItem
+  API_event: openapi.yaml#/components/schemas/Event
+  API_event_detail: openapi.yaml#/components/schemas/EventDetail
+units:
+  money: Целые копейки RUB во всех JSON/SQLite ценах. CSV преобразует агрегированные
+    суммы в рубли с двумя знаками.
+  dates: ISO8601 UTC для событий; Unix milliseconds для sessions и webhook claims;
+    auth_date MAX в Unix seconds.
+  booleans: SQLite INTEGER0/1, публичные JSON true/false.
+derived:
+  event.total: SUM(selections.quantity * selections.price)
+  event.responded: SUM(guests.submitted)
+  event.joined: COUNT(guests)
+  guest.total: SUM(собственных selections.quantity * price)
+  summary: GROUP BY menu_item_id,name; SUM(quantity), SUM(quantity*price)
+  revision: Увеличивается при новом присоединении, сохранении выбора и утверждении;
+    seed синтетических ответов создаётся до демонстрации.
+authorization:
+  public:
+  - healthz
+  - config
+  - MAX/demo login
+  - invite preview без гостей/бюджета/суммы
+  event_read: owner или restaurant в том же scope либо участник guests; недоступное
+    чтение —404.
+  guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
+    отсутствуют. Общая сумма и счётчики банкета доступны участнику.
+  manager_detail: 'owner или restaurant: все гости, summary, budget, inviteCode, invite
+    URLs.'
+  create_event: Только organizer.
+  approve: Только owner независимо от глобальной роли.
+  menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
+  csv: owner или restaurant, только approved.
+  demo_invite: Создаёт только guest; demo запрещён доступ к live. Sandbox — секрет
+    переключения ролей только собственной демонстрации.
+lifecycle:
+  initial: collecting
+  selection_open: status=collecting AND deadline > now
+  approve: owner, expectedRevision=current revision, >=1 submitted. Транзакция BEGIN
+    IMMEDIATE фиксирует approved_at и увеличивает revision.
+  repeat_approve: approved возвращается идемпотентно без обязательного тела.
+  deadline: Запрещает новые joins и saveSelection; существующий join идемпотентен;
+    не утверждает автоматически.
+  catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
+    правке каталога.
+  not_implemented:
+  - delete
+  - cancel
+  - reopen
+  - payment
+  - restaurant acceptance acknowledgement
+limits:
+  json_body_bytes: 65536
+  init_data_chars: 16384
+  auth_requests_per_10_minutes_per_ip: 180
+  max_demo_scopes_default: 1000
+  max_demo_scopes_env_range:
+  - 1
+  - 100000
+  sessions_per_user: 10
+  events_per_owner_demo: 30
+  events_per_owner_live: 500
+  menu_items_per_restaurant: 500
+  guests_per_event: 1000
+  selection_unique_items:
+  - 1
+  - 50
+  quantity_per_item:
+  - 1
+  - 20
+  selection_total_kopecks_max: 10000000000
+  budget_kopecks_max: 10000000000
+  menu_price_kopecks_range:
+  - 1
+  - 100000000
+  notes_chars: 1000
+retention:
+  demo_scope_days: 7
+  demo_session_hours: 24
+  live_session_days: 7
+  webhook_claim_days: 7
+  housekeeping: 'При старте и затем раз в час: истёкшие сессии, старые demo scopes
+    с каскадными данными, старые webhook claims.'
+  live_events: Автоматический срок удаления отсутствует.
+operational:
+  database_default: data/banquet.sqlite
+  docker_database: "/data/banquet.sqlite in banquet_data"
+  backup: 'scripts/backup.sh: согласованный VACUUM INTO, quick_check, последние10;
+    отдельное внешнее хранение ещё требует настройки.'
+  secrets: MAX_BOT_TOKEN, MAX_WEBHOOK_SECRET, SSH key и .env вне Git; bearer и sandbox
+    в БД толькоSHA256. Invite code хранится открыто как bearer-приглашение.
+  concurrency: Один экземпляр процесса/SQLite на сервере; горизонтальное масштабирование
+    не реализовано.

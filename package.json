@@ -1,0 +1,28 @@
+{
+  "name": "za-stolom-max",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "dev:api": "node --watch server/index.mjs",
+    "build": "vite build",
+    "start": "node server/index.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm test && npm run build",
+    "max:setup": "node --env-file=.env scripts/setup-max.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
+    "lucide-react": "0.468.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "5.1.4",
+    "vite": "7.3.6"
+  }
+}
