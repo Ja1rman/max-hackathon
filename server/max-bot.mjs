@@ -118,14 +118,15 @@ function describeUpdate(update) {
     // Group conversations and bot messages must not generate automatic replies.
     if (!recipient || message.sender.is_bot || message.recipient?.chat_type !== 'dialog') return null;
     if (typeof mid !== 'string' || !mid || mid.length > 512) return null;
-    return { recipient, identity: ['message_created', mid] };
+    const command = typeof message.body.text === 'string' && message.body.text.trim() === '/id' ? 'id' : null;
+    return { recipient, command, identity: ['message_created', mid] };
   }
   return null;
 }
 
 /**
  * The caller must persist claimUpdate(key) with an atomic unique insert.
- * Claim before delivery provides at-most-once welcome replies, including across
+ * Claim before delivery provides at-most-once bot replies, including across
  * process restarts. An ambiguous delivery failure is not automatically resent.
  */
 export function createMaxBot(config = readMaxConfig(), { claimUpdate, logger = console, fetchImpl } = {}) {
@@ -151,16 +152,19 @@ export function createMaxBot(config = readMaxConfig(), { claimUpdate, logger = c
       }
       if (!claimed) return { status: 200, body: { ok: true, duplicate: true } };
       try {
+        const body = event.command === 'id'
+          ? { text: `Ваш ID в MAX:\n${event.recipient}\n\nПередайте этот ID владельцу сервиса «За столом», чтобы получить доступ к кабинету ресторана.` }
+          : {
+            text: 'Банкет с выбором для каждого гостя.\n\nОрганизатор создаёт мероприятие и отправляет приглашение. Гости выбирают блюда, а ресторан получает точные количества после утверждения заказа.\n\nОткройте приложение, чтобы продолжить.\n\nКоманда /id покажет ваш ID для доступа к кабинету ресторана.',
+            attachments: [{ type: 'inline_keyboard', payload: { buttons: [[{ type: 'link', text: 'Открыть банкет', url: miniAppLink(username, event.payload) }]] } }],
+          };
         await maxApiRequest(config, `/messages?user_id=${event.recipient}`, {
           method: 'POST',
           fetchImpl,
-          body: {
-            text: 'Банкет с выбором для каждого гостя.\n\nОрганизатор создаёт мероприятие и отправляет приглашение. Гости выбирают блюда, а ресторан получает точные количества после утверждения заказа.\n\nОткройте приложение, чтобы продолжить.',
-            attachments: [{ type: 'inline_keyboard', payload: { buttons: [[{ type: 'link', text: 'Открыть банкет', url: miniAppLink(username, event.payload) }]] } }],
-          },
+          body,
         });
       } catch (error) {
-        logger.error?.(`MAX welcome delivery failed (${error instanceof MaxApiError ? error.code : 'internal_error'}); automatic retry suppressed`);
+        logger.error?.(`MAX bot reply delivery failed (${error instanceof MaxApiError ? error.code : 'internal_error'}); automatic retry suppressed`);
       }
       return { status: 200, body: { ok: true } };
     },

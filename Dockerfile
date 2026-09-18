@@ -13,11 +13,14 @@ FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
-    DATABASE_PATH=/data/banquet.sqlite
+    DATABASE_PATH=/data/banquet.sqlite \
+    NODE_EXTRA_CA_CERTS=/app/certs/russian-trusted-root-ca.pem
 WORKDIR /app
 RUN mkdir -p /data/backups && chown -R node:node /app /data
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/certs ./certs
+COPY --from=build --chown=node:node /app/scripts/setup-max.mjs ./scripts/setup-max.mjs
 COPY --from=build --chown=node:node /app/package.json ./package.json
 USER node
 EXPOSE 3000

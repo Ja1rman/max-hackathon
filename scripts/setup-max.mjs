@@ -27,6 +27,11 @@ export async function setupMax(config = readMaxConfig(), { fetchImpl, output = c
     body: { url: webhookUrl, update_types: ['bot_started', 'message_created'], secret: config.webhookSecret },
   });
   if (subscription?.success !== true) throw new Error('MAX did not confirm webhook registration');
+  const commands = [...(Array.isArray(bot.commands) ? bot.commands : []).filter(command => command.name !== 'id'), { name: 'id', description: 'Показать мой MAX ID' }];
+  const commandResult = await maxApiRequest(config, '/me/commands', {
+    method: 'PATCH', fetchImpl, body: { commands },
+  });
+  if (commandResult?.success === false) throw new Error('MAX did not confirm command registration');
   output(`MAX_BOT_USERNAME=${username}`);
   output(`Webhook configured: ${webhookUrl}`);
   output(`Set the Mini App URL in MAX for Business to: ${publicUrl}`);

@@ -27,3 +27,5 @@ jobs:
           VITE_BASE_PATH: /banquet/
       - name: Check deployment shell scripts
         run: bash -n scripts/deploy.sh scripts/backup.sh
+      - name: Test MAX configuration synchronization
+        run: python3 -B -m unittest discover -s tests -p 'test_sync_max_env.py'

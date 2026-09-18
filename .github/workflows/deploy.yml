@@ -76,7 +76,12 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          MAX_BOT_TOKEN: ${{ secrets.MAX_BOT_TOKEN }}
+          MAX_BOT_USERNAME: ${{ secrets.MAX_BOT_USERNAME }}
+          MAX_WEBHOOK_SECRET: ${{ secrets.MAX_WEBHOOK_SECRET }}
+          RESTAURANT_ADMIN_IDS: ${{ secrets.RESTAURANT_ADMIN_IDS }}
         run: |
+          set +x
           set -Eeuo pipefail
           umask 077
           : "${DEPLOY_HOST:?Set the DEPLOY_HOST secret}"
@@ -95,7 +100,15 @@ jobs:
           release="/srv/banquet/releases/$GITHUB_SHA"
           ssh "${ssh_options[@]}" "$remote" "mkdir -p '$release'"
           scp "${ssh_options[@]}" "$RUNNER_TEMP/banquet-$GITHUB_SHA.tar.gz" "$remote:$release/source.tar.gz"
-          ssh "${ssh_options[@]}" "$remote" "tar -xzf '$release/source.tar.gz' -C '$release' && sudo -n bash '$release/scripts/deploy.sh' '$GITHUB_SHA'"
+          ssh "${ssh_options[@]}" "$remote" "tar -xzf '$release/source.tar.gz' -C '$release'"
+          python3 - <<'PY' | ssh "${ssh_options[@]}" "$remote" "sudo -n python3 '$release/scripts/sync-max-env.py'"
+          import json
+          import os
+          import sys
+          names = ("MAX_BOT_TOKEN", "MAX_BOT_USERNAME", "MAX_WEBHOOK_SECRET", "RESTAURANT_ADMIN_IDS")
+          json.dump({name: os.environ.get(name, "") for name in names}, sys.stdout)
+          PY
+          ssh "${ssh_options[@]}" "$remote" "sudo -n bash '$release/scripts/deploy.sh' '$GITHUB_SHA'"
       - name: Remove temporary SSH credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/banquet-deploy-key" "$RUNNER_TEMP/banquet-known-hosts"
