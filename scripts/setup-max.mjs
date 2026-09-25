@@ -24,7 +24,7 @@ export async function setupMax(config = readMaxConfig(), { fetchImpl, output = c
   const subscription = await maxApiRequest(config, '/subscriptions', {
     method: 'POST',
     fetchImpl,
-    body: { url: webhookUrl, update_types: ['bot_started', 'message_created'], secret: config.webhookSecret },
+    body: { url: webhookUrl, update_types: ['bot_started', 'bot_stopped', 'message_created'], secret: config.webhookSecret },
   });
   if (subscription?.success !== true) throw new Error('MAX did not confirm webhook registration');
   const commands = [...(Array.isArray(bot.commands) ? bot.commands : []).filter(command => command.name !== 'id'), { name: 'id', description: 'Показать мой MAX ID' }];

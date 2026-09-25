@@ -46,7 +46,7 @@ test('MAX setup resolves the bot name, registers the webhook then /id and preser
     { url: 'https://max-api.example/subscriptions', method: 'POST' },
     { url: 'https://max-api.example/me/commands', method: 'PATCH' },
   ]);
-  assert.deepEqual(f.requests[1].body, { url: result.webhookUrl, update_types: ['bot_started', 'message_created'], secret: config.webhookSecret });
+  assert.deepEqual(f.requests[1].body, { url: result.webhookUrl, update_types: ['bot_started', 'bot_stopped', 'message_created'], secret: config.webhookSecret });
   assert.deepEqual(f.requests[2].body, { commands: [{ name: 'help', description: 'Помощь' }, { name: 'id', description: 'Показать мой MAX ID' }] });
   assert.ok(f.requests.every(request => request.headers.Authorization === config.token));
   assert.deepEqual(f.output, [

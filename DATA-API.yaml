@@ -1,16 +1,17 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.0.0
+version: 1.1.0
 sources:
 - server/store.mjs
 - server/auth.mjs
 - server/index.mjs
 - server/max-bot.mjs
+- server/notifications.mjs
 api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 3
+  user_version: 4
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -22,6 +23,9 @@ engine:
   - events_scope_idx ON events(scope)
   - guests_user_idx ON guests(user_id)
   - sessions_expiry_idx ON sessions(expires_at)
+  - users_live_phone_idx UNIQUE ON users(phone) WHERE scope='live' AND phone IS NOT NULL
+  - guest_invites_event_idx ON guest_invites(event_id)
+  - notification_due_idx ON notification_jobs(due_at) WHERE sent_at IS NULL AND cancelled_at IS NULL
 tables:
   scopes:
     columns:
@@ -38,6 +42,9 @@ tables:
       name: TEXT NOT NULL
       role: TEXT NOT NULL
       demo: INTEGER NOT NULL DEFAULT 0
+      phone: TEXT NULL
+      phone_verified_at: INTEGER NULL (Unix milliseconds)
+      notifications_enabled: INTEGER NOT NULL DEFAULT 0
     purpose: MAX ID хранится строкой; id=max_<MAX ID>. Роль restaurant для live пересчитывается
       по allowlist при каждом запросе.
   sessions:
@@ -90,8 +97,9 @@ tables:
     primary_key:
     - event_id
     - item_id
-    purpose: Неизменяемый снимок доступных блюд при создании банкета. item_id намеренно
-      не FK на текущий каталог.
+    purpose: Снимок доступных блюд при создании банкета; владелец и ресторан могут
+      менять его до утверждения с защитой уже выбранной цены/названия. item_id намеренно
+      не FK на текущий каталог. КБЖУ на порцию и photoUrl хранятся в JSON MenuItem.
   guests:
     columns:
       event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
@@ -104,6 +112,20 @@ tables:
     - user_id
     purpose: Членство и состояние ответа. Один пользователь — одна строка на событие,
       максимум1000.
+  guest_invites:
+    columns:
+      id: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      phone: TEXT NOT NULL (международный формат без плюса)
+      user_id: TEXT NULL REFERENCES users(id) ON DELETE SET NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    unique:
+    - - event_id
+      - phone
+    - - event_id
+      - user_id
+    purpose: Список приглашённых; подтверждённый номер MAX связывает ровно одну запись с аккаунтом.
   selections:
     columns:
       event_id: TEXT NOT NULL
@@ -142,6 +164,33 @@ tables:
       - user_id
     purpose: SHA256 одноразовой capability60сек; новая ссылка заменяет предыдущую
       для пользователя/события; consume проверяет scope, роль, status и revision.
+  bot_contacts:
+    columns:
+      external_id: TEXT PRIMARY KEY
+      active: INTEGER NOT NULL
+      updated_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: Начало/остановка диалога с ботом по подписанному webhook.
+  notification_jobs:
+    columns:
+      id: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      kind: TEXT NOT NULL
+      due_at: INTEGER NOT NULL (Unix milliseconds)
+      attempts: INTEGER NOT NULL DEFAULT 0
+      sent_at: INTEGER NULL (Unix milliseconds)
+      cancelled_at: INTEGER NULL (Unix milliseconds)
+    unique:
+    - - event_id
+      - user_id
+      - kind
+    purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  media_assets:
+    columns:
+      file_name: TEXT PRIMARY KEY
+      owner_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      created_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: Реестр загруженных JPEG/PNG/WebP; файлы расположены в UPLOAD_DIR рядом с SQLite.
 json_schema_references:
   MenuItem: openapi.yaml#/components/schemas/MenuItem
   API_event: openapi.yaml#/components/schemas/Event
@@ -172,7 +221,9 @@ authorization:
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
   manager_detail: 'owner или restaurant: все гости, summary, budget, inviteCode, invite
     URLs.'
-  create_event: Только organizer.
+  create_event: organizer или restaurant.
+  live_guest: Подтверждённый MAX номер должен совпадать со списком guest_invites;
+    выбор доступен только для своей записи, без userId в запросе.
   approve: Только owner независимо от глобальной роли.
   menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
   csv: owner или restaurant, только approved.
@@ -192,7 +243,7 @@ lifecycle:
   catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
     правке каталога.
   not_implemented:
-  - delete
+  - delete_event
   - cancel
   - reopen
   - payment

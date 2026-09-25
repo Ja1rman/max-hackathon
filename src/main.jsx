@@ -68,6 +68,17 @@ async function api(path, options = {}) {
     throw new Error(data.error || "Не удалось выполнить запрос");
   return data;
 }
+async function uploadImage(file) {
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
+  const response = await fetch(`${BASE}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
+  return result;
+}
+const localDateTime = value => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '' : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
 function Brand({ small = false }) {
   return (
     <div className={`brand ${small ? "small" : ""}`}>
@@ -182,7 +193,8 @@ function App() {
     location.pathname.match(/\/invite\/([A-Za-z0-9_-]+)\/?$/)?.[1] ||
     window.WebApp?.initDataUnsafe?.start_param ||
     "";
-  const [invite, setInvite] = useState(startParam);
+  const [invite, setInvite] = useState(startParam.startsWith('event_') ? '' : startParam);
+  const [startEvent, setStartEvent] = useState(startParam.startsWith('event_') ? startParam : '');
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [selected, screen, session]);
@@ -227,7 +239,10 @@ function App() {
             }),
           );
           const sp = window.WebApp?.initDataUnsafe?.start_param;
-          if (sp) setInvite(sp);
+          if (sp) {
+            if (sp.startsWith('event_')) setStartEvent(sp);
+            else setInvite(sp);
+          }
         } else if (authToken) {
           const me = await api("/me");
           setSession(me.user || me);
@@ -294,6 +309,12 @@ function App() {
       setBusy(false);
     }
   };
+  const updateAdmin = (action, message) => perform(async () => {
+    await action();
+    await loadDetail(selected);
+    await refresh();
+    notify(message);
+  });
   const demo = (role) =>
     perform(async () => {
       const data = await api("/auth/demo", {
@@ -311,8 +332,23 @@ function App() {
     setDetail(null);
     setTab(session?.role === "guest" ? "menu" : "guests");
   };
+  useEffect(() => {
+    if (startEvent && events.some(event => event.id === startEvent)) {
+      openEvent(startEvent);
+      setStartEvent('');
+    }
+  }, [events, startEvent]);
+  const requestVerifiedPhone = async () => {
+    if (!window.WebApp?.initData || !window.WebApp?.requestContact) throw new Error('Для подтверждения номера откройте мини-приложение в MAX.');
+    const contact = await window.WebApp.requestContact();
+    if (!contact || contact.error) throw new Error('Номер не получен. Разрешите доступ к номеру в MAX и попробуйте снова.');
+    const updated = await api('/me/phone', { method: 'PUT', body: contact });
+    setSession(updated);
+    return updated;
+  };
   const joinInvite = () =>
     perform(async () => {
+      if (!session.demo && !session.phoneVerified) await requestVerifiedPhone();
       const result = await api(`/invites/${invite}/join`, {
         method: "POST",
         body: {},
@@ -330,6 +366,11 @@ function App() {
     setDetail(null);
   };
   const share = async () => {
+    if (!session.demo && !detail.invitedGuests?.length) {
+      setError('Сначала добавьте гостей с номерами телефонов в разделе «Управление».');
+      setTab('admin');
+      return;
+    }
     const link =
       (!session.demo && detail.maxInviteUrl) ||
       detail.inviteUrl ||
@@ -513,6 +554,17 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-bottom">
+          {!session.demo && (
+            <div className="profile-controls">
+              <small>{session.phoneVerified ? `Номер подтверждён: +${session.phone}` : 'Номер MAX ещё не подтверждён'}</small>
+              {!session.phoneVerified && <button disabled={busy} onClick={() => perform(async () => { await requestVerifiedPhone(); notify('Номер MAX подтверждён'); })}>Подтвердить номер</button>}
+              <button disabled={busy} onClick={() => perform(async () => {
+                const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
+                setSession(updated);
+                notify(updated.notificationsEnabled ? 'Уведомления включены. Начните диалог с ботом MAX.' : 'Уведомления выключены');
+              })}>{session.notificationsEnabled ? 'Выключить уведомления' : 'Включить уведомления'}</button>
+            </div>
+          )}
           <div className="max-connect">
             <span className="max-logo">м</span>
             <div>
@@ -597,10 +649,10 @@ function App() {
             <div className="invite-banner">
               <div>
                 <strong>Вас пригласили за стол</strong>
-                <p>Присоединитесь к банкету и выберите блюда.</p>
+                <p>{!session.demo && !session.phoneVerified ? 'Подтвердите свой номер в MAX. Выбрать блюда сможет только гость из списка приглашённых.' : 'Присоединитесь к банкету и выберите блюда.'}</p>
               </div>
               <Button disabled={busy} onClick={joinInvite}>
-                Принять приглашение <ArrowUpRight size={16} />
+                {!session.demo && !session.phoneVerified ? 'Подтвердить номер' : 'Принять приглашение'} <ArrowUpRight size={16} />
               </Button>
             </div>
           )}
@@ -762,12 +814,18 @@ function App() {
                         Заказ для кухни
                       </button>
                     )}
+                    {canManage && (
+                      <button className={displayTab === 'admin' ? 'active' : ''} onClick={() => setTab('admin')}>
+                        Управление
+                      </button>
+                    )}
                   </div>
                   {displayTab === "menu" ? (
                     <GuestMenu
                       key={selected}
                       detail={detail}
                       busy={busy}
+                      canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
                       save={(values) =>
                         perform(async () => {
                           await api(`/events/${selected}/selection`, {
@@ -892,6 +950,17 @@ function App() {
                         </small>
                       </aside>
                     </div>
+                  ) : displayTab === 'admin' ? (
+                    <EventAdmin
+                      detail={detail}
+                      busy={busy}
+                      saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
+                      addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
+                      editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
+                      deleteGuest={id => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'DELETE' }), 'Гость удалён')}
+                      editDish={item => setEditItem({ ...item, eventId: selected })}
+                      deleteDish={id => updateAdmin(() => api(`/events/${selected}/menu/${id}`, { method: 'DELETE' }), 'Блюдо удалено из банкета')}
+                    />
                   ) : (
                     <section className="panel kitchen">
                       <div className="section-head">
@@ -1092,7 +1161,7 @@ function App() {
                     </div>
                   </button>
                 ))}
-                {role === "organizer" && filter === "all" && (
+                {role !== "guest" && filter === "all" && (
                   <button
                     className="new-event-card"
                     onClick={() => setCreateOpen(true)}
@@ -1112,7 +1181,7 @@ function App() {
                   </button>
                 )}
               </div>
-              {!filtered.length && role !== "organizer" && (
+              {!filtered.length && role === "guest" && (
                 <Empty title="Здесь появятся ваши банкеты">
                   {role === "guest"
                     ? "Откройте ссылку от организатора, чтобы присоединиться."
@@ -1238,12 +1307,16 @@ function App() {
           item={editItem}
           busy={busy}
           onClose={() => setEditItem(null)}
+          uploadPhoto={file => perform(() => uploadImage(file))}
           submit={(values) =>
             perform(async () => {
               await api(
-                `/restaurants/${editItem.restaurantId}/menu${editItem.id ? "/" + editItem.id : ""}`,
+                editItem.eventId
+                  ? `/events/${editItem.eventId}/menu${editItem.id ? '/' + editItem.id : ''}`
+                  : `/restaurants/${editItem.restaurantId}/menu${editItem.id ? "/" + editItem.id : ""}`,
                 { method: editItem.id ? "PATCH" : "POST", body: values },
               );
+              if (editItem.eventId) await loadDetail(editItem.eventId);
               await refresh();
               setEditItem(null);
               notify("Меню обновлено");
@@ -1311,7 +1384,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
   return (
     <article className={`dish-card ${!item.available ? "unavailable" : ""}`}>
       <div className={`dish-visual category-${item.category?.length % 4}`}>
-        <span>{item.emoji || "🍽️"}</span>
+        {item.photoUrl ? <img src={`${BASE}${item.photoUrl}`} alt={item.name} loading="lazy" /> : <span>{item.emoji || "🍽️"}</span>}
         {item.vegetarian && (
           <span className="veg-tag">
             <Leaf size={12} />
@@ -1325,6 +1398,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
         </span>
         <h3>{item.name}</h3>
         <p>{item.description}</p>
+        {item.nutrition && <small className="nutrition">На порцию: {item.nutrition.kcal} ккал · Б {item.nutrition.protein} г · Ж {item.nutrition.fat} г · У {item.nutrition.carbs} г</small>}
         {item.allergens?.length > 0 && (
           <small className="allergens">
             Аллергены: {item.allergens.join(", ")}
@@ -1365,7 +1439,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
     </article>
   );
 }
-function GuestMenu({ detail, busy, save }) {
+function GuestMenu({ detail, busy, save, canSelect }) {
   const selection = detail.selection;
   const [items, setItems] = useState(() =>
       Object.fromEntries(
@@ -1378,7 +1452,7 @@ function GuestMenu({ detail, busy, save }) {
     [dirty, setDirty] = useState(false);
   const locked =
     detail.event.status === "approved" ||
-    new Date(detail.event.deadline).getTime() < Date.now();
+    new Date(detail.event.deadline).getTime() < Date.now() || !canSelect;
   const categories = [
     "Все блюда",
     ...new Set(detail.menu.map((i) => i.category)),
@@ -1409,7 +1483,7 @@ function GuestMenu({ detail, busy, save }) {
         <div>
           <h2>{locked ? "Ваш выбор" : "Что вам приготовить?"}</h2>
           <p className="muted">
-            {locked
+            {!canSelect ? 'Просмотр меню. Для выбора блюд войдите как приглашённый гость и подтвердите номер MAX.' : locked
               ? "Сбор завершён. Ваши блюда сохранены в заказе."
               : "Выберите блюда и укажите пожелания. До утверждения заказ можно изменить."}
           </p>
@@ -1507,6 +1581,72 @@ function GuestMenu({ detail, busy, save }) {
         </div>
       </div>
     </>
+  );
+}
+function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest, editDish, deleteDish }) {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [editing, setEditing] = useState(null);
+  const active = detail.event.status === 'collecting';
+  return (
+    <div className="admin-layout">
+      <section className="panel admin-panel">
+        <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет.</p></div></div>
+        <form onSubmit={event => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), budget: Math.round(Number(form.get('budget') || 0) * 100) });
+        }}>
+          <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
+          <div className="form-grid">
+            <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
+            <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
+            <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
+            <label>Бюджет, ₽<input type="number" name="budget" min="0" max="100000000" step="0.01" defaultValue={detail.event.budget / 100} disabled={!active} /></label>
+          </div>
+          {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
+        </form>
+      </section>
+      <section className="panel admin-panel">
+        <div className="section-head"><div><h2>Приглашённые гости</h2><p className="muted">Гость подтвердит свой номер в MAX и сможет выбрать блюда только за себя.</p></div><span>{detail.invitedGuests?.length || 0} из {detail.event.expectedGuests}</span></div>
+        {active && <form className="admin-guest-form" onSubmit={async event => {
+          event.preventDefault();
+          const result = await addGuest({ name, phone });
+          if (result !== null) { setName(''); setPhone(''); }
+        }}>
+          <input aria-label="Имя гостя" placeholder="Имя гостя" maxLength={100} required value={name} onChange={event => setName(event.target.value)} />
+          <input aria-label="Телефон гостя" type="tel" placeholder="+7 999 123-45-67" required value={phone} onChange={event => setPhone(event.target.value)} />
+          <Button type="submit" disabled={busy}><Plus size={16} /> Добавить</Button>
+        </form>}
+        <div className="admin-guest-list">
+          {detail.invitedGuests?.length ? detail.invitedGuests.map(guest => <div className="admin-guest" key={guest.id}>
+            <div><strong>{guest.name}</strong><small>+{guest.phone} · {guest.submitted ? 'Выбор сохранён' : guest.joined ? 'Номер подтверждён' : 'Ожидает входа'}</small></div>
+            {active && <div className="admin-actions"><button type="button" onClick={() => setEditing({ ...guest, phone: `+${guest.phone}` })}>Изменить</button><button type="button" disabled={busy || guest.submitted} onClick={() => { if (window.confirm(`Удалить ${guest.name} из списка?`)) deleteGuest(guest.id); }}>Удалить</button></div>}
+          </div>) : <p className="muted">Добавьте гостей перед отправкой приглашения. Один номер соответствует одному гостю.</p>}
+        </div>
+      </section>
+      <section className="panel admin-panel">
+        <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Изменения действуют только для этого мероприятия. Цена и название выбранного блюда фиксируются после ответа гостя.</p></div>
+          {active && <Button variant="secondary" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={16} /> Добавить позицию</Button>}
+        </div>
+        <div className="menu-grid catalog">{detail.menu.map(item => <div key={item.id}>
+          <DishCard item={item} admin={active} edit={() => editDish(item)} />
+          {active && <button type="button" className="text-button" disabled={busy} onClick={() => { if (window.confirm(`Убрать «${item.name}» из меню банкета?`)) deleteDish(item.id); }}>Убрать из меню</button>}
+        </div>)}</div>
+      </section>
+      {editing && <Modal title="Данные гостя" onClose={() => setEditing(null)}>
+        <form onSubmit={async event => {
+          event.preventDefault();
+          const result = await editGuest(editing.id, { name: editing.name, phone: editing.phone });
+          if (result !== null) setEditing(null);
+        }}>
+          <label>Имя<input required maxLength={100} value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label>Телефон<input type="tel" required value={editing.phone} disabled={editing.joined} onChange={event => setEditing({ ...editing, phone: event.target.value })} /></label>
+          {editing.joined && <p className="muted">Номер закреплён за аккаунтом MAX. Имя можно изменить.</p>}
+          <div className="modal-actions"><Button type="button" variant="secondary" onClick={() => setEditing(null)}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
+        </form>
+      </Modal>}
+    </div>
   );
 }
 function CreateEvent({ restaurants, busy, onClose, submit }) {
@@ -1610,17 +1750,24 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
     </Modal>
   );
 }
-function EditDish({ item, busy, onClose, submit }) {
+function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
   return (
     <Modal
       title={item.id ? "Изменить блюдо" : "Добавить блюдо"}
       onClose={onClose}
     >
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
-          submit({
+          let photoUrl = item.photoUrl || '';
+          const photo = f.get('photo');
+          if (photo?.size) {
+            const uploaded = await uploadPhoto(photo);
+            if (!uploaded) return;
+            photoUrl = uploaded.photoUrl;
+          }
+          await submit({
             name: f.get("name"),
             description: f.get("description"),
             category: f.get("category"),
@@ -1634,6 +1781,8 @@ function EditDish({ item, busy, onClose, submit }) {
             vegetarian: f.get("vegetarian") === "on",
             available: f.get("available") === "on",
             emoji: f.get("emoji") || "🍽️",
+            photoUrl,
+            nutrition: { kcal: Number(f.get('kcal')), protein: Number(f.get('protein')), fat: Number(f.get('fat')), carbs: Number(f.get('carbs')) },
           });
         }}
       >
@@ -1653,6 +1802,10 @@ function EditDish({ item, busy, onClose, submit }) {
             defaultValue={item.description}
             maxLength={500}
           />
+        </label>
+        <label>Фото блюда или напитка (JPEG, PNG, WebP, до 3 МБ)
+          <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" />
+          {item.photoUrl && <small>Текущее фото сохранится, если не выбрать новый файл.</small>}
         </label>
         <div className="form-grid">
           <label>
@@ -1688,6 +1841,13 @@ function EditDish({ item, busy, onClose, submit }) {
             />
           </label>
         </div>
+        <div className="form-grid nutrition-fields">
+          <label>Калории, ккал<input type="number" name="kcal" min="0" max="10000" step="1" required defaultValue={item.nutrition?.kcal ?? ''} /></label>
+          <label>Белки, г<input type="number" name="protein" min="0" max="1000" step="0.1" required defaultValue={item.nutrition?.protein ?? ''} /></label>
+          <label>Жиры, г<input type="number" name="fat" min="0" max="1000" step="0.1" required defaultValue={item.nutrition?.fat ?? ''} /></label>
+          <label>Углеводы, г<input type="number" name="carbs" min="0" max="1000" step="0.1" required defaultValue={item.nutrition?.carbs ?? ''} /></label>
+        </div>
+        <small className="muted">КБЖУ указываются на одну порцию. Для демонстрационных блюд значения ориентировочные.</small>
         <label>
           Аллергены, через запятую
           <input name="allergens" defaultValue={item.allergens?.join(", ")} />

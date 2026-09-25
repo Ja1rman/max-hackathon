@@ -2,12 +2,12 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.0.0
+  version: 1.1.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
     доверяет X-Real-IP только за настроенным reverse proxy. Неизвестные JSON-поля
-    не назначают роли, цену или scope. Отсутствуют удаление, отмена, reopen, оплата
+    не назначают роли, цену или scope. Отсутствуют отмена, reopen, оплата
     и интеграции POS. Публичный server URL — назначение развёртывания, не заявление
     о его готовности.'
 servers:
@@ -199,6 +199,101 @@ paths:
           "$ref": "#/components/responses/401"
         '500':
           "$ref": "#/components/responses/500"
+  "/api/me/phone":
+    put:
+      operationId: verifyPhone
+      summary: Привязать подтверждённый номер телефона MAX к текущей сессии
+      description: Тело — результат window.WebApp.requestContact(). Сервер проверяет HMAC-SHA256 токеном бота, свежесть authDate и userId из подписанной MAX-сессии; присланный клиентом userId не принимается. Номер нормализуется в международный формат без плюса. Демо-сессии запрещены.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MaxContact"
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/me/notifications":
+    put:
+      operationId: setNotifications
+      summary: Включить или выключить уведомления в MAX
+      description: Доставка возможна только после начала личного диалога с ботом. По умолчанию выключено; bot_stopped отключает фактическую отправку.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/User"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+  "/api/media":
+    post:
+      operationId: uploadPhoto
+      summary: Загрузить фото для блюда или напитка
+      description: Организатор или ресторан. Бинарное тело до 3 МиБ, проверяется сигнатура формата. Возвращённый photoUrl передаётся при создании или правке позиции меню.
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary }
+          image/png:
+            schema: { type: string, format: binary }
+          image/webp:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: Путь к загруженному фото
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PhotoUpload"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+  "/api/media/{fileName}":
+    get:
+      operationId: getPhoto
+      summary: Получить публичное фото блюда
+      security: []
+      parameters:
+      - "$ref": "#/components/parameters/fileName"
+      responses:
+        '200':
+          description: JPEG, PNG или WebP
+        '404':
+          "$ref": "#/components/responses/404"
   "/api/restaurants":
     get:
       operationId: restaurants
@@ -240,7 +335,7 @@ paths:
     post:
       operationId: createEvent
       summary: Создать банкет и снимок доступного меню
-      description: Только organizer. Создание события и event_menu в транзакции. Не
+      description: Organizer или restaurant. Создание события и event_menu в транзакции. Не
         более 30 событий на демо-организатора или 500 на live-организатора.
       responses:
         '201':
@@ -291,13 +386,178 @@ paths:
           "$ref": "#/components/responses/500"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+    patch:
+      operationId: editEvent
+      summary: Изменить дату, дедлайн, название, число гостей или бюджет
+      description: Владелец или ресторан, пока заказ collecting. expectedRevision обязателен; при конкурирующем изменении возвращается 409. Число гостей не может быть меньше длины списка приглашённых.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/EventPatch"
+      responses:
+        '200':
+          description: Обновлённый банкет
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Event"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/events/{eventId}/guests":
+    post:
+      operationId: addInvitedGuest
+      summary: Добавить приглашённого по имени и телефону
+      description: Владелец или ресторан. Номер уникален в рамках банкета; ожидаемое число гостей увеличится автоматически, если нужно.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/InvitedGuestCreate"
+      responses:
+        '201':
+          description: Созданная запись гостя
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/InvitedGuest"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/events/{eventId}/guests/{guestId}":
+    patch:
+      operationId: editInvitedGuest
+      summary: Изменить имя или ещё не подтверждённый номер гостя
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      - "$ref": "#/components/parameters/guestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/InvitedGuestPatch"
+      responses:
+        '200':
+          description: Изменённая запись
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/InvitedGuest"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+    delete:
+      operationId: deleteInvitedGuest
+      summary: Удалить приглашённого, если он ещё не выбрал блюда
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      - "$ref": "#/components/parameters/guestId"
+      responses:
+        '200':
+          description: "{success:true}"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/events/{eventId}/menu":
+    post:
+      operationId: addEventMenuItem
+      summary: Добавить блюдо или напиток только в этот банкет
+      description: Владелец или ресторан. Не меняет общий каталог ресторана. КБЖУ на одну порцию обязательны.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MenuItemCreate"
+      responses:
+        '201':
+          description: Созданная позиция
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MenuItem"
+        '400':
+          "$ref": "#/components/responses/400"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/events/{eventId}/menu/{itemId}":
+    patch:
+      operationId: editEventMenuItem
+      summary: Изменить позицию меню этого банкета
+      description: Если блюдо уже выбрано, цена, название и доступность заблокированы; описание, КБЖУ и фото можно обновить.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      - "$ref": "#/components/parameters/itemId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/MenuItemPatch"
+      responses:
+        '200':
+          description: Обновлённая позиция
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MenuItem"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+    delete:
+      operationId: deleteEventMenuItem
+      summary: Удалить позицию, если гости её ещё не выбрали
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      - "$ref": "#/components/parameters/itemId"
+      responses:
+        '200':
+          description: "{success:true}"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
   "/api/invites/{code}/join":
     post:
       operationId: joinInvite
       summary: Присоединить текущего пользователя к банкету
       description: Тело не требуется и не обрабатывается. Повтор для уже присоединившегося
-        идемпотентен, в том числе после утверждения/дедлайна. Новое присоединение
-        только в открытый банкет своего scope, максимум 1000 участников.
+        идемпотентен, в том числе после утверждения/дедлайна. В live требуется
+        предварительно подтверждённый MAX номер, совпадающий со списком приглашённых.
+        Новое присоединение только в открытый банкет своего scope, максимум 1000 участников.
       responses:
         '200':
           description: Успешно
@@ -321,8 +581,9 @@ paths:
     put:
       operationId: saveSelection
       summary: Полностью заменить собственный выбор
-      description: До дедлайна, только collecting. Нужно ранее присоединиться; владелец
-        присоединяется автоматически. Обновление транзакционное, revision увеличивается,
+      description: До дедлайна, только collecting. В live нужен свой подтверждённый
+        номер из списка приглашённых; в демо владелец присоединяется автоматически.
+        Обновление транзакционное, revision увеличивается,
         цена берётся из event_menu.
       responses:
         '200':
@@ -466,6 +727,20 @@ paths:
       parameters:
       - "$ref": "#/components/parameters/restaurantId"
       - "$ref": "#/components/parameters/itemId"
+    delete:
+      operationId: deleteCatalogMenuItem
+      summary: Удалить позицию общего каталога ресторана
+      description: Только restaurant. Меню уже созданных банкетов не меняется.
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      - "$ref": "#/components/parameters/itemId"
+      responses:
+        '200':
+          description: "{success:true}"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
   "/api/events/{eventId}/export.csv":
     get:
       operationId: exportCsv
@@ -594,6 +869,19 @@ components:
       schema:
         type: string
         pattern: "^[A-Za-z0-9_-]{43}$"
+    guestId:
+      name: guestId
+      in: path
+      required: true
+      schema:
+        type: string
+    fileName:
+      name: fileName
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-f0-9-]{36}\\.(jpg|png|webp)$"
   schemas:
     Error:
       type: object
@@ -644,11 +932,21 @@ components:
           - restaurant
         demo:
           type: boolean
+        phoneVerified:
+          type: boolean
+        phone:
+          type: [string, 'null']
+          description: Только собственный подтверждённый номер в международном формате без плюса.
+        notificationsEnabled:
+          type: boolean
       required:
       - id
       - name
       - role
       - demo
+      - phoneVerified
+      - phone
+      - notificationsEnabled
     Session:
       type: object
       properties:
@@ -689,6 +987,25 @@ components:
             вложенного user.
       required:
       - initData
+    MaxContact:
+      type: object
+      description: Исходный результат window.WebApp.requestContact(); подпись проверяется сервером.
+      properties:
+        phone:
+          type: string
+        authDate:
+          type: string
+        hash:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+      required: [phone, authDate, hash]
+    PhotoUpload:
+      type: object
+      properties:
+        photoUrl:
+          type: string
+          pattern: "^/api/media/[a-f0-9-]{36}\\.(jpg|png|webp)$"
+      required: [photoUrl]
     DemoLogin:
       type: object
       properties:
@@ -750,6 +1067,11 @@ components:
           type: boolean
         vegetarian:
           type: boolean
+        photoUrl:
+          type: string
+          description: Пустая строка либо URL из POST /api/media.
+        nutrition:
+          "$ref": "#/components/schemas/Nutrition"
       required:
       - id
       - name
@@ -761,6 +1083,15 @@ components:
       - allergens
       - available
       - vegetarian
+    Nutrition:
+      type: object
+      description: Пищевая ценность одной указанной порции; тестовые значения ориентировочные.
+      properties:
+        kcal: { type: integer, minimum: 0, maximum: 10000 }
+        protein: { type: number, minimum: 0, maximum: 1000, multipleOf: 0.1 }
+        fat: { type: number, minimum: 0, maximum: 1000, multipleOf: 0.1 }
+        carbs: { type: number, minimum: 0, maximum: 1000, multipleOf: 0.1 }
+      required: [kcal, protein, fat, carbs]
     MenuItemCreate:
       type: object
       properties:
@@ -797,10 +1128,15 @@ components:
           type: boolean
         vegetarian:
           type: boolean
+        photoUrl:
+          type: string
+        nutrition:
+          "$ref": "#/components/schemas/Nutrition"
       required:
       - name
       - category
       - price
+      - nutrition
       description: "Описание/вес по умолчанию пустые, emoji \U0001F37D️, available
         true, vegetarian false, allergens []."
     MenuItemPatch:
@@ -839,6 +1175,10 @@ components:
           type: boolean
         vegetarian:
           type: boolean
+        photoUrl:
+          type: string
+        nutrition:
+          "$ref": "#/components/schemas/Nutrition"
       description: Частичная правка каталога; снимки меню существующих банкетов не
         изменяются.
     Restaurant:
@@ -1030,6 +1370,41 @@ components:
       - expectedGuests
       description: date и deadline должны быть в будущем; deadline не позже date.
         Выбранный ресторан должен иметь хотя бы одно доступное блюдо.
+    EventPatch:
+      type: object
+      required: [expectedRevision]
+      properties:
+        expectedRevision: { type: integer, minimum: 0 }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        date: { type: string, format: date-time }
+        deadline: { type: string, format: date-time }
+        expectedGuests: { type: integer, minimum: 1, maximum: 1000 }
+        budget: { type: integer, minimum: 0, maximum: 10000000000 }
+    InvitedGuestCreate:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone:
+          type: string
+          description: Международный номер, допускаются пробелы, скобки и дефисы; +7 и 8 для РФ нормализуются.
+    InvitedGuestPatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone: { type: string }
+    InvitedGuest:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        phone: { type: string }
+        userId:
+          type: [string, 'null']
+          description: Идентификатор привязанного MAX-пользователя, если он вошёл; в ответе создания отсутствует.
+        joined: { type: boolean }
+        submitted: { type: boolean }
+      required: [id, name, phone, joined]
     SelectionItem:
       type: object
       properties:
@@ -1142,6 +1517,14 @@ components:
           type: array
           items:
             "$ref": "#/components/schemas/SummaryItem"
+        canSelect:
+          type: boolean
+          description: Истина только для присоединившегося гостя; демо-владелец может присоединиться автоматически.
+        invitedGuests:
+          type: array
+          description: Только владелец или ресторан; содержит телефоны списка приглашённых.
+          items:
+            "$ref": "#/components/schemas/InvitedGuest"
         inviteCode:
           type: string
           pattern: "^[A-Za-z0-9_-]{24}$"
@@ -1159,6 +1542,7 @@ components:
       - guests
       - selection
       - summary
+      - canSelect
       description: Владелец и ресторан видят всех guests, summary и ссылки приглашения.
         Гость видит только себя, summary=[], ссылки отсутствуют. selection всегда
         описывает текущего пользователя либо пустой выбор.

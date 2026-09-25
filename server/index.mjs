@@ -1,11 +1,13 @@
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
-import { resolve, extname, sep } from 'node:path';
+import { readFile, stat, writeFile, mkdir, rm } from 'node:fs/promises';
+import { resolve, extname, sep, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isIP } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { Store } from './store.mjs';
-import { HttpError, verifyInitData } from './auth.mjs';
+import { HttpError, verifyInitData, verifyMaxContact } from './auth.mjs';
 import { createMaxBot } from './max-bot.mjs';
+import { createNotifier } from './notifications.mjs';
 
 export function readConfig(env = process.env) {
   const publicUrl = (env.PUBLIC_URL || 'http://localhost:3000').replace(/\/+$/, '');
@@ -14,7 +16,7 @@ export function readConfig(env = process.env) {
   const maxDemoSpaces = Number(env.MAX_DEMO_SPACES || 1000);
   if (!Number.isSafeInteger(maxDemoSpaces) || maxDemoSpaces < 1 || maxDemoSpaces > 100000) throw new Error('MAX_DEMO_SPACES must be an integer from 1 to 100000');
   return {
-    port: Number(env.PORT || 3000), host: env.HOST || '0.0.0.0', databasePath: env.DATABASE_PATH || 'data/banquet.sqlite', publicUrl,
+    port: Number(env.PORT || 3000), host: env.HOST || '0.0.0.0', databasePath: env.DATABASE_PATH || 'data/banquet.sqlite', uploadDir: resolve(env.UPLOAD_DIR || join(dirname(env.DATABASE_PATH || 'data/banquet.sqlite'), 'uploads')), publicUrl,
     botToken: env.MAX_BOT_TOKEN || '', botUsername: (env.MAX_BOT_USERNAME || '').replace(/^@/, ''),
     maxWebhookSecret: env.MAX_WEBHOOK_SECRET || '', maxApiUrl: env.MAX_API_URL || 'https://platform-api2.max.ru',
     restaurantAdminIds: (env.RESTAURANT_ADMIN_IDS || '').split(',').map(value => value.trim()).filter(Boolean),
@@ -47,12 +49,32 @@ async function readBody(req) {
   } catch { throw new HttpError(400, 'Некорректный JSON.'); }
 }
 
+async function readImage(req) {
+  const mime = String(req.headers['content-type'] || '').toLowerCase().split(';')[0];
+  const types = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' };
+  if (!types[mime]) throw new HttpError(415, 'Поддерживаются JPEG, PNG и WebP.');
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 3 * 1024 * 1024) throw new HttpError(413, 'Фото должно быть не больше 3 МБ.');
+    chunks.push(chunk);
+  }
+  const bytes = Buffer.concat(chunks);
+  const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  const png = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const webp = bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
+  if (bytes.length < 12 || !(mime === 'image/jpeg' && jpeg || mime === 'image/png' && png || mime === 'image/webp' && webp)) throw new HttpError(400, 'Содержимое файла не соответствует формату фото.');
+  return { bytes, extension: types[mime] };
+}
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
 export function createApp(options = {}) {
   const config = { ...readConfig(), ...options };
   const store = new Store(config);
   const bot = createMaxBot({ token: config.botToken, username: config.botUsername, webhookSecret: config.maxWebhookSecret, publicUrl: config.publicUrl, apiUrl: config.maxApiUrl }, { claimUpdate: key => store.claimMaxUpdate(key), fetchImpl: options.maxFetchImpl });
+  const notifier = createNotifier(store, config, { fetchImpl: options.maxFetchImpl });
   const authWindows = new Map();
   const housekeeping = setInterval(() => { store.cleanup(); for (const [key, value] of authWindows) if (value.expires < Date.now()) authWindows.delete(key); }, 3600000);
   housekeeping.unref();
@@ -89,7 +111,10 @@ export function createApp(options = {}) {
       if (path === '/api/max/webhook' && req.method === 'POST') {
         if (!bot.enabled) throw new HttpError(503, 'MAX-бот ещё не настроен.');
         if (!bot.verifyWebhookSecret(req.headers['x-max-bot-api-secret'])) throw new HttpError(401, 'Некорректный секрет вебхука.');
-        const result = await bot.handleWebhook({ secretHeader: req.headers['x-max-bot-api-secret'], update: await readBody(req) });
+        const update = await readBody(req);
+        if (update.update_type === 'bot_started' || update.update_type === 'bot_stopped') store.recordBotActivity(update.user?.user_id, update.update_type === 'bot_started');
+        if (update.update_type === 'message_created' && update.message?.recipient?.chat_type === 'dialog') store.recordBotActivity(update.message?.sender?.user_id, true);
+        const result = await bot.handleWebhook({ secretHeader: req.headers['x-max-bot-api-secret'], update });
         return json(result.body, result.status);
       }
       if (path.startsWith('/api/auth/') && req.method === 'POST') {
@@ -113,6 +138,11 @@ export function createApp(options = {}) {
       }
       let match;
       if ((match = path.match(/^\/api\/invites\/([^/]+)$/)) && req.method === 'GET') return json(store.invite(match[1]));
+      if ((match = path.match(/^\/api\/media\/([a-f0-9-]{36}\.(?:jpg|png|webp))$/)) && req.method === 'GET') {
+        const file = await readFile(join(config.uploadDir, match[1])).catch(() => { throw new HttpError(404, 'Фото не найдено.'); });
+        res.writeHead(200, { 'Content-Type': { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[extname(match[1]).slice(1)], 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
+        return res.end(file);
+      }
       if ((match = path.match(/^\/api\/downloads\/([^/]+)$/)) && req.method === 'GET') {
         const csv = store.consumeExportLink(match[1]);
         res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="banquet-kitchen.csv"', 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive' });
@@ -121,18 +151,37 @@ export function createApp(options = {}) {
       const authorization = req.headers.authorization || '';
       const user = store.authenticate(authorization.startsWith('Bearer ') ? authorization.slice(7) : '');
       if (path === '/api/me' && req.method === 'GET') return json(store.publicUser(user));
+      if (path === '/api/me/phone' && req.method === 'PUT') return json(store.bindPhone(user, verifyMaxContact(await readBody(req), user.external_id, config.botToken)));
+      if (path === '/api/me/notifications' && req.method === 'PUT') return json(store.setNotifications(user, (await readBody(req)).enabled));
+      if (path === '/api/media' && req.method === 'POST') {
+        if (user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');
+        const { bytes, extension } = await readImage(req);
+        const fileName = `${randomUUID()}.${extension}`;
+        await mkdir(config.uploadDir, { recursive: true, mode: 0o700 });
+        await writeFile(join(config.uploadDir, fileName), bytes, { flag: 'wx', mode: 0o600 });
+        try { store.registerMedia(user, fileName); }
+        catch (error) { await rm(join(config.uploadDir, fileName), { force: true }); throw error; }
+        return json({ photoUrl: `/api/media/${fileName}` }, 201);
+      }
       if (path === '/api/restaurants' && req.method === 'GET') return json(store.restaurants(user));
       if (path === '/api/events' && req.method === 'GET') return json(store.events(user));
       if (path === '/api/events' && req.method === 'POST') { const body = await readBody(req); return json(store.transaction(() => store.createEvent(user, body)), 201); }
       if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'GET') return json(store.detail(user, match[1]));
+      if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editEvent(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/guests$/)) && req.method === 'POST') return json(store.addInvite(user, match[1], await readBody(req)), 201);
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/guests\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editInvite(user, match[1], match[2], await readBody(req)));
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/guests\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteInvite(user, match[1], match[2]));
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/menu(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editEventMenu(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteEventMenu(user, match[1], match[2]));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/export-link$/)) && req.method === 'POST') return json(store.createExportLink(user, match[1]));
-      if ((match = path.match(/^\/api\/invites\/([^/]+)\/join$/)) && req.method === 'POST') return json(store.join(user, match[1]));
+      if ((match = path.match(/^\/api\/invites\/([^/]+)\/join$/)) && req.method === 'POST') return json(store.transaction(() => store.join(user, match[1])));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/selection$/)) && req.method === 'PUT') return json(store.saveSelection(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/approve$/)) && req.method === 'POST') {
         const body = Number(req.headers['content-length'] || 0) > 0 || req.headers['transfer-encoding'] ? await readBody(req) : {};
         return json(store.approve(user, match[1], body));
       }
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/menu(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editMenu(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/menu\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteMenu(user, match[1], match[2]));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/export\.csv$/)) && req.method === 'GET') {
         const csv = store.exportCsv(user, match[1]);
         res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="banquet-kitchen.csv"', 'Cache-Control': 'no-store' });
@@ -148,7 +197,8 @@ export function createApp(options = {}) {
   });
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
-  server.on('close', () => { clearInterval(housekeeping); store.close(); });
+  server.on('close', () => { clearInterval(housekeeping); notifier.stop(); store.close(); });
+  if (!options.disableNotifications) server.on('listening', () => notifier.start());
   return { server, store, config };
 }
 

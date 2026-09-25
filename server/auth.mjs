@@ -6,6 +6,37 @@ export class HttpError extends Error {
 
 export const digest = value => createHash('sha256').update(value).digest('hex');
 
+export function normalizePhone(value) {
+  if (typeof value !== 'string' || !/^\+?[0-9 ()-]{10,24}$/.test(value)) throw new HttpError(400, 'Укажите корректный номер телефона.');
+  let digits = value.replace(/\D/g, '');
+  if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
+  if (!/^[1-9][0-9]{9,14}$/.test(digits)) throw new HttpError(400, 'Укажите номер в международном формате.');
+  return digits;
+}
+
+/** https://dev.max.ru/docs/webapps/bridge#windowwebapprequestcontact */
+export function verifyMaxContact(contact, userId, botToken, { now = Date.now(), maxAgeMs = 10 * 60_000 } = {}) {
+  if (!botToken) throw new HttpError(503, 'Подтверждение телефона MAX не настроено.');
+  if (!contact || typeof contact !== 'object' || Array.isArray(contact) ||
+      typeof contact.phone !== 'string' || typeof contact.authDate !== 'string' ||
+      !/^[a-fA-F0-9]{64}$/.test(contact.hash || '') || !/^[1-9][0-9]{0,18}$/.test(String(userId))) {
+    throw new HttpError(401, 'MAX не подтвердил номер телефона.');
+  }
+  const phone = normalizePhone(contact.phone);
+  const rawTime = contact.authDate;
+  const numericTime = /^\d{10,13}$/.test(rawTime) ? Number(rawTime) : NaN;
+  const time = Number.isSafeInteger(numericTime)
+    ? (numericTime < 1e12 ? numericTime * 1000 : numericTime)
+    : Date.parse(rawTime);
+  if (!Number.isFinite(time) || time > now + 30_000 || time < now - maxAgeMs) {
+    throw new HttpError(401, 'Подтверждение номера устарело. Запросите номер ещё раз.');
+  }
+  const data = `authDate=${rawTime}\nphone=${phone}\nuserId=${userId}`;
+  const expected = createHmac('sha256', botToken).update(data).digest();
+  if (!timingSafeEqual(expected, Buffer.from(contact.hash, 'hex'))) throw new HttpError(401, 'MAX не подтвердил номер телефона.');
+  return phone;
+}
+
 /** MAX specification: https://dev.max.ru/docs/webapps/validation */
 export function verifyInitData(initData, botToken, { now = Date.now(), maxAge = 3600 } = {}) {
   if (!botToken) throw new HttpError(503, 'Вход через MAX ещё не настроен.');
