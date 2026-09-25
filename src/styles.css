@@ -2357,6 +2357,187 @@ main {
   .catalog .section-head {
     flex-wrap: wrap;
   }
+  main {
+    padding-bottom: calc(105px + env(safe-area-inset-bottom));
+  }
+  .stats-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stats-row .stat:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+  .stat-top,
+  .detail-heading + .stats-row .stat-top {
+    font-size: 11px;
+  }
+  .stat > small {
+    font-size: 10px;
+  }
+  .stat > strong,
+  .detail-heading + .stats-row .stat > strong {
+    font-size: 20px;
+    overflow-wrap: anywhere;
+  }
+  .mobile-nav {
+    padding: 6px 12px max(8px, env(safe-area-inset-bottom));
+  }
+  .mobile-nav button {
+    min-height: 48px;
+    min-width: 0;
+    flex: 1;
+    justify-content: center;
+    font-size: 11px;
+  }
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    border-bottom: 0;
+  }
+  .tabs button {
+    min-height: 44px;
+    padding: 8px;
+    margin: 0;
+    border: 1px solid #dee5d8;
+    border-radius: 8px;
+    background: #fff;
+    font-size: 12px;
+  }
+  .tabs button.active {
+    background: #edf4e8;
+  }
+  .tabs button:only-child {
+    grid-column: 1 / -1;
+  }
+  .menu-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .menu-heading p,
+  .selection-bottom small {
+    font-size: 12px;
+  }
+  .vegetarian-filter {
+    min-height: 44px;
+    font-size: 12px;
+  }
+  .vegetarian-filter input {
+    width: 18px;
+    height: 18px;
+  }
+  .category-tabs button {
+    min-height: 44px;
+    font-size: 12px;
+  }
+  .menu-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .dish-visual {
+    height: 155px;
+  }
+  .dish-content {
+    padding: 15px;
+  }
+  .dish-category {
+    font-size: 11px;
+  }
+  .dish-content h3 {
+    font-size: 16px;
+  }
+  .dish-content p,
+  .dish-content .nutrition,
+  .allergens {
+    font-size: 12px;
+  }
+  .dish-bottom > strong {
+    font-size: 17px;
+  }
+  .quantity button {
+    width: 40px;
+    height: 40px;
+  }
+  .quantity span {
+    min-width: 20px;
+    font-size: 14px;
+  }
+  .selection-bottom textarea {
+    font-size: 16px;
+  }
+  .selection-total {
+    font-size: 12px;
+  }
+  .selection-total .btn {
+    min-height: 48px;
+  }
+  .admin-panel .section-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .admin-panel .section-head .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .admin-panel label,
+  .modal label {
+    font-size: 13px;
+  }
+  .admin-panel input,
+  .admin-panel select,
+  .admin-panel textarea {
+    min-height: 46px;
+    font-size: 16px;
+  }
+  .admin-panel .btn {
+    justify-self: stretch;
+    min-height: 46px;
+    justify-content: center;
+  }
+  .admin-guest {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin-guest strong,
+  .admin-guest small {
+    overflow-wrap: anywhere;
+  }
+  .admin-guest strong {
+    font-size: 14px;
+  }
+  .admin-guest small {
+    font-size: 12px;
+  }
+  .admin-actions {
+    flex-direction: row;
+  }
+  .admin-actions button {
+    min-height: 44px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form-grid > * {
+    min-width: 0;
+  }
+  .nutrition-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .modal {
+    max-height: calc(100dvh - 24px);
+    overscroll-behavior: contain;
+  }
+  .modal-actions .btn {
+    min-height: 44px;
+    flex: 1;
+  }
+  .toast {
+    max-width: calc(100vw - 32px);
+    width: auto;
+    overflow-wrap: anywhere;
+    font-size: 12px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *,
