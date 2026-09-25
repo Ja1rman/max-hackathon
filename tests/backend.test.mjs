@@ -352,6 +352,29 @@ test('signed MAX phone and organizer roster bind a guest to exactly their own or
   assert.equal((await f.request(`/api/events/${event.id}`, { token: outsider.token })).status, 404);
 });
 
+test('common bot button finds only invitations for the signed MAX phone and claims them idempotently', async t => {
+  const f = await fixture(t);
+  const owner = await f.login(100);
+  const guest = await f.login(200);
+  const outsider = await f.login(300);
+  const first = await f.event(owner.token);
+  const second = await f.event(owner.token);
+  for (const event of [first, second]) {
+    assert.equal((await f.request(`/api/events/${event.id}/guests`, { token: owner.token, method: 'POST', body: { name: 'Ирина', phone: '+79991234567' } })).status, 201);
+  }
+  assert.equal((await f.request('/api/me/claim-invitations', { token: guest.token, method: 'POST' })).status, 403);
+  assert.equal((await f.request('/api/me/claim-invitations', { token: outsider.token, method: 'POST' })).status, 403);
+  assert.equal((await f.request('/api/me/phone', { token: guest.token, method: 'PUT', body: signedContact(200, '+79991234567') })).status, 200);
+  const claimed = await f.request('/api/me/claim-invitations', { token: guest.token, method: 'POST' });
+  assert.equal(claimed.status, 200);
+  assert.deepEqual(new Set(claimed.data.eventIds), new Set([first.id, second.id]));
+  assert.deepEqual(new Set((await f.request('/api/events', { token: guest.token })).data.map(event => event.id)), new Set([first.id, second.id]));
+  assert.deepEqual((await f.request('/api/me/claim-invitations', { token: guest.token, method: 'POST' })).data.eventIds, claimed.data.eventIds);
+  assert.equal((await f.request('/api/events', { token: outsider.token })).data.length, 0);
+  assert.equal((await f.request(`/api/events/${first.id}/selection`, { token: outsider.token, method: 'PUT', body: { items: [{ menuItemId: first.menu[0].id, quantity: 1 }] } })).status, 403);
+  assert.equal((await f.request(`/api/events/${first.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: first.menu[0].id, quantity: 1 }] } })).status, 200);
+});
+
 test('event administration edits metadata and event-only KBJU menu with revision and selection locks', async t => {
   const f = await fixture(t);
   const owner = await f.login(100);
@@ -363,10 +386,14 @@ test('event administration edits metadata and event-only KBJU menu with revision
   assert.equal(next.data.expectedGuests, 18);
   assert.equal((await f.request(`/api/events/${event.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: event.revision, title: 'Старая версия' } })).status, 409);
   assert.equal((await f.request(`/api/events/${event.id}`, { token: outsider.token, method: 'PATCH', body: { expectedRevision: next.data.revision, title: 'Чужое' } })).status, 403);
-  const dish = { name: 'Яблочный сок', description: 'Свежий сок', category: 'Напитки', price: 29000, weight: '250 мл', allergens: [], vegetarian: true, available: true, nutrition: { kcal: 110, protein: 0, fat: 0, carbs: 26.5 } };
+  const dish = { name: 'Яблочный сок', description: 'Свежий сок', category: 'Напитки', price: 29000, weight: '250 мл', allergens: [], vegetarian: true, available: true, labels: ['Мало калорий'], nutrition: { kcal: 110, protein: 0, fat: 0, carbs: 26.5 } };
   const added = await f.request(`/api/events/${event.id}/menu`, { token: owner.token, method: 'POST', body: dish });
   assert.equal(added.status, 201);
   assert.equal(added.data.nutrition.carbs, 26.5);
+  assert.deepEqual(added.data.labels, ['Мало калорий']);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { labels: ['Несуществующая'] } })).status, 400);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { labels: ['Халяль', 'Много белка'] } })).status, 200);
+  assert.deepEqual((await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.find(item => item.id === added.data.id).labels, ['Халяль', 'Много белка']);
   assert.equal((await f.request(`/api/restaurants/${event.restaurantId}/menu/${added.data.id}`, { token: owner.token })).status, 404);
   const guest = await f.login(300);
   await f.inviteGuest(owner.token, event, guest.token, 300, '+79990000003');

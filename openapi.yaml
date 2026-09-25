@@ -225,6 +225,27 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
+  "/api/me/claim-invitations":
+    post:
+      operationId: claimMyInvitations
+      summary: Найти и принять приглашения по подтверждённому номеру MAX
+      description: Для общей кнопки бота, которая не передаёт код банкета. Требует подпись MAX для номера через PUT /api/me/phone. Находит только записи текущего номера, закрепляет их за текущим MAX ID и возвращает доступные eventId. Повторный вызов безопасен. Закрытые банкеты без ранее принятого приглашения пропускаются.
+      responses:
+        '200':
+          description: Доступные банкеты гостя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  eventIds:
+                    type: array
+                    items: { type: string }
+                required: [eventIds]
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
   "/api/me/notifications":
     put:
       operationId: setNotifications
@@ -1063,6 +1084,8 @@ components:
             minLength: 1
             maxLength: 80
           maxItems: 20
+        labels:
+          "$ref": "#/components/schemas/MenuLabels"
         available:
           type: boolean
         vegetarian:
@@ -1081,8 +1104,17 @@ components:
       - weight
       - emoji
       - allergens
+      - labels
       - available
       - vegetarian
+    MenuLabels:
+      type: array
+      uniqueItems: true
+      maxItems: 3
+      items:
+        type: string
+        enum: [Халяль, Много белка, Мало калорий]
+      description: Редактируемые пометки. «Халяль» указывается только после подтверждения рестораном.
     Nutrition:
       type: object
       description: Пищевая ценность одной указанной порции; тестовые значения ориентировочные.
@@ -1124,6 +1156,8 @@ components:
             minLength: 1
             maxLength: 80
           maxItems: 20
+        labels:
+          "$ref": "#/components/schemas/MenuLabels"
         available:
           type: boolean
         vegetarian:
@@ -1138,7 +1172,7 @@ components:
       - price
       - nutrition
       description: "Описание/вес по умолчанию пустые, emoji \U0001F37D️, available
-        true, vegetarian false, allergens []."
+        true, vegetarian false, allergens [], labels []."
     MenuItemPatch:
       type: object
       properties:
@@ -1171,6 +1205,8 @@ components:
             minLength: 1
             maxLength: 80
           maxItems: 20
+        labels:
+          "$ref": "#/components/schemas/MenuLabels"
         available:
           type: boolean
         vegetarian:

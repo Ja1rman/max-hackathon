@@ -19,6 +19,7 @@ WORKDIR /app
 RUN mkdir -p /data/backups && chown -R node:node /app /data
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/server ./server
+COPY --from=build --chown=node:node /app/shared ./shared
 COPY --from=build --chown=node:node /app/certs ./certs
 COPY --from=build --chown=node:node /app/scripts/setup-max.mjs ./scripts/setup-max.mjs
 COPY --from=build --chown=node:node /app/package.json ./package.json

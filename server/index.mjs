@@ -152,6 +152,7 @@ export function createApp(options = {}) {
       const user = store.authenticate(authorization.startsWith('Bearer ') ? authorization.slice(7) : '');
       if (path === '/api/me' && req.method === 'GET') return json(store.publicUser(user));
       if (path === '/api/me/phone' && req.method === 'PUT') return json(store.bindPhone(user, verifyMaxContact(await readBody(req), user.external_id, config.botToken)));
+      if (path === '/api/me/claim-invitations' && req.method === 'POST') return json(store.transaction(() => store.claimInvitations(user)));
       if (path === '/api/me/notifications' && req.method === 'PUT') return json(store.setNotifications(user, (await readBody(req)).enabled));
       if (path === '/api/media' && req.method === 'POST') {
         if (user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');

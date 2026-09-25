@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { digest, HttpError, normalizePhone } from './auth.mjs';
+import { MENU_LABELS } from '../shared/menu-labels.mjs';
 
 const secret = () => randomBytes(32).toString('base64url');
 const id = prefix => `${prefix}_${randomUUID()}`;
@@ -12,14 +13,14 @@ const MAX_MONEY = 100_000_000_00;
 export const SAMPLE_MENU = [
   { name: 'Буррата с томатами', description: 'Сладкие томаты, базилик, оливковое масло и нежная буррата', category: 'Закуски', price: 69000, weight: '230 г', emoji: '🍅', allergens: ['Молоко'], vegetarian: true, nutrition: { kcal: 340, protein: 17, fat: 26, carbs: 10 } },
   { name: 'Салат с ростбифом', description: 'Ростбиф, микс салатов, печёный перец и горчичный соус', category: 'Закуски', price: 79000, weight: '210 г', emoji: '🥗', allergens: ['Горчица'], vegetarian: false, nutrition: { kcal: 295, protein: 24, fat: 18, carbs: 9 } },
-  { name: 'Лосось с овощами', description: 'Филе лосося на гриле с сезонными овощами и лимоном', category: 'Горячее', price: 129000, weight: '320 г', emoji: '🐟', allergens: ['Рыба'], vegetarian: false, nutrition: { kcal: 510, protein: 42, fat: 32, carbs: 13 } },
-  { name: 'Цыплёнок с пюре', description: 'Запечённое филе цыплёнка, картофельное пюре и сливочный соус', category: 'Горячее', price: 89000, weight: '350 г', emoji: '🍗', allergens: ['Молоко'], vegetarian: false, nutrition: { kcal: 575, protein: 44, fat: 27, carbs: 35 } },
+  { name: 'Лосось с овощами', description: 'Филе лосося на гриле с сезонными овощами и лимоном', category: 'Горячее', price: 129000, weight: '320 г', emoji: '🐟', allergens: ['Рыба'], vegetarian: false, labels: ['Много белка'], nutrition: { kcal: 510, protein: 42, fat: 32, carbs: 13 } },
+  { name: 'Цыплёнок с пюре', description: 'Запечённое филе цыплёнка, картофельное пюре и сливочный соус', category: 'Горячее', price: 89000, weight: '350 г', emoji: '🍗', allergens: ['Молоко'], vegetarian: false, labels: ['Много белка'], nutrition: { kcal: 575, protein: 44, fat: 27, carbs: 35 } },
   { name: 'Ризотто с грибами', description: 'Рис арборио, лесные грибы и пармезан', category: 'Горячее', price: 85000, weight: '280 г', emoji: '🍄', allergens: ['Молоко'], vegetarian: true, nutrition: { kcal: 490, protein: 13, fat: 21, carbs: 59 } },
   { name: 'Павлова с ягодами', description: 'Хрустящая меренга, сливочный крем и сезонные ягоды', category: 'Десерты', price: 49000, weight: '150 г', emoji: '🍓', allergens: ['Яйца', 'Молоко'], vegetarian: true, nutrition: { kcal: 315, protein: 5, fat: 15, carbs: 40 } },
   { name: 'Шоколадный фондан', description: 'Тёплый шоколадный десерт с шариком ванильного мороженого', category: 'Десерты', price: 55000, weight: '180 г', emoji: '🍫', allergens: ['Глютен', 'Яйца', 'Молоко'], vegetarian: true, nutrition: { kcal: 465, protein: 7, fat: 28, carbs: 47 } },
   { name: 'Домашний лимонад', description: 'Лимон, мята и газированная вода', category: 'Напитки', price: 29000, weight: '300 мл', emoji: '🍋', allergens: [], vegetarian: true, nutrition: { kcal: 105, protein: 0, fat: 0, carbs: 26 } },
   { name: 'Ягодный морс', description: 'Клюква, брусника и немного сахара', category: 'Напитки', price: 25000, weight: '300 мл', emoji: '🫐', allergens: [], vegetarian: true, nutrition: { kcal: 90, protein: 0, fat: 0, carbs: 22 } },
-  { name: 'Чай с мятой', description: 'Горячий чай с листьями мяты', category: 'Напитки', price: 19000, weight: '350 мл', emoji: '🍵', allergens: [], vegetarian: true, nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } },
+  { name: 'Чай с мятой', description: 'Горячий чай с листьями мяты', category: 'Напитки', price: 19000, weight: '350 мл', emoji: '🍵', allergens: [], vegetarian: true, labels: ['Мало калорий'], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } },
   { name: 'Капучино', description: 'Эспрессо и вспененное молоко', category: 'Напитки', price: 27000, weight: '250 мл', emoji: '☕', allergens: ['Молоко'], vegetarian: true, nutrition: { kcal: 120, protein: 6, fat: 6, carbs: 11 } },
   { name: 'Вода без газа', description: 'Бутилированная питьевая вода', category: 'Напитки', price: 17000, weight: '500 мл', emoji: '💧', allergens: [], vegetarian: true, nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } },
 ];
@@ -50,6 +51,7 @@ function menuItem(value, itemId) {
     category: string(value.category, 'Категория', 80), price: integer(value.price, 'Цена в копейках', 1, 100000000),
     weight: string(value.weight, 'Вес / объём', 40, true), emoji: string(value.emoji || '🍽️', 'Значок', 12),
     photoUrl: value.photoUrl || '', available: value.available, vegetarian: value.vegetarian, allergens: value.allergens,
+    labels: value.labels ?? [],
     nutrition: {
       kcal: integer(nutrition.kcal, 'Калории', 0, 10000), protein: grams(nutrition.protein, 'Белки'),
       fat: grams(nutrition.fat, 'Жиры'), carbs: grams(nutrition.carbs, 'Углеводы'),
@@ -59,8 +61,11 @@ function menuItem(value, itemId) {
   if (typeof item.photoUrl !== 'string' || (item.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(item.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
   if (!Array.isArray(item.allergens) || item.allergens.length > 20) throw new HttpError(400, 'Аллергены: ожидается список до 20 значений.');
   item.allergens = item.allergens.map(entry => string(entry, 'Аллерген', 80));
+  if (!Array.isArray(item.labels) || item.labels.length > MENU_LABELS.length || new Set(item.labels).size !== item.labels.length || item.labels.some(label => !MENU_LABELS.includes(label))) throw new HttpError(400, 'Пометки блюда: выберите значения из доступного списка без повторов.');
   return item;
 }
+
+const presentMenuItem = data => ({ labels: [], ...JSON.parse(data) });
 
 export class Store {
   constructor(config) {
@@ -283,10 +288,10 @@ export class Store {
   restaurants(user) {
     return this.db.prepare('SELECT * FROM restaurants WHERE scope=? ORDER BY name').all(user.scope).map(row => ({
       id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu),
-      menu: this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => JSON.parse(item.data)),
+      menu: this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => presentMenuItem(item.data)),
     }));
   }
-  eventMenu(eventId) { return this.db.prepare('SELECT data FROM event_menu WHERE event_id=? ORDER BY rowid').all(eventId).map(row => JSON.parse(row.data)); }
+  eventMenu(eventId) { return this.db.prepare('SELECT data FROM event_menu WHERE event_id=? ORDER BY rowid').all(eventId).map(row => presentMenuItem(row.data)); }
   eventRow(eventId, user) {
     const row = this.db.prepare('SELECT * FROM events WHERE id=? AND scope=?').get(eventId, user.scope);
     if (!row) throw new HttpError(404, 'Банкет не найден.');
@@ -469,6 +474,23 @@ export class Store {
       if (event.scope === 'live') this.queueNotice(event.id, event.owner_id, `guest_joined:${user.id}`);
     }
     return { eventId: event.id };
+  }
+  claimInvitations(user) {
+    if (user.demo || !user.phone || !user.phone_verified_at) throw new HttpError(403, 'Подтвердите номер телефона через MAX, чтобы найти приглашения.');
+    const slots = this.db.prepare(`SELECT events.id,events.invite_code FROM guest_invites JOIN events ON events.id=guest_invites.event_id
+      WHERE events.scope='live' AND guest_invites.phone=? AND (guest_invites.user_id IS NULL OR guest_invites.user_id=?)
+      ORDER BY events.date`).all(user.phone, user.id);
+    const eventIds = [];
+    for (const slot of slots) {
+      const joined = this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(slot.id, user.id);
+      if (!joined) {
+        const event = this.db.prepare('SELECT * FROM events WHERE id=?').get(slot.id);
+        if (event.status !== 'collecting' || Date.parse(event.deadline) <= Date.now()) continue;
+      }
+      this.join(user, slot.invite_code);
+      eventIds.push(slot.id);
+    }
+    return { eventIds };
   }
   detail(user, eventId) {
     const event = this.eventRow(eventId, user);

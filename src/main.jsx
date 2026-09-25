@@ -30,6 +30,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import "./styles.css";
+import { MENU_LABELS } from '../shared/menu-labels.mjs';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -232,20 +233,37 @@ function App() {
         setConfig(c);
         const launch = window.WebApp?.initData;
         if (launch) {
-          remember(
-            await api("/auth/max", {
-              method: "POST",
-              body: { initData: launch },
-            }),
-          );
+          const login = await api("/auth/max", {
+            method: "POST",
+            body: { initData: launch },
+          });
+          remember(login);
           const sp = window.WebApp?.initDataUnsafe?.start_param;
           if (sp) {
             if (sp.startsWith('event_')) setStartEvent(sp);
             else setInvite(sp);
           }
+          if (login.user.phoneVerified) {
+            try {
+              const claimed = await api('/me/claim-invitations', { method: 'POST', body: {} });
+              if (!sp && !startParam && claimed.eventIds.length === 1) {
+                setSelected(claimed.eventIds[0]);
+                setTab('menu');
+              }
+            } catch (claimError) { setError(claimError.message); }
+          }
+          await refresh().catch(refreshError => setError(refreshError.message));
         } else if (authToken) {
           const me = await api("/me");
           setSession(me.user || me);
+          if ((me.user || me).phoneVerified) {
+            const claimed = await api('/me/claim-invitations', { method: 'POST', body: {} });
+            if (!startParam && claimed.eventIds.length === 1) {
+              setSelected(claimed.eventIds[0]);
+              setTab('menu');
+            }
+          }
+          await refresh().catch(refreshError => setError(refreshError.message));
         }
       } catch (e) {
         authToken = "";
@@ -327,10 +345,11 @@ function App() {
       });
       remember(data);
     });
-  const openEvent = (id) => {
+  const openEvent = (id, asGuest = false) => {
+    setScreen('events');
     setSelected(id);
     setDetail(null);
-    setTab(session?.role === "guest" ? "menu" : "guests");
+    setTab(asGuest || session?.role === "guest" ? "menu" : "guests");
   };
   useEffect(() => {
     if (startEvent && events.some(event => event.id === startEvent)) {
@@ -345,6 +364,19 @@ function App() {
     const updated = await api('/me/phone', { method: 'PUT', body: contact });
     setSession(updated);
     return updated;
+  };
+  const findMyInvites = async () => {
+    if (!session.phoneVerified) await requestVerifiedPhone();
+    const claimed = await api('/me/claim-invitations', { method: 'POST', body: {} });
+    await refresh();
+    if (claimed.eventIds.length === 1) {
+      openEvent(claimed.eventIds[0], true);
+      notify('Приглашение найдено — выберите блюда');
+    } else if (claimed.eventIds.length > 1) {
+      notify('Приглашения найдены — выберите банкет');
+    } else {
+      notify('На подтверждённый номер приглашений пока нет');
+    }
   };
   const joinInvite = () =>
     perform(async () => {
@@ -512,6 +544,7 @@ function App() {
       </div>
     );
   const role = session.role,
+    guestFirst = !session.demo && role === 'organizer' && !events.some(event => event.isOwner),
     canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
     displayTab = detail && !canManage ? "menu" : tab,
     activeEvents = events.filter((e) => e.status === "collecting"),
@@ -533,7 +566,7 @@ function App() {
             }}
           >
             <CalendarDays size={19} />
-            {role === "restaurant" ? "Заказы на банкеты" : "Мои банкеты"}
+            {role === "restaurant" ? "Заказы на банкеты" : guestFirst ? 'Мои приглашения' : "Мои банкеты"}
             <span>{events.length}</span>
           </button>
           {role !== "guest" && (
@@ -557,7 +590,7 @@ function App() {
           {!session.demo && (
             <div className="profile-controls">
               <small>{session.phoneVerified ? `Номер подтверждён: +${session.phone}` : 'Номер MAX ещё не подтверждён'}</small>
-              {!session.phoneVerified && <button disabled={busy} onClick={() => perform(async () => { await requestVerifiedPhone(); notify('Номер MAX подтверждён'); })}>Подтвердить номер</button>}
+              {!session.phoneVerified && <button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер и найти приглашения</button>}
               <button disabled={busy} onClick={() => perform(async () => {
                 const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
                 setSession(updated);
@@ -1033,7 +1066,7 @@ function App() {
                   <h1>
                     {role === "restaurant"
                       ? "Заказы на банкеты"
-                      : role === "guest"
+                      : role === "guest" || guestFirst
                         ? "Ваши приглашения"
                         : "Мои банкеты"}
                     <span className="heading-dot">.</span>
@@ -1041,18 +1074,28 @@ function App() {
                   <p>
                     {role === "restaurant"
                       ? "Точные количества, пожелания гостей и готовый заказ для кухни."
-                      : role === "guest"
+                      : role === "guest" || guestFirst
                         ? "Хорошая компания уже ждёт. Осталось выбрать любимое."
                         : "Гости выбирают любимое. Вы держите всё под контролем."}
                   </p>
                 </div>
-                {role === "organizer" && (
+                {role === "organizer" && !guestFirst && (
                   <Button onClick={() => setCreateOpen(true)}>
                     <Plus size={18} />
                     Создать банкет
                   </Button>
                 )}
               </div>
+              {guestFirst && !invite && (
+                <div className="guest-discovery">
+                  <div>
+                    <strong>{session.phoneVerified ? 'Проверить приглашения' : 'Вас пригласили на банкет?'}</strong>
+                    <p>{session.phoneVerified ? 'Найдём банкеты, куда организатор добавил ваш подтверждённый номер MAX.' : 'Подтвердите свой номер через MAX. Мы найдём ваш банкет и откроем меню для выбора блюд.'}</p>
+                  </div>
+                  <Button disabled={busy} onClick={() => perform(findMyInvites)}>{session.phoneVerified ? 'Найти приглашения' : 'Подтвердить номер'}</Button>
+                  {!events.length && <button className="guest-discovery-create" onClick={() => setCreateOpen(true)}>Я организатор · создать банкет</button>}
+                </div>
+              )}
               <div className="stats-row">
                 <Stat
                   icon={CalendarDays}
@@ -1098,7 +1141,7 @@ function App() {
                   <button
                     className="event-card"
                     key={event.id}
-                    onClick={() => openEvent(event.id)}
+                    onClick={() => openEvent(event.id, !event.isOwner && role !== 'restaurant')}
                   >
                     <div className={`event-art art-${i % 3}`}>
                       <div className="mini-plate">
@@ -1161,7 +1204,7 @@ function App() {
                     </div>
                   </button>
                 ))}
-                {role !== "guest" && filter === "all" && (
+                {role !== "guest" && !guestFirst && filter === "all" && (
                   <button
                     className="new-event-card"
                     onClick={() => setCreateOpen(true)}
@@ -1397,6 +1440,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
           {item.category} {item.weight ? "· " + item.weight : ""}
         </span>
         <h3>{item.name}</h3>
+        {item.labels?.length > 0 && <div className="dish-labels">{item.labels.map(label => <span key={label} className={`dish-label ${label === 'Халяль' ? 'halal' : label === 'Много белка' ? 'protein' : 'light'}`}>{label}</span>)}</div>}
         <p>{item.description}</p>
         {item.nutrition && <small className="nutrition">На порцию: {item.nutrition.kcal} ккал · Б {item.nutrition.protein} г · Ж {item.nutrition.fat} г · У {item.nutrition.carbs} г</small>}
         {item.allergens?.length > 0 && (
@@ -1778,6 +1822,7 @@ function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
               .split(",")
               .map((v) => v.trim())
               .filter(Boolean),
+            labels: f.getAll('labels'),
             vegetarian: f.get("vegetarian") === "on",
             available: f.get("available") === "on",
             emoji: f.get("emoji") || "🍽️",
@@ -1848,6 +1893,11 @@ function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
           <label>Углеводы, г<input type="number" name="carbs" min="0" max="1000" step="0.1" required defaultValue={item.nutrition?.carbs ?? ''} /></label>
         </div>
         <small className="muted">КБЖУ указываются на одну порцию. Для демонстрационных блюд значения ориентировочные.</small>
+        <fieldset className="dish-label-fieldset">
+          <legend>Пометки блюда</legend>
+          <div className="dish-label-options">{MENU_LABELS.map(label => <label key={label}><input type="checkbox" name="labels" value={label} defaultChecked={item.labels?.includes(label)} />{label}</label>)}</div>
+          <small className="muted">«Халяль» отмечайте только для подтверждённых рестораном блюд.</small>
+        </fieldset>
         <label>
           Аллергены, через запятую
           <input name="allergens" defaultValue={item.allergens?.join(", ")} />
