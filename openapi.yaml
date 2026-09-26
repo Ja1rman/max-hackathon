@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.4.0
+  version: 1.5.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
@@ -334,6 +334,123 @@ paths:
           "$ref": "#/components/responses/401"
         '500':
           "$ref": "#/components/responses/500"
+    post:
+      operationId: createRestaurant
+      summary: Добавить ресторан
+      description: Только суперадминистратор (RESTAURANT_ADMIN_IDS). Меню нового ресторана пустое.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RestaurantInput"
+      responses:
+        '201':
+          description: Создан
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restaurant"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '429':
+          "$ref": "#/components/responses/429"
+  "/api/restaurants/{restaurantId}":
+    patch:
+      operationId: editRestaurant
+      summary: Изменить название, адрес или описание ресторана
+      description: Администратор этого ресторана.
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RestaurantInput"
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restaurant"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+  "/api/restaurants/{restaurantId}/members/{userId}":
+    put:
+      operationId: setRestaurantMember
+      summary: Выдать пользователю роль в ресторане
+      description: Администратор этого ресторана. none убирает доступ. Роль суперадминистратора
+        и свою собственную изменить нельзя (409).
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [admin, organizer, none]
+      responses:
+        '200':
+          description: Успешно
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+  "/api/users":
+    get:
+      operationId: listUsers
+      summary: Пользователи, открывавшие приложение, и их роли в ваших ресторанах
+      description: Администратор хотя бы одного ресторана. Роли возвращаются только для
+        ресторанов, которые администрирует запрашивающий. До 200 записей.
+      parameters:
+      - name: q
+        in: query
+        required: false
+        description: Часть имени, цифры телефона или точный MAX ID.
+        schema:
+          type: string
+          maxLength: 80
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/ManagedUser"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
   "/api/events":
     get:
       operationId: events
@@ -678,76 +795,82 @@ paths:
               "$ref": "#/components/schemas/Approve"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/organizers":
+  "/api/kitchen/export":
     get:
-      operationId: listOrganizers
-      summary: Организаторы, добавленные администратором
-      description: Только администратор (restaurant). Пользователь MAX, подтвердивший номер
-        из списка, получает роль organizer; остальные пользователи — guest.
+      operationId: exportKitchen
+      summary: Выгрузить раздел «Кухня» в Excel или CSV
+      description: Администратор. XLSX содержит листы «Порции» и «Гости»; CSV — обе таблицы
+        подряд, с защитой от формул.
+      parameters:
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [xlsx, csv]
+          default: csv
       responses:
         '200':
-          description: Успешно
+          description: Файл
           content:
-            application/json:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
               schema:
-                type: array
-                items:
-                  "$ref": "#/components/schemas/Organizer"
-        '401':
-          "$ref": "#/components/responses/401"
-        '403':
-          "$ref": "#/components/responses/403"
-    post:
-      operationId: addOrganizer
-      summary: Добавить организатора по номеру телефона
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/OrganizerCreate"
-      responses:
-        '201':
-          description: Добавлен
-          content:
-            application/json:
+                type: string
+                format: binary
+            text/csv:
               schema:
-                "$ref": "#/components/schemas/Organizer"
+                type: string
         '400':
           "$ref": "#/components/responses/400"
         '401':
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-        '409':
-          "$ref": "#/components/responses/409"
-        '429':
-          "$ref": "#/components/responses/429"
-  "/api/organizers/{organizerId}":
-    delete:
-      operationId: deleteOrganizer
-      summary: Удалить организатора из списка
-      description: Уже созданные им банкеты остаются, и он продолжает управлять ими.
-      parameters:
-      - name: organizerId
-        in: path
+  "/api/kitchen/export-link":
+    post:
+      operationId: kitchenExportLink
+      summary: Одноразовая ссылка на выгрузку «Кухни» для WebApp.downloadFile
+      requestBody:
         required: true
-        schema:
-          type: string
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format:
+                  type: string
+                  enum: [xlsx, csv]
       responses:
         '200':
-          description: Удалён
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ExportLink"
+        '400':
+          "$ref": "#/components/responses/400"
         '401':
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
+  "/api/downloads/kitchen/{downloadToken}":
+    get:
+      operationId: downloadKitchen
+      summary: Скачать выгрузку «Кухни» по одноразовой ссылке
+      security: []
+      parameters:
+      - "$ref": "#/components/parameters/downloadToken"
+      responses:
+        '200':
+          description: Файл XLSX или CSV
         '404':
           "$ref": "#/components/responses/404"
   "/api/kitchen":
     get:
       operationId: kitchenBoard
       summary: Раздел «Кухня» администратора
-      description: Только администратор (роль restaurant). Все банкеты своего пространства
+      description: Администратор. Банкеты ресторанов, где пользователь — администратор,
         с датой не раньше вчерашнего дня, по дате — порции, общий стол, пожелания и места гостей.
       responses:
         '200':
@@ -1266,6 +1389,19 @@ components:
           description: Только собственный подтверждённый номер в международном формате без плюса.
         notificationsEnabled:
           type: boolean
+        access:
+          type: array
+          items:
+            type: object
+            properties:
+              restaurantId: { type: string }
+              restaurantName: { type: string }
+              role: { type: string, enum: [admin, organizer] }
+        superAdmin:
+          type: boolean
+        botConnected:
+          type: boolean
+          description: Пользователь открыл чат с ботом — уведомления могут быть доставлены.
       required:
       - id
       - name
@@ -1565,6 +1701,10 @@ components:
           type: string
         sampleMenu:
           type: boolean
+        access:
+          type: string
+          enum: [admin, organizer]
+          description: Роль текущего пользователя в ресторане; в списке только доступные рестораны.
         menu:
           type: array
           items:
@@ -1678,6 +1818,9 @@ components:
           format: date-time
         isOwner:
           type: boolean
+        canManage:
+          type: boolean
+          description: Владелец или администратор ресторана банкета.
         revision:
           type: integer
           minimum: 0
@@ -2361,23 +2504,29 @@ components:
                   properties:
                     name: { type: string }
                     quantity: { type: integer }
-    Organizer:
+    RestaurantInput:
       type: object
-      required: [id, name, phone, createdAt, registered]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        address: { type: string, maxLength: 200 }
+        description: { type: string, maxLength: 500 }
+    ManagedUser:
+      type: object
+      required: [id, name, maxId, phone, superAdmin, fixed, isYou, roles]
       properties:
         id: { type: string }
-        name: { type: string, maxLength: 100 }
-        phone: { type: string, description: Международный формат без плюса. }
-        createdAt: { type: string, format: date-time }
-        registered:
-          type: boolean
-          description: Пользователь MAX уже подтвердил этот номер.
-    OrganizerCreate:
-      type: object
-      required: [name, phone]
-      properties:
-        name: { type: string, minLength: 1, maxLength: 100 }
-        phone: { type: string, description: 'Международный номер; +7 и 8 для РФ нормализуются.' }
+        name: { type: string }
+        maxId: { type: [string, 'null'] }
+        phone: { type: [string, 'null'], description: Только подтверждённый номер. }
+        superAdmin: { type: boolean }
+        fixed: { type: boolean, description: Роль нельзя изменить (суперадминистратор или демо-организатор). }
+        isYou: { type: boolean }
+        roles:
+          type: object
+          description: restaurantId → admin | organizer | none для ресторанов запрашивающего.
+          additionalProperties:
+            type: string
+            enum: [admin, organizer, none]
     ExportLink:
       type: object
       required:

@@ -28,6 +28,13 @@ import {
   X,
   CircleHelp,
   CheckCircle2,
+  Bell,
+  FileSpreadsheet,
+  MessageCircle,
+  Pencil,
+  Search,
+  Store,
+  UserRound,
 } from "lucide-react";
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
@@ -79,6 +86,54 @@ async function uploadImage(file) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
   return result;
+}
+/** Phone input value → "+7 (999) 123-45-67" for Russian numbers, "+<digits>" otherwise. */
+function formatPhone(value) {
+  let digits = String(value || "").replace(/\D/g, "").slice(0, 15);
+  if (!digits) return "";
+  if (digits[0] === "8") digits = "7" + digits.slice(1);
+  if (digits[0] === "9") digits = "7" + digits;
+  if (digits[0] !== "7") return "+" + digits;
+  const d = digits.slice(1, 11);
+  let out = "+7";
+  if (d.length) out += " (" + d.slice(0, 3);
+  if (d.length >= 3) out += ")";
+  if (d.length > 3) out += " " + d.slice(3, 6);
+  if (d.length > 6) out += "-" + d.slice(6, 8);
+  if (d.length > 8) out += "-" + d.slice(8, 10);
+  return out;
+}
+const PHONE_PATTERN = "\\+7 \\(\\d{3}\\) \\d{3}-\\d{2}-\\d{2}|\\+[1-69]\\d{9,14}";
+function PhoneInput({ value, onChange, ...props }) {
+  return (
+    <input
+      type="tel"
+      inputMode="tel"
+      autoComplete="tel"
+      placeholder="+7 (999) 123-45-67"
+      maxLength={18}
+      pattern={PHONE_PATTERN}
+      title="Номер в формате +7 (999) 123-45-67 или международный с кодом страны"
+      value={value}
+      onChange={(e) => onChange(formatPhone(e.target.value))}
+      {...props}
+    />
+  );
+}
+async function saveDownload(response, fallbackName) {
+  if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Не удалось скачать файл");
+  const name = response.headers.get("content-disposition")?.match(/filename="([^"]+)"/)?.[1] || fallbackName;
+  const url = URL.createObjectURL(await response.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function openExternal(link) {
+  if (window.WebApp?.openMaxLink) window.WebApp.openMaxLink(link);
+  else if (window.WebApp?.openLink) window.WebApp.openLink(link);
+  else window.open(link, "_blank", "noopener");
 }
 const localDateTime = value => {
   const date = new Date(value);
@@ -189,7 +244,8 @@ function App() {
     [detail, setDetail] = useState(null),
     [tab, setTab] = useState("guests"),
     [board, setBoard] = useState(null),
-    [organizers, setOrganizers] = useState(null);
+    [profileOpen, setProfileOpen] = useState(false),
+    [restaurantForm, setRestaurantForm] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
@@ -288,12 +344,25 @@ function App() {
     setBoard(null);
     api("/kitchen").then(setBoard).catch((e) => setError(e.message));
   }, [screen, session]);
-  const loadOrganizers = useCallback(() => api("/organizers").then(setOrganizers), []);
-  useEffect(() => {
-    if (screen !== "organizers" || !session) return;
-    setOrganizers(null);
-    loadOrganizers().catch((e) => setError(e.message));
-  }, [screen, session, loadOrganizers]);
+  const go = (next) => {
+    setScreen(next);
+    setSelected(null);
+    setProfileOpen(false);
+  };
+  const toggleNotifications = () => perform(async () => {
+    const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
+    setSession(updated);
+    notify(updated.notificationsEnabled ? (updated.botConnected ? 'Уведомления включены' : 'Уведомления включены. Откройте чат с ботом и нажмите «Начать».') : 'Уведомления выключены');
+  });
+  const openBot = () => config?.botUsername && openExternal(`https://max.ru/${config.botUsername}`);
+  const exportKitchen = (format) => perform(async () => {
+    if (window.WebApp?.initData && window.WebApp?.downloadFile) {
+      const { url } = await api('/kitchen/export-link', { method: 'POST', body: { format } });
+      await window.WebApp.downloadFile(url, `kitchen.${format}`);
+      return;
+    }
+    await saveDownload(await fetch(`${BASE}/api/kitchen/export?format=${format}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
+  });
   const loadDetail = useCallback(async (id) => {
     const d = await api(`/events/${id}`);
     setDetail(d);
@@ -562,7 +631,7 @@ function App() {
     );
   const role = session.role,
     guestFirst = !session.demo && role === 'guest',
-    canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
+    canManage = Boolean(detail?.event.canManage),
     seatingOn = Boolean(detail && detail.seating?.mode !== "off"),
     displayTab = detail && !canManage ? (tab === "seat" && seatingOn ? "seat" : "menu") : tab,
     activeEvents = events.filter((e) => e.status === "collecting"),
@@ -601,14 +670,11 @@ function App() {
           )}
           {role === "restaurant" && (
             <button
-              className={screen === "organizers" ? "active" : ""}
-              onClick={() => {
-                setScreen("organizers");
-                setSelected(null);
-              }}
+              className={screen === "users" ? "active" : ""}
+              onClick={() => go("users")}
             >
               <Users size={19} />
-              Организаторы
+              Пользователи
             </button>
           )}
           {role === "restaurant" && (
@@ -629,17 +695,13 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-bottom">
-          {!session.demo && (
-            <div className="profile-controls">
-              <small>{session.phoneVerified ? `Номер подтверждён: +${session.phone}` : 'Номер MAX ещё не подтверждён'}</small>
-              {!session.phoneVerified && <button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер и найти приглашения</button>}
-              <button disabled={busy} onClick={() => perform(async () => {
-                const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
-                setSession(updated);
-                notify(updated.notificationsEnabled ? 'Уведомления включены. Начните диалог с ботом MAX.' : 'Уведомления выключены');
-              })}>{session.notificationsEnabled ? 'Выключить уведомления' : 'Включить уведомления'}</button>
-            </div>
-          )}
+          <button className="profile-link" onClick={() => setProfileOpen(true)}>
+            <UserRound size={17} />
+            <span>
+              Профиль и уведомления
+              <small>{session.demo ? "Недоступно в демо" : session.notificationsEnabled ? (session.botConnected ? "Уведомления включены" : "Откройте чат с ботом") : "Уведомления выключены"}</small>
+            </span>
+          </button>
           <div className="max-connect">
             <span className="max-logo">м</span>
             <div>
@@ -669,7 +731,7 @@ function App() {
           <div className="breadcrumb desktop-only">
             Моё пространство <ChevronRight size={14} />
             <span>
-              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : screen === "organizers" ? "Организаторы" : "Банкеты"}
+              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : screen === "users" ? "Пользователи" : "Банкеты"}
             </span>
           </div>
           <div className="topbar-right">
@@ -731,19 +793,23 @@ function App() {
               </Button>
             </div>
           )}
-          {screen === "organizers" && !selected ? (
+          {screen === "users" && !selected ? (
             <>
               <div className="page-heading">
-                <div className="eyebrow">КТО ПРОВОДИТ БАНКЕТЫ</div>
-                <h1>Организаторы</h1>
-                <p>Добавьте номер телефона организатора. Когда он войдёт в MAX и подтвердит этот номер, у него появится кнопка «Создать банкет».</p>
+                <div className="eyebrow">ДОСТУПЫ К РЕСТОРАНАМ</div>
+                <h1>Пользователи</h1>
+                <p>Человек появляется здесь, когда впервые откроет мини-приложение в MAX. Выберите его роль в каждом из ваших ресторанов: администратор, организатор или обычный гость.</p>
               </div>
-              <OrganizersAdmin
-                organizers={organizers}
+              <UsersAdmin
+                session={session}
                 busy={busy}
-                demo={session.demo}
-                add={(values) => perform(async () => { await api("/organizers", { method: "POST", body: values }); await loadOrganizers(); notify("Организатор добавлен"); })}
-                remove={(id) => perform(async () => { await api(`/organizers/${id}`, { method: "DELETE" }); await loadOrganizers(); notify("Организатор удалён"); })}
+                load={(q) => api(`/users?q=${encodeURIComponent(q)}`)}
+                setRole={(restaurantId, userId, role) => perform(async () => {
+                  await api(`/restaurants/${restaurantId}/members/${userId}`, { method: "PUT", body: { role } });
+                  notify("Доступ обновлён");
+                  return true;
+                })}
+                onError={setError}
               />
             </>
           ) : screen === "kitchen" && !selected ? (
@@ -752,6 +818,10 @@ function App() {
                 <div className="eyebrow">ВСЁ ДЛЯ ПОДГОТОВКИ</div>
                 <h1>Кухня</h1>
                 <p>Порции по каждому запланированному банкету, общий стол, пожелания и места гостей.</p>
+                <div className="heading-downloads">
+                  <Button variant="secondary" disabled={busy || !board?.length} onClick={() => exportKitchen("xlsx")}><FileSpreadsheet size={16} /> Скачать Excel</Button>
+                  <Button variant="secondary" disabled={busy || !board?.length} onClick={() => exportKitchen("csv")}><Download size={16} /> CSV</Button>
+                </div>
               </div>
               <KitchenBoard board={board} open={(id) => { openEvent(id); setTab("kitchen"); }} />
             </>
@@ -767,7 +837,11 @@ function App() {
                     ? "Изменения меню будут доступны в новых банкетах."
                     : "Выберите ресторан при создании банкета. Цены сохранятся для вашего события."}
                 </p>
+                {session.superAdmin && (
+                  <Button variant="secondary" onClick={() => setRestaurantForm({})}><Store size={16} /> Добавить ресторан</Button>
+                )}
               </div>
+              {!restaurants.length && <Empty title="Нет доступных ресторанов">Попросите администратора ресторана выдать вам доступ.</Empty>}
               {restaurants.map((r) => (
                 <section key={r.id}>
                   <div className="section-head">
@@ -775,7 +849,9 @@ function App() {
                       <h2>{r.name}</h2>
                       <p className="muted">{r.address || r.description}</p>
                     </div>
-                    {role === "restaurant" && (
+                    {r.access === "admin" && (
+                      <div className="admin-actions">
+                      <button type="button" onClick={() => setRestaurantForm(r)}><Pencil size={15} /> Ресторан</button>
                       <Button
                         variant="secondary"
                         onClick={() =>
@@ -791,6 +867,7 @@ function App() {
                         <Plus size={16} />
                         Добавить блюдо
                       </Button>
+                      </div>
                     )}
                   </div>
                   <div className="menu-grid catalog">
@@ -798,12 +875,13 @@ function App() {
                       <DishCard
                         key={item.id}
                         item={item}
-                        admin={role === "restaurant"}
+                        admin={r.access === "admin"}
                         edit={() =>
                           setEditItem({ ...item, restaurantId: r.id })
                         }
                       />
                     ))}
+                    {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
                   </div>
                 </section>
               ))}
@@ -846,6 +924,18 @@ function App() {
                       </Button>
                     )}
                   </div>
+                  {!session.demo && config?.maxConfigured && detail.event.status === "collecting" && (!session.notificationsEnabled || !session.botConnected) && (
+                    <div className="notify-banner">
+                      <Bell size={18} />
+                      <div>
+                        <strong>{session.notificationsEnabled ? "Осталось открыть чат с ботом" : "Напоминания о банкете в MAX"}</strong>
+                        <p>{session.notificationsEnabled ? "Бот сможет писать вам только после того, как вы откроете с ним чат и нажмёте «Начать»." : canManage ? "Бот напишет, когда гости присоединятся и сделают выбор." : "Бот напомнит о сроке выбора и сообщит, когда заказ утвердят."}</p>
+                      </div>
+                      {session.notificationsEnabled
+                        ? <Button variant="secondary" onClick={openBot}><MessageCircle size={16} /> Открыть чат</Button>
+                        : <Button variant="secondary" disabled={busy} onClick={toggleNotifications}><Bell size={16} /> Включить</Button>}
+                    </div>
+                  )}
                   <div className="stats-row">
                     <Stat
                       icon={Users}
@@ -1333,7 +1423,7 @@ function App() {
                         </div>
                       </div>
                       <div className="event-footer">
-                        {event.isOwner || role === "restaurant" ? (
+                        {event.canManage ? (
                           <span>
                             Сумма заказа<strong>{money(event.total)}</strong>
                           </span>
@@ -1401,51 +1491,31 @@ function App() {
           </footer>
         </main>
         <nav className="mobile-nav">
-          <button
-            onClick={() => {
-              setScreen("events");
-              setSelected(null);
-            }}
-          >
+          <button className={screen === "events" && !profileOpen ? "active" : ""} onClick={() => go("events")}>
             <CalendarDays size={19} />
             Банкеты
           </button>
           {role !== "guest" && (
-            <button
-              onClick={() => {
-                setScreen("catalog");
-                setSelected(null);
-              }}
-            >
+            <button className={screen === "catalog" && !profileOpen ? "active" : ""} onClick={() => go("catalog")}>
               <Utensils size={19} />
               Меню
             </button>
           )}
           {role === "restaurant" && (
-            <button
-              onClick={() => {
-                setScreen("organizers");
-                setSelected(null);
-              }}
-            >
-              <Users size={19} />
-              Организаторы
-            </button>
-          )}
-          {role === "restaurant" && (
-            <button
-              onClick={() => {
-                setScreen("kitchen");
-                setSelected(null);
-              }}
-            >
+            <button className={screen === "kitchen" && !profileOpen ? "active" : ""} onClick={() => go("kitchen")}>
               <ChefHat size={19} />
               Кухня
             </button>
           )}
-          <button onClick={() => setHelpOpen(true)}>
-            <CircleHelp size={19} />
-            Помощь
+          {role === "restaurant" && (
+            <button className={screen === "users" && !profileOpen ? "active" : ""} onClick={() => go("users")}>
+              <Users size={19} />
+              Доступы
+            </button>
+          )}
+          <button className={profileOpen ? "active" : ""} onClick={() => setProfileOpen(true)}>
+            <UserRound size={19} />
+            Профиль
           </button>
         </nav>
       </div>
@@ -1541,6 +1611,78 @@ function App() {
             })
           }
         />
+      )}
+      {profileOpen && (
+        <Modal title="Профиль" onClose={() => setProfileOpen(false)}>
+          <div className="profile-card">
+            <div className="avatar">{session.name?.slice(0, 1) || "Я"}</div>
+            <div>
+              <strong>{session.name}</strong>
+              <small>{roleNames[role]}{session.superAdmin ? " · суперадминистратор" : ""}</small>
+            </div>
+          </div>
+          {session.access?.length > 0 && (
+            <div className="profile-section">
+              <h3>Доступ к ресторанам</h3>
+              {session.access.map((entry) => (
+                <p key={entry.restaurantId}>{entry.restaurantName} — {entry.role === "admin" ? "администратор" : "организатор"}</p>
+              ))}
+            </div>
+          )}
+          {session.demo ? (
+            <p className="muted">В демо подтверждение номера и уведомления MAX недоступны.</p>
+          ) : (
+            <>
+              <div className="profile-section">
+                <h3>Номер телефона</h3>
+                <p>{session.phoneVerified ? `+${session.phone} · подтверждён через MAX` : "Не подтверждён. По номеру организатор находит вас в списке гостей."}</p>
+                {!session.phoneVerified && <Button variant="secondary" disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер</Button>}
+              </div>
+              <div className="profile-section">
+                <h3>Уведомления в MAX</h3>
+                <label className="switch-row">
+                  <input type="checkbox" checked={session.notificationsEnabled} disabled={busy} onChange={toggleNotifications} />
+                  <span>Присылать напоминания и новости о банкетах</span>
+                </label>
+                {session.notificationsEnabled && (
+                  <p className={session.botConnected ? "green" : "budget-warning"}>
+                    {session.botConnected ? "Чат с ботом открыт — сообщения будут приходить." : "Чтобы бот мог писать, откройте с ним чат и нажмите «Начать»."}
+                  </p>
+                )}
+                {config?.botUsername && <Button variant="secondary" onClick={openBot}><MessageCircle size={16} /> Открыть чат с ботом</Button>}
+              </div>
+            </>
+          )}
+          <div className="modal-actions profile-actions">
+            <Button variant="secondary" onClick={() => { setProfileOpen(false); setHelpOpen(true); }}><CircleHelp size={16} /> Как это работает</Button>
+            <Button variant="secondary" onClick={() => { setProfileOpen(false); logout(); }}><LogOut size={16} /> Выйти</Button>
+          </div>
+        </Modal>
+      )}
+      {restaurantForm && (
+        <Modal title={restaurantForm.id ? "Ресторан" : "Новый ресторан"} onClose={() => setRestaurantForm(null)}>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            const body = { name: f.get("name"), address: f.get("address"), description: f.get("description") };
+            perform(async () => {
+              await api(restaurantForm.id ? `/restaurants/${restaurantForm.id}` : "/restaurants", { method: restaurantForm.id ? "PATCH" : "POST", body });
+              const me = await api("/me");
+              setSession(me);
+              await refresh();
+              setRestaurantForm(null);
+              notify(restaurantForm.id ? "Ресторан обновлён" : "Ресторан добавлен. Заполните меню и выдайте доступы.");
+            });
+          }}>
+            <label>Название<input name="name" required maxLength={120} defaultValue={restaurantForm.name} /></label>
+            <label>Адрес<input name="address" maxLength={200} defaultValue={restaurantForm.address} /></label>
+            <label>Описание<textarea name="description" maxLength={500} defaultValue={restaurantForm.description} /></label>
+            <div className="modal-actions">
+              <Button type="button" variant="secondary" onClick={() => setRestaurantForm(null)}>Отмена</Button>
+              <Button type="submit" disabled={busy}>Сохранить</Button>
+            </div>
+          </form>
+        </Modal>
       )}
       {helpOpen && (
         <Modal
@@ -1923,7 +2065,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
           if (result !== null) { setName(''); setPhone(''); }
         }}>
           <input aria-label="Имя гостя" placeholder="Имя гостя" maxLength={100} required value={name} onChange={event => setName(event.target.value)} />
-          <input aria-label="Телефон гостя" type="tel" placeholder="+7 999 123-45-67" required value={phone} onChange={event => setPhone(event.target.value)} />
+          <PhoneInput aria-label="Телефон гостя" required value={phone} onChange={setPhone} />
           <Button type="submit" disabled={busy}><Plus size={16} /> Добавить</Button>
         </form>}
         <div className="admin-guest-list">
@@ -1996,7 +2138,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
           if (result !== null) setEditing(null);
         }}>
           <label>Имя<input required maxLength={100} value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} /></label>
-          <label>Телефон<input type="tel" required value={editing.phone} disabled={editing.joined} onChange={event => setEditing({ ...editing, phone: event.target.value })} /></label>
+          <label>Телефон<PhoneInput required value={formatPhone(editing.phone)} disabled={editing.joined} onChange={phone => setEditing({ ...editing, phone })} /></label>
           {editing.joined && <p className="muted">Номер закреплён за аккаунтом MAX. Имя можно изменить.</p>}
           <div className="modal-actions"><Button type="button" variant="secondary" onClick={() => setEditing(null)}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
         </form>
@@ -2004,35 +2146,59 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
     </div>
   );
 }
-function OrganizersAdmin({ organizers, busy, demo, add, remove }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  if (!organizers) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем организаторов…</div>;
+const ROLE_OPTIONS = [["none", "Обычный"], ["organizer", "Организатор"], ["admin", "Администратор"]];
+function UsersAdmin({ session, busy, load, setRole, onError }) {
+  const administered = (session.access || []).filter((entry) => entry.role === "admin");
+  const [query, setQuery] = useState("");
+  const [users, setUsers] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const timer = setTimeout(() => load(query).then((list) => alive && setUsers(list)).catch((e) => onError(e.message)), query ? 250 : 0);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [query]);
+  const change = async (user, restaurantId, role) => {
+    const previous = users;
+    setUsers(users.map((entry) => (entry.id === user.id ? { ...entry, roles: { ...entry.roles, [restaurantId]: role } } : entry)));
+    if ((await setRole(restaurantId, user.id, role)) === null) setUsers(previous);
+  };
   return (
-    <section className="panel admin-panel">
-      <form className="admin-guest-form" onSubmit={async (event) => {
-        event.preventDefault();
-        const result = await add({ name, phone });
-        if (result !== null) { setName(""); setPhone(""); }
-      }}>
-        <input aria-label="Имя организатора" placeholder="Имя или компания" maxLength={100} required value={name} onChange={(e) => setName(e.target.value)} />
-        <input aria-label="Телефон организатора" type="tel" placeholder="+7 999 123-45-67" required value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <Button type="submit" disabled={busy}><Plus size={16} /> Добавить</Button>
-      </form>
-      {demo && <p className="muted">В демо роли переключаются вручную, поэтому список здесь только для примера.</p>}
-      <div className="admin-guest-list">
-        {organizers.length ? organizers.map((entry) => (
-          <div className="admin-guest" key={entry.id}>
-            <div>
-              <strong>{entry.name}</strong>
-              <small>+{entry.phone} · {entry.registered ? "Вошёл в MAX и подтвердил номер" : "Ещё не входил"}</small>
+    <section className="panel admin-panel users-admin">
+      <label className="search-field">
+        <Search size={16} />
+        <input type="search" placeholder="Имя, телефон или MAX ID" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Поиск пользователя" />
+      </label>
+      {session.demo && <p className="muted">В демо роли переключаются вверху справа; изменения здесь действуют только на гостей демо.</p>}
+      {!users ? (
+        <div className="loading-inline"><LoaderCircle className="spin" />Загружаем пользователей…</div>
+      ) : users.length ? (
+        <div className="admin-guest-list">
+          {users.map((user) => (
+            <div className="user-row" key={user.id}>
+              <div>
+                <strong>{user.name}{user.isYou ? " (вы)" : ""}</strong>
+                <small>{[user.superAdmin && "суперадминистратор", user.maxId && `MAX ID ${user.maxId}`, user.phone && `+${user.phone}`].filter(Boolean).join(" · ") || "Номер не подтверждён"}</small>
+              </div>
+              <div className="user-roles">
+                {administered.map((entry) => (
+                  <label key={entry.restaurantId}>
+                    {administered.length > 1 && <span>{entry.restaurantName}</span>}
+                    <select
+                      value={user.roles[entry.restaurantId] || "none"}
+                      disabled={busy || user.isYou || user.fixed}
+                      onChange={(e) => change(user, entry.restaurantId, e.target.value)}
+                      aria-label={`Роль ${user.name} в ресторане ${entry.restaurantName}`}
+                    >
+                      {ROLE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                    </select>
+                  </label>
+                ))}
+              </div>
             </div>
-            <div className="admin-actions">
-              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Убрать ${entry.name} из организаторов? Уже созданные им банкеты останутся.`)) remove(entry.id); }}>Удалить</button>
-            </div>
-          </div>
-        )) : <p className="muted">Организаторов пока нет. Без записи здесь пользователь MAX может только принимать приглашения как гость.</p>}
-      </div>
+          ))}
+        </div>
+      ) : (
+        <p className="muted">{query ? "Никого не нашли." : "Пока никто не открывал приложение."}</p>
+      )}
     </section>
   );
 }

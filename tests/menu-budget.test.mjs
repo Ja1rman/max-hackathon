@@ -85,27 +85,3 @@ test('menu items keep ingredients; administrator gets the kitchen board', async 
   assert.equal(board.data[0].shared[0].quantity, 4);
   assert.equal(board.data[0].summary[0].quantity, 4);
 });
-
-test('administrator adds organizers by phone; other MAX users are guests', async t => {
-  const f = await fixture(t, { openOrganizerSignup: false });
-  const admin = await f.login(900, 'Шеф');
-  const person = await f.login(300, 'Ольга');
-  assert.equal(person.user.role, 'guest');
-  const [restaurant] = (await f.request('/api/restaurants', { token: admin.token })).data;
-  const body = { title: 'Корпоратив', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 5 };
-  assert.equal((await f.request('/api/events', { token: person.token, method: 'POST', body })).status, 403);
-  assert.equal((await f.request('/api/organizers', { token: person.token, method: 'POST', body: { name: 'Ольга', phone: '+79990000003' } })).status, 403);
-  const added = await f.request('/api/organizers', { token: admin.token, method: 'POST', body: { name: 'Ольга', phone: '+7 999 000-00-03' } });
-  assert.equal(added.status, 201);
-  assert.equal(added.data.registered, false);
-  assert.equal((await f.request('/api/organizers', { token: admin.token, method: 'POST', body: { name: 'Дубль', phone: '89990000003' } })).status, 409);
-  const bound = await f.request('/api/me/phone', { token: person.token, method: 'PUT', body: signedContact(300, '+79990000003') });
-  assert.equal(bound.data.role, 'organizer');
-  assert.equal((await f.request('/api/me', { token: person.token })).data.role, 'organizer');
-  assert.equal((await f.request('/api/events', { token: person.token, method: 'POST', body })).status, 201);
-  assert.equal((await f.request('/api/organizers', { token: admin.token })).data[0].registered, true);
-  assert.equal((await f.request(`/api/organizers/${added.data.id}`, { token: admin.token, method: 'DELETE' })).status, 200);
-  assert.equal((await f.request('/api/me', { token: person.token })).data.role, 'organizer', 'an organizer who already owns a banquet keeps managing it');
-  const other = await f.login(400, 'Пётр');
-  assert.equal(other.user.role, 'guest');
-});

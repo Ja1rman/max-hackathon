@@ -2722,3 +2722,47 @@ main {
 .budget-row.over .progress-track span { background: var(--red); }
 .budget-row.over small, .budget-row.over strong { color: var(--red); }
 .guest-discovery-hint { display: block; flex-basis: 100%; font-size: 11px; color: var(--muted); }
+
+/* Press feedback, active mobile nav, profile, users, downloads */
+button:not(:disabled):active { transform: scale(0.97); }
+.btn.secondary:not(:disabled):active, .icon-btn:not(:disabled):active, .admin-actions button:not(:disabled):active, .text-button:not(:disabled):active, .filter-pills button:not(:disabled):active, .category-tabs button:not(:disabled):active, .quantity button:not(:disabled):active, .stepper button:not(:disabled):active { background: var(--soft); }
+.btn:not(.secondary):not(:disabled):active { filter: brightness(0.92); }
+.mobile-nav button { border-radius: 10px; transition: color .15s, background .15s; }
+.mobile-nav button.active { color: var(--green); font-weight: 750; background: var(--soft); }
+.admin-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.profile-link { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; color: var(--ink); font-size: 11px; font-weight: 650; }
+.profile-link small { display: block; margin-top: 3px; font-size: 9px; font-weight: 500; color: var(--muted); }
+.profile-link:hover { background: var(--soft); }
+.profile-card { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.profile-card strong { display: block; font-size: 15px; }
+.profile-card small { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; }
+.profile-section { display: grid; gap: 8px; padding: 14px 0; border-top: 1px solid var(--line); }
+.profile-section h3 { margin: 0; font-size: 13px; }
+.profile-section p { margin: 0; font-size: 12px; color: #5f6f58; }
+.profile-section .btn { justify-self: start; }
+.profile-section .green { color: var(--green); }
+.switch-row { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.switch-row input { width: 20px; height: 20px; accent-color: var(--green); }
+.profile-actions { flex-wrap: wrap; }
+.notify-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 20px; border-radius: 10px; background: #fffaf0; border: 1px solid #f0e3c2; color: #8a6d2f; }
+.notify-banner > div { flex: 1 1 220px; }
+.notify-banner strong { display: block; font-size: 13px; color: var(--ink); }
+.notify-banner p { margin: 3px 0 0; font-size: 11px; }
+.heading-downloads { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.heading-downloads .btn { display: inline-flex; align-items: center; gap: 7px; }
+.search-field { display: flex; align-items: center; gap: 8px; padding: 0 12px; margin-bottom: 14px; border: 1px solid #dee6d6; border-radius: 8px; background: #fcfdfb; color: var(--muted); }
+.admin-panel .search-field input { border: 0; background: transparent; padding: 12px 0; }
+.admin-panel .search-field input:focus { outline: none; }
+.search-field:focus-within { outline: 2px solid #86ac90; outline-offset: 1px; }
+.user-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 13px 0; border-top: 1px solid #edf0e8; }
+.user-row strong { display: block; font-size: 13px; }
+.user-row small { display: block; margin-top: 4px; font-size: 10px; color: var(--muted); }
+.user-roles { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-panel .user-roles label { display: grid; gap: 4px; font-size: 10px; }
+.admin-panel .user-roles select { width: auto; min-width: 170px; }
+@media (max-width: 620px) {
+  .user-roles, .admin-panel .user-roles label, .admin-panel .user-roles select { width: 100%; }
+  .notify-banner .btn, .heading-downloads .btn { flex: 1; justify-content: center; }
+}
+.admin-panel label.search-field { display: flex; }
+.admin-panel label.search-field, .admin-panel .user-roles label { font-weight: 600; }
