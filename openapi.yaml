@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.1.0
+  version: 1.2.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
@@ -676,6 +676,146 @@ paths:
               "$ref": "#/components/schemas/Approve"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/seating":
+    put:
+      operationId: saveSeating
+      summary: Включить рассадку и сохранить схему зала
+      description: Только владелец или ресторан, только collecting. mode и layout
+        необязательны по отдельности. Схема заменяется целиком; 409, если исчезает
+        уже занятое место. Изменение рассадки не меняет revision заказа.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Seating"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SeatingPut"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/seat":
+    put:
+      operationId: chooseSeat
+      summary: Занять или освободить собственное место
+      description: Только режим choice, до дедлайна и утверждения. Требования к гостю
+        те же, что для выбора блюд. seatId=null освобождает место; занятое другим
+        гостем место даёт 409.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Seating"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SeatChoice"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/seating/assignments":
+    put:
+      operationId: assignSeat
+      summary: Назначить место гостю вручную
+      description: Только владелец или ресторан, только collecting. Если место занято,
+        гости меняются местами (прежний владелец места получает старое место гостя
+        или остаётся без места). seatId=null снимает гостя с места.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Seating"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '413':
+          "$ref": "#/components/responses/413"
+        '415':
+          "$ref": "#/components/responses/415"
+        '500':
+          "$ref": "#/components/responses/500"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SeatAssignment"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/seating/auto":
+    post:
+      operationId: autoSeat
+      summary: Рассадить гостей без места
+      description: Только владелец или ресторан, режим choice или fixed. Сначала
+        заполняются столы, где уже кто-то сидит, затем пустые столы по порядку.
+        То же выполняется автоматически при утверждении заказа.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AutoSeatResult"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
+        '409':
+          "$ref": "#/components/responses/409"
+        '500':
+          "$ref": "#/components/responses/500"
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
   "/api/restaurants/{restaurantId}/menu":
     post:
       operationId: createMenuItem
@@ -1276,6 +1416,8 @@ components:
         menuSnapshot:
           const: true
           type: boolean
+        seatingMode:
+          "$ref": "#/components/schemas/SeatingMode"
       required:
       - id
       - title
@@ -1320,6 +1462,8 @@ components:
         menuSnapshot:
           const: true
           type: boolean
+        seatingMode:
+          "$ref": "#/components/schemas/SeatingMode"
         expectedGuests:
           type: integer
           minimum: 1
@@ -1506,6 +1650,10 @@ components:
           type: integer
           minimum: 0
           description: Целые копейки RUB; 69000 означает 690,00 руб.
+        seat:
+          type: string
+          description: Только для владельца и ресторана при включённой рассадке, например
+            «Стол 2, место 3»; пустая строка — место не назначено.
       required:
       - id
       - name
@@ -1572,6 +1720,8 @@ components:
           - string
           - 'null'
           format: uri
+        seating:
+          "$ref": "#/components/schemas/Seating"
       required:
       - event
       - menu
@@ -1579,6 +1729,7 @@ components:
       - selection
       - summary
       - canSelect
+      - seating
       description: Владелец и ресторан видят всех guests, summary и ссылки приглашения.
         Гость видит только себя, summary=[], ссылки отсутствуют. selection всегда
         описывает текущего пользователя либо пустой выбор.
@@ -1715,6 +1866,186 @@ components:
           type: boolean
       required:
       - ok
+    SeatingMode:
+      type: string
+      enum:
+      - 'off'
+      - choice
+      - fixed
+      description: off — только блюда; choice — гости выбирают места сами; fixed —
+        места назначает организатор.
+    SeatingTable:
+      type: object
+      properties:
+        id:
+          type: string
+          pattern: "^[A-Za-z0-9_]{1,32}$"
+        shape:
+          type: string
+          enum:
+          - round
+          - rect
+        label:
+          type: string
+          minLength: 1
+          maxLength: 24
+          description: Число выводится как «Стол N», текст — как есть (например «Президиум»).
+        x:
+          type: number
+        y:
+          type: number
+        w:
+          type: number
+          minimum: 40
+          maximum: 1400
+        h:
+          type: number
+          minimum: 40
+          maximum: 1000
+          description: Для круглого стола равна w.
+        rotation:
+          type: integer
+          enum:
+          - 0
+          - 90
+          - 180
+          - 270
+        seats:
+          type: integer
+          minimum: 0
+          maximum: 40
+        sides:
+          type: array
+          description: Только rect; стороны, где стоят стулья.
+          items:
+            type: string
+            enum:
+            - top
+            - right
+            - bottom
+            - left
+      required:
+      - id
+      - shape
+      - label
+      - x
+      - y
+      - w
+      - h
+      - seats
+    SeatingLayout:
+      type: object
+      description: Стулья не хранятся; их id вида «<tableId>-<n>» и координаты вычисляются
+        из стола функцией shared/seating.mjs. Не больше 150 столов и 1000 мест.
+      properties:
+        tables:
+          type: array
+          maxItems: 150
+          items:
+            "$ref": "#/components/schemas/SeatingTable"
+      required:
+      - tables
+    SeatPerson:
+      type: object
+      properties:
+        key:
+          type: string
+          description: invite:<id> для гостя из списка или user:<id> для гостя без записи в списке (демо-ссылка).
+        name:
+          type: string
+        userId:
+          type:
+          - string
+          - 'null'
+        seatId:
+          type:
+          - string
+          - 'null'
+        source:
+          type:
+          - string
+          - 'null'
+          enum:
+          - guest
+          - admin
+          - auto
+          - null
+      required:
+      - key
+      - name
+      - seatId
+    Seating:
+      type: object
+      properties:
+        mode:
+          "$ref": "#/components/schemas/SeatingMode"
+        layout:
+          "$ref": "#/components/schemas/SeatingLayout"
+        seatCount:
+          type: integer
+        mySeat:
+          type:
+          - string
+          - 'null'
+        occupied:
+          type: array
+          description: Занятые места без имён; гость не видит, кто где сидит.
+          items:
+            type: string
+        people:
+          type: array
+          description: Только владелец и ресторан.
+          items:
+            "$ref": "#/components/schemas/SeatPerson"
+      required:
+      - mode
+      - layout
+      - seatCount
+      - mySeat
+      - occupied
+    SeatingPut:
+      type: object
+      properties:
+        mode:
+          "$ref": "#/components/schemas/SeatingMode"
+        layout:
+          "$ref": "#/components/schemas/SeatingLayout"
+    SeatChoice:
+      type: object
+      properties:
+        seatId:
+          type:
+          - string
+          - 'null'
+      required:
+      - seatId
+    SeatAssignment:
+      type: object
+      properties:
+        guest:
+          type: string
+          description: key из Seating.people.
+        seatId:
+          type:
+          - string
+          - 'null'
+      required:
+      - guest
+      - seatId
+    AutoSeatResult:
+      type: object
+      properties:
+        assigned:
+          type: integer
+        unseated:
+          type: integer
+          description: Гостей, которым не хватило мест.
+        seating:
+          "$ref": "#/components/schemas/Seating"
+      required:
+      - assigned
+      - unseated
+      - seating
     ExportLink:
       type: object
       required:

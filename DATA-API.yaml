@@ -1,23 +1,25 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.1.0
+version: 1.2.0
 sources:
 - server/store.mjs
 - server/auth.mjs
 - server/index.mjs
 - server/max-bot.mjs
 - server/notifications.mjs
+- shared/seating.mjs
 api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 4
+  user_version: 5
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
     busy_timeout: 5000
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
-    DEFAULT0. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
+    ('{"tables":[]}'). Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -87,6 +89,8 @@ tables:
       created_at: TEXT NOT NULL (ISO-8601 UTC)
       approved_at: TEXT NULL (ISO-8601 UTC)
       revision: INTEGER NOT NULL DEFAULT 0
+      seating_mode: TEXT NOT NULL DEFAULT 'off' (off | choice | fixed)
+      seating_layout: TEXT NOT NULL DEFAULT '{"tables":[]}' (JSON SeatingLayout)
     purpose: Сбор либо утверждённый заказ. invite_code24base64url. Дедлайн не меняет
       status автоматически.
   event_menu:
@@ -185,6 +189,27 @@ tables:
       - user_id
       - kind
     purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  seat_assignments:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      seat_id: TEXT NOT NULL (<tableId>-<n>, вычисляется из seating_layout)
+      invite_id: TEXT NULL REFERENCES guest_invites(id) ON DELETE CASCADE
+      user_id: TEXT NULL REFERENCES users(id) ON DELETE CASCADE
+      source: TEXT NOT NULL (guest | admin | auto)
+      assigned_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - seat_id
+    unique:
+    - - event_id
+      - invite_id
+    - - event_id
+      - user_id
+    check: Ровно одно из invite_id и user_id. Гость из списка приглашённых закрепляется
+      по invite_id (в том числе ещё не вошедший), гость по демо-ссылке без записи в
+      списке — по user_id.
+    purpose: Кто на каком месте. Первичный ключ исключает двойное бронирование одного
+      стула при одновременных запросах.
   media_assets:
     columns:
       file_name: TEXT PRIMARY KEY
@@ -207,7 +232,10 @@ derived:
   event.joined: COUNT(guests)
   guest.total: SUM(собственных selections.quantity * price)
   summary: GROUP BY menu_item_id,name; SUM(quantity), SUM(quantity*price)
+  seats: Стулья не хранятся; id и координаты вычисляются из стола функцией tableSeats
+    (shared/seating.mjs), поэтому сервер и интерфейс нумеруют места одинаково.
   revision: Увеличивается при новом присоединении, сохранении выбора и утверждении;
+    изменения рассадки revision не меняют;
     seed синтетических ответов создаётся до демонстрации.
 authorization:
   public:
@@ -227,6 +255,11 @@ authorization:
   approve: Только owner независимо от глобальной роли.
   menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
   csv: owner или restaurant, только approved.
+  seating_read: Гость видит схему, занятые seat_id без имён и своё место; owner и
+    restaurant — всех людей с местами.
+  seating_write: Схему, режим, ручные назначения и авторассадку меняют owner или
+    restaurant до утверждения. Гость выбирает место сам только в режиме choice и до
+    дедлайна.
   demo_invite: Создаёт только guest; demo запрещён доступ к live. Sandbox — секрет
     переключения ролей только собственной демонстрации.
   export_link: 'POST /api/events/{id}/export-link: owner/restaurant approved -> {url}.
@@ -238,7 +271,9 @@ lifecycle:
   approve: owner, expectedRevision=current revision, >=1 submitted. Транзакция BEGIN
     IMMEDIATE фиксирует approved_at и увеличивает revision.
   repeat_approve: approved возвращается идемпотентно без обязательного тела.
-  deadline: Запрещает новые joins и saveSelection; существующий join идемпотентен;
+  approve_seating: При seating_mode choice/fixed утверждение в той же транзакции
+    рассаживает гостей без места (сначала столы, где уже кто-то сидит).
+  deadline: Запрещает новые joins, saveSelection и выбор места гостем; существующий join идемпотентен;
     не утверждает автоматически.
   catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
     правке каталога.

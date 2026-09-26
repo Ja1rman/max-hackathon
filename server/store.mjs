@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { digest, HttpError, normalizePhone } from './auth.mjs';
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
+import { SEATING_MODES, autoAssign, generateLayout, layoutSeats, seatTitle, tableSeats, validateLayout } from '../shared/seating.mjs';
 
 const secret = () => randomBytes(32).toString('base64url');
 const id = prefix => `${prefix}_${randomUUID()}`;
@@ -93,15 +94,17 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notification_jobs (id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, due_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, cancelled_at INTEGER, UNIQUE(event_id,user_id,kind));
       CREATE INDEX IF NOT EXISTS notification_due_idx ON notification_jobs(due_at) WHERE sent_at IS NULL AND cancelled_at IS NULL;
       CREATE TABLE IF NOT EXISTS media_assets (file_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS seat_assignments (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, seat_id TEXT NOT NULL, invite_id TEXT REFERENCES guest_invites(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, source TEXT NOT NULL, assigned_at TEXT NOT NULL, PRIMARY KEY(event_id,seat_id), UNIQUE(event_id,invite_id), UNIQUE(event_id,user_id), CHECK((invite_id IS NULL) != (user_id IS NULL)));
       `);
-    if (!this.db.prepare('PRAGMA table_info(events)').all().some(column => column.name === 'revision')) {
-      this.db.exec('ALTER TABLE events ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
-    }
+    const eventColumns = this.db.prepare('PRAGMA table_info(events)').all().map(column => column.name);
+    if (!eventColumns.includes('revision')) this.db.exec('ALTER TABLE events ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
+    if (!eventColumns.includes('seating_mode')) this.db.exec("ALTER TABLE events ADD COLUMN seating_mode TEXT NOT NULL DEFAULT 'off'");
+    if (!eventColumns.includes('seating_layout')) this.db.exec(`ALTER TABLE events ADD COLUMN seating_layout TEXT NOT NULL DEFAULT '{"tables":[]}'`);
     const userColumns = this.db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
     if (!userColumns.includes('phone')) this.db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
     if (!userColumns.includes('phone_verified_at')) this.db.exec('ALTER TABLE users ADD COLUMN phone_verified_at INTEGER');
     if (!userColumns.includes('notifications_enabled')) this.db.exec('ALTER TABLE users ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0');
-    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_live_phone_idx ON users(phone) WHERE scope='live' AND phone IS NOT NULL; PRAGMA user_version = 4;");
+    this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_live_phone_idx ON users(phone) WHERE scope='live' AND phone IS NOT NULL; PRAGMA user_version = 5;");
     this.db.prepare('INSERT OR IGNORE INTO scopes VALUES (?, NULL, ?)').run('live', iso(Date.now()));
     if (!this.db.prepare('SELECT id FROM restaurants WHERE scope = ?').get('live')) this.seedRestaurant('live');
     this.migrateSampleNutrition();
@@ -279,6 +282,9 @@ export class Store {
           }
         }
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, `${scope}_guest`, '', iso(Date.now()));
+        this.db.prepare("UPDATE events SET seating_mode='choice',seating_layout=? WHERE id=?").run(JSON.stringify(generateLayout('rounds', 12)), event.id);
+        const seat = this.db.prepare("INSERT INTO seat_assignments (event_id,seat_id,user_id,source,assigned_at) VALUES (?,?,?,'guest',?)");
+        for (const [index, seatId] of ['t1-1', 't1-2', 't2-1'].entries()) seat.run(event.id, seatId, `${scope}_synthetic_${index}`, iso(Date.now()));
       });
     }
     const user = this.db.prepare('SELECT * FROM users WHERE id=?').get(`${scope}_${role}`);
@@ -308,7 +314,7 @@ export class Store {
     const total = this.db.prepare('SELECT COALESCE(SUM(quantity*price),0) AS total FROM selections WHERE event_id=?').get(row.id).total;
     const counts = this.db.prepare('SELECT COUNT(*) AS joined, COALESCE(SUM(submitted),0) AS responded FROM guests WHERE event_id=?').get(row.id);
     const restaurant = this.db.prepare('SELECT name,sample_menu FROM restaurants WHERE id=?').get(row.restaurant_id);
-    const event = { id: row.id, title: row.title, date: row.date, deadline: row.deadline, status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true };
+    const event = { id: row.id, title: row.title, date: row.date, deadline: row.deadline, status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true, seatingMode: row.seating_mode };
     if (!publicOnly) Object.assign(event, { expectedGuests: row.expected_guests, total, responded: counts.responded, joined: counts.joined, approvedAt: row.approved_at, isOwner: user?.id === row.owner_id, revision: row.revision });
     if (!publicOnly && this.isManager(user, row)) Object.assign(event, { budget: row.budget, inviteCode: row.invite_code });
     return event;
@@ -504,8 +510,13 @@ export class Store {
       return { id: row.user_id, name: row.name, submitted: Boolean(row.submitted), notes: row.notes, items: selections, total: selections.reduce((sum, item) => sum + item.quantity * item.price, 0) };
     });
     const own = guests.find(guest => guest.id === user.id);
+    const seating = this.seating(user, event, manager);
+    if (manager && event.seating_mode !== 'off') {
+      const seatOf = new Map(seating.people.filter(person => person.seatId).map(person => [person.userId, person.seatId]));
+      for (const guest of guests) guest.seat = seatOf.has(guest.id) ? seatTitle(seating.layout, seatOf.get(guest.id)) : '';
+    }
     const summary = manager ? this.db.prepare('SELECT menu_item_id AS menuItemId,name,SUM(quantity) AS quantity,SUM(quantity*price) AS total FROM selections WHERE event_id=? GROUP BY menu_item_id,name ORDER BY name').all(event.id) : [];
-    const result = { event: this.presentEvent(event, user), menu: this.eventMenu(event.id), guests, canSelect: Boolean(own) || (event.scope !== 'live' && event.owner_id === user.id), selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary };
+    const result = { event: this.presentEvent(event, user), menu: this.eventMenu(event.id), guests, canSelect: Boolean(own) || (event.scope !== 'live' && event.owner_id === user.id), selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary, seating };
     if (manager) {
       const invitedGuests = this.db.prepare(`SELECT guest_invites.id,guest_invites.name,guest_invites.phone,guest_invites.user_id AS userId,
         COALESCE(guests.submitted,0) AS submitted FROM guest_invites LEFT JOIN guests ON guests.event_id=guest_invites.event_id AND guests.user_id=guest_invites.user_id
@@ -563,6 +574,7 @@ export class Store {
       }
       const count = this.db.prepare('SELECT COUNT(*) AS count FROM guests WHERE event_id=? AND submitted=1').get(event.id).count;
       if (!count) throw new HttpError(409, 'Пока нет ни одного выбора. Дождитесь ответа гостей.');
+      if (event.seating_mode !== 'off') this.fillSeats(event);
       this.db.prepare("UPDATE events SET status='approved',approved_at=?,revision=revision+1 WHERE id=? AND status='collecting'").run(iso(Date.now()), event.id);
       this.db.prepare("UPDATE notification_jobs SET cancelled_at=? WHERE event_id=? AND sent_at IS NULL AND kind='reminder'").run(Date.now(), event.id);
       if (event.scope === 'live') {
@@ -596,6 +608,125 @@ export class Store {
     this.db.prepare('UPDATE restaurants SET sample_menu=0 WHERE id=?').run(restaurantId);
     return { success: true };
   }
+  layoutOf(event) { return JSON.parse(event.seating_layout || '{"tables":[]}'); }
+  /** Everyone who needs a seat: invited guests (by invite) and joined guests without an invite (demo links). */
+  seatPeople(eventId) {
+    return this.db.prepare(`SELECT 'invite:'||guest_invites.id AS key,guest_invites.name,guest_invites.user_id AS userId,seat_assignments.seat_id AS seatId,seat_assignments.source
+        FROM guest_invites LEFT JOIN seat_assignments ON seat_assignments.event_id=guest_invites.event_id AND seat_assignments.invite_id=guest_invites.id
+        WHERE guest_invites.event_id=?
+      UNION ALL
+      SELECT 'user:'||guests.user_id,users.name,guests.user_id,seat_assignments.seat_id,seat_assignments.source
+        FROM guests JOIN users ON users.id=guests.user_id
+        LEFT JOIN seat_assignments ON seat_assignments.event_id=guests.event_id AND seat_assignments.user_id=guests.user_id
+        WHERE guests.event_id=? AND NOT EXISTS (SELECT 1 FROM guest_invites WHERE guest_invites.event_id=guests.event_id AND guest_invites.user_id=guests.user_id)`).all(eventId, eventId);
+  }
+  personKey(user, event) {
+    const invite = this.db.prepare('SELECT id FROM guest_invites WHERE event_id=? AND user_id=?').get(event.id, user.id);
+    if (invite) return `invite:${invite.id}`;
+    return this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id) ? `user:${user.id}` : null;
+  }
+  unseat(eventId, key) {
+    const [kind, value] = key.split(/:(.*)/s);
+    this.db.prepare(`DELETE FROM seat_assignments WHERE event_id=? AND ${kind === 'invite' ? 'invite_id' : 'user_id'}=?`).run(eventId, value);
+  }
+  seat(eventId, key, seatId, source) {
+    const [kind, value] = key.split(/:(.*)/s);
+    this.db.prepare('INSERT INTO seat_assignments (event_id,seat_id,invite_id,user_id,source,assigned_at) VALUES (?,?,?,?,?,?)')
+      .run(eventId, seatId, kind === 'invite' ? value : null, kind === 'user' ? value : null, source, iso(Date.now()));
+  }
+  seating(user, event, manager) {
+    const layout = this.layoutOf(event);
+    const people = this.seatPeople(event.id);
+    const key = this.personKey(user, event);
+    const result = { mode: event.seating_mode, layout, seatCount: layoutSeats(layout).length, mySeat: people.find(person => person.key === key)?.seatId || null, occupied: people.filter(person => person.seatId).map(person => person.seatId) };
+    if (manager) result.people = people;
+    return result;
+  }
+  saveSeating(user, eventId, body) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к рассадке банкета.');
+      if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
+      const mode = body.mode === undefined ? event.seating_mode : body.mode;
+      if (!SEATING_MODES.includes(mode)) throw new HttpError(400, 'Режим рассадки: off, choice или fixed.');
+      let layout = this.layoutOf(event);
+      if (body.layout !== undefined) {
+        const checked = validateLayout(body.layout);
+        if (checked.error) throw new HttpError(400, checked.error);
+        layout = checked.layout;
+      }
+      const seatIds = new Set(layoutSeats(layout).map(seat => seat.id));
+      const lost = this.db.prepare('SELECT seat_id FROM seat_assignments WHERE event_id=?').all(event.id).filter(row => !seatIds.has(row.seat_id));
+      if (lost.length) {
+        const old = this.layoutOf(event);
+        throw new HttpError(409, `Нельзя убрать занятые места: ${lost.slice(0, 3).map(row => seatTitle(old, row.seat_id)).join('; ')}${lost.length > 3 ? ` и ещё ${lost.length - 3}` : ''}. Сначала пересадите гостей.`);
+      }
+      this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(mode, JSON.stringify(layout), event.id);
+      return this.seating(user, this.eventRow(event.id, user), true);
+    });
+  }
+  chooseSeat(user, eventId, body) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (event.seating_mode !== 'choice') throw new HttpError(409, 'В этом банкете места распределяет организатор.');
+      this.assertOpen(event);
+      if (!this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id)) {
+        if (event.scope === 'live' || event.owner_id !== user.id) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
+        this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, user.id, '', iso(Date.now()));
+      }
+      if (event.scope === 'live' && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
+        throw new HttpError(403, 'Выбор места доступен только гостю с подтверждённым номером MAX из списка приглашённых.');
+      }
+      const key = this.personKey(user, event);
+      const seatId = body.seatId ?? null;
+      if (seatId !== null) {
+        if (typeof seatId !== 'string' || !layoutSeats(this.layoutOf(event)).some(seat => seat.id === seatId)) throw new HttpError(400, 'Такого места нет в схеме зала.');
+        const holder = this.db.prepare('SELECT invite_id,user_id FROM seat_assignments WHERE event_id=? AND seat_id=?').get(event.id, seatId);
+        if (holder && (holder.invite_id ? `invite:${holder.invite_id}` : `user:${holder.user_id}`) !== key) throw new HttpError(409, 'Это место уже заняли. Выберите другое.');
+      }
+      this.unseat(event.id, key);
+      if (seatId !== null) this.seat(event.id, key, seatId, 'guest');
+      return this.seating(user, event, false);
+    });
+  }
+  assignSeat(user, eventId, body) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к рассадке банкета.');
+      if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
+      const people = this.seatPeople(event.id);
+      const person = people.find(entry => entry.key === body.guest);
+      if (!person) throw new HttpError(404, 'Гость не найден.');
+      const seatId = body.seatId ?? null;
+      if (seatId === null) { this.unseat(event.id, person.key); return this.seating(user, event, true); }
+      if (typeof seatId !== 'string' || !layoutSeats(this.layoutOf(event)).some(seat => seat.id === seatId)) throw new HttpError(400, 'Такого места нет в схеме зала.');
+      const holder = people.find(entry => entry.seatId === seatId && entry.key !== person.key);
+      this.unseat(event.id, person.key);
+      if (holder) {
+        // Swap: the previous occupant takes the guest's old chair, or stays without a seat.
+        this.unseat(event.id, holder.key);
+        if (person.seatId) this.seat(event.id, holder.key, person.seatId, 'admin');
+      }
+      this.seat(event.id, person.key, seatId, 'admin');
+      return this.seating(user, event, true);
+    });
+  }
+  fillSeats(event) {
+    const people = this.seatPeople(event.id);
+    const waiting = people.filter(person => !person.seatId);
+    const picks = autoAssign(this.layoutOf(event), people.filter(person => person.seatId).map(person => person.seatId), waiting.map(person => person.key));
+    for (const pick of picks) this.seat(event.id, pick.person, pick.seatId, 'auto');
+    return { assigned: picks.length, unseated: waiting.length - picks.length };
+  }
+  autoSeat(user, eventId) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к рассадке банкета.');
+      if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
+      if (event.seating_mode === 'off') throw new HttpError(409, 'Сначала включите рассадку.');
+      return { ...this.fillSeats(event), seating: this.seating(user, event, true) };
+    });
+  }
   exportCsv(user, eventId) {
     const event = this.eventRow(eventId, user);
     if (!this.isManager(user, event)) throw new HttpError(403, 'Экспорт доступен организатору и ресторану.');
@@ -605,8 +736,15 @@ export class Store {
     const cell = value => `"${String(value ?? '').replace(/^[\s]*[=+@-]/, match => `'${match}`).replaceAll('"', '""')}"`;
     const rows = [['Банкет', event.title], ['Дата', event.date], [], ['Блюдо', 'Количество', 'Сумма, руб.']];
     for (const item of detail.summary) rows.push([item.name, item.quantity, (item.total / 100).toFixed(2)]);
-    rows.push([], ['Гость', 'Блюдо', 'Количество', 'Пожелания / аллергии']);
-    for (const guest of detail.guests) for (const item of guest.items) rows.push([guest.name, item.name, item.quantity, guest.notes]);
+    const seated = event.seating_mode !== 'off';
+    rows.push([], ['Гость', ...(seated ? ['Место'] : []), 'Блюдо', 'Количество', 'Пожелания / аллергии']);
+    for (const guest of detail.guests) for (const item of guest.items) rows.push([guest.name, ...(seated ? [guest.seat] : []), item.name, item.quantity, guest.notes]);
+    if (seated) {
+      rows.push([], ['Стол', 'Место', 'Гость']);
+      const people = new Map(detail.seating.people.filter(person => person.seatId).map(person => [person.seatId, person.name]));
+      for (const table of detail.seating.layout.tables) for (const seat of tableSeats(table)) if (people.has(seat.id)) rows.push([table.label, seat.number, people.get(seat.id)]);
+      for (const person of detail.seating.people.filter(entry => !entry.seatId)) rows.push(['Без места', '', person.name]);
+    }
     return '\uFEFF' + rows.map(row => row.map(cell).join(';')).join('\r\n');
   }
   createExportLink(user, eventId) {

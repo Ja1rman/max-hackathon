@@ -31,6 +31,8 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
+import { SEATING_TEMPLATES, generateLayout } from '../shared/seating.mjs';
+import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -546,7 +548,8 @@ function App() {
   const role = session.role,
     guestFirst = !session.demo && role === 'organizer' && !events.some(event => event.isOwner),
     canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
-    displayTab = detail && !canManage ? "menu" : tab,
+    seatingOn = Boolean(detail && detail.seating?.mode !== "off"),
+    displayTab = detail && !canManage ? (tab === "seat" && seatingOn ? "seat" : "menu") : tab,
     activeEvents = events.filter((e) => e.status === "collecting"),
     approvedEvents = events.filter((e) => e.status === "approved");
   const filtered = events.filter(
@@ -839,12 +842,25 @@ function App() {
                         {!canManage ? "Выбрать блюда" : "Мой выбор"}
                       </button>
                     )}
+                    {!canManage && seatingOn && (
+                      <button
+                        className={displayTab === "seat" ? "active" : ""}
+                        onClick={() => setTab("seat")}
+                      >
+                        Место {detail.seating.mySeat && <span>✓</span>}
+                      </button>
+                    )}
                     {canManage && (
                       <button
                         className={displayTab === "kitchen" ? "active" : ""}
                         onClick={() => setTab("kitchen")}
                       >
                         Заказ для кухни
+                      </button>
+                    )}
+                    {canManage && (
+                      <button className={displayTab === "seating" ? "active" : ""} onClick={() => setTab("seating")}>
+                        Рассадка
                       </button>
                     )}
                     {canManage && (
@@ -871,6 +887,33 @@ function App() {
                         })
                       }
                     />
+                  ) : displayTab === "seat" ? (
+                    <SeatPicker
+                      detail={detail}
+                      busy={busy}
+                      canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
+                      choose={(seatId) =>
+                        perform(async () => {
+                          await api(`/events/${selected}/seat`, { method: "PUT", body: { seatId } });
+                          await loadDetail(selected);
+                          notify(seatId ? "Место закреплено за вами" : "Место освобождено");
+                        })
+                      }
+                    />
+                  ) : displayTab === "seating" ? (
+                    <SeatingAdmin
+                      key={selected}
+                      detail={detail}
+                      busy={busy}
+                      notify={notify}
+                      save={(values) => updateAdmin(() => api(`/events/${selected}/seating`, { method: "PUT", body: values }), "Рассадка сохранена")}
+                      assign={(guest, seatId) => updateAdmin(() => api(`/events/${selected}/seating/assignments`, { method: "PUT", body: { guest, seatId } }), seatId ? "Место назначено" : "Гость снят с места")}
+                      autoSeat={() => perform(async () => {
+                        const result = await api(`/events/${selected}/seating/auto`, { method: "POST", body: {} });
+                        await loadDetail(selected);
+                        return result;
+                      })}
+                    />
                   ) : displayTab === "guests" ? (
                     <div className="detail-columns">
                       <section className="panel">
@@ -893,6 +936,7 @@ function App() {
                                 </div>
                                 <div className="guest-info">
                                   <strong>{g.name}</strong>
+                                  {g.seat && <span className="guest-seat">{g.seat}</span>}
                                   <small>
                                     {g.submitted
                                       ? g.items
@@ -1053,6 +1097,7 @@ function App() {
                       ) : (
                         <p className="muted">Особых пожеланий пока нет.</p>
                       )}
+                      {seatingOn && <SeatingOverview seating={detail.seating} />}
                     </section>
                   )}
                 </>
@@ -1293,9 +1338,12 @@ function App() {
           restaurants={restaurants}
           busy={busy}
           onClose={() => setCreateOpen(false)}
-          submit={(body) =>
+          submit={({ seating, ...body }) =>
             perform(async () => {
               const e = await api("/events", { method: "POST", body });
+              if (seating.mode !== "off") {
+                await api(`/events/${e.id}/seating`, { method: "PUT", body: { mode: seating.mode, layout: generateLayout(seating.template, body.expectedGuests) } });
+              }
               await refresh();
               setCreateOpen(false);
               openEvent(e.id || e.event?.id);
@@ -1319,6 +1367,11 @@ function App() {
                 detail.event.expectedGuests - detail.event.responded,
               )}{" "}
               гостей не выбрали блюда. Их выбор не войдёт в этот заказ.
+            </div>
+          )}
+          {detail.seating?.mode !== "off" && detail.seating?.people?.some((p) => !p.seatId) && (
+            <div className="alert">
+              Гостей без места: {detail.seating.people.filter((p) => !p.seatId).length}. При утверждении они будут рассажены автоматически на свободные места.
             </div>
           )}
           <div className="modal-actions">
@@ -1694,6 +1747,7 @@ function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest,
   );
 }
 function CreateEvent({ restaurants, busy, onClose, submit }) {
+  const [seatingMode, setSeatingMode] = useState("off");
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -1717,6 +1771,7 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             deadline: new Date(f.get("deadline")).toISOString(),
             expectedGuests: Number(f.get("guests")),
             budget: Math.round(Number(f.get("budget") || 0) * 100),
+            seating: { mode: f.get("seatingMode"), template: f.get("seatingTemplate") },
           });
         }}
       >
@@ -1781,6 +1836,26 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
               placeholder="Например, 40 000"
             />
           </label>
+        </div>
+        <div className="form-grid">
+          <label>
+            Рассадка
+            <select name="seatingMode" value={seatingMode} onChange={(e) => setSeatingMode(e.target.value)}>
+              {Object.entries(SEATING_MODE_NAMES).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </label>
+          {seatingMode !== "off" && (
+            <label>
+              Схема зала
+              <select name="seatingTemplate" defaultValue="rounds">
+                {SEATING_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="modal-actions">
           <Button variant="secondary" type="button" onClick={onClose}>
