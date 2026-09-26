@@ -2766,3 +2766,7 @@ button:not(:disabled):active { transform: scale(0.97); }
 }
 .admin-panel label.search-field { display: flex; }
 .admin-panel label.search-field, .admin-panel .user-roles label { font-weight: 600; }
+.confirm-backdrop { z-index: 80; }
+.confirm-modal { max-width: 420px; }
+.confirm-modal p { margin: 0 0 18px; font-size: 14px; line-height: 1.5; color: var(--ink); }
+.btn.danger { background: var(--red); border-color: var(--red); }
