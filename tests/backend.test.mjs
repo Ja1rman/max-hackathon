@@ -1,71 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { once } from 'node:events';
 import { verifyInitData } from '../server/auth.mjs';
 import { createApp, clientIp } from '../server/index.mjs';
 import { createNotifier } from '../server/notifications.mjs';
-
-const BOT_TOKEN = '123456:only-a-test-token';
-function sign({ id = 100, name = 'Александра', timestamp = Math.floor(Date.now() / 1000), extra = {} } = {}) {
-  const params = new URLSearchParams({ auth_date: String(timestamp), query_id: 'fixture-query', user: JSON.stringify({ id, first_name: name, last_name: 'Тестовая' }), ...extra });
-  const data = [...params].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, value]) => `${key}=${value}`).join('\n');
-  const secret = createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
-  params.set('hash', createHmac('sha256', secret).update(data).digest('hex'));
-  return params.toString();
-}
-function signedContact(userId, phone) {
-  const authDate = String(Math.floor(Date.now() / 1000));
-  const digits = phone.replace(/\D/g, '');
-  return { phone, authDate, hash: createHmac('sha256', BOT_TOKEN).update(`authDate=${authDate}\nphone=${digits}\nuserId=${userId}`).digest('hex') };
-}
-
-async function fixture(t, overrides = {}) {
-  const app = createApp({ databasePath: ':memory:', botToken: BOT_TOKEN, botUsername: '', maxWebhookSecret: '', demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', ...overrides });
-  app.server.listen(0, '127.0.0.1');
-  await once(app.server, 'listening');
-  t.after(() => new Promise((resolve, reject) => app.server.close(error => error ? reject(error) : resolve())));
-  const base = `http://127.0.0.1:${app.server.address().port}`;
-  const request = async (path, { token, method = 'GET', body, headers = {} } = {}) => {
-    const response = await fetch(base + path, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
-    const content = await response.text();
-    return { status: response.status, data: response.headers.get('content-type')?.includes('application/json') ? JSON.parse(content) : content, headers: response.headers };
-  };
-  const login = async (id = 100, name) => {
-    const response = await request('/api/auth/max', { method: 'POST', body: { initData: sign({ id, name }) } });
-    assert.equal(response.status, 200);
-    if (id === 100) {
-      const restaurantId = app.store.db.prepare("SELECT id FROM restaurants WHERE scope='live'").get().id;
-      app.store.db.prepare("INSERT OR IGNORE INTO restaurant_memberships VALUES (?,?,'organizer')").run(restaurantId, response.data.user.id);
-    }
-    return response.data;
-  };
-  const demo = async body => {
-    const response = await request('/api/auth/demo', { method: 'POST', body: { role: 'organizer', ...body } });
-    assert.equal(response.status, 200);
-    return response.data;
-  };
-  const event = async token => {
-    const restaurants = await request('/api/restaurants', { token });
-    const restaurant = restaurants.data[0];
-    const response = await request('/api/events', { token, method: 'POST', body: { title: 'Банкет', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 12, budget: 3000000 } });
-    assert.equal(response.status, 201);
-    return { ...response.data, menu: restaurant.menu };
-  };
-  const inviteGuest = async (ownerToken, banquet, guestToken, userId, phone, name = 'Гость') => {
-    const roster = await request(`/api/events/${banquet.id}/guests`, { token: ownerToken, method: 'POST', body: { name, phone } });
-    assert.equal(roster.status, 201);
-    const binding = await request('/api/me/phone', { token: guestToken, method: 'PUT', body: signedContact(userId, phone) });
-    assert.equal(binding.status, 200);
-    const joined = await request(`/api/invites/${banquet.inviteCode}/join`, { token: guestToken, method: 'POST' });
-    assert.equal(joined.status, 200);
-    return roster.data;
-  };
-  return { ...app, base, request, login, demo, event, inviteGuest };
-}
+import { BOT_TOKEN, fixture, sign, signedContact } from './helpers.mjs';
 
 test('MAX signature authenticates decoded fields and rejects forgery, duplicate keys and stale/future launches', () => {
   const valid = sign({ name: 'Анна + Мария & друзья' });
@@ -88,7 +29,7 @@ test('API exposes no secrets, rejects unsigned sessions and derives restaurant r
   assert.equal((await f.request('/api/events')).status, 401);
   assert.equal((await f.request('/api/me', { token: 'max_900' })).status, 401);
   const ordinary = await f.login(101);
-  assert.equal(ordinary.user.role, 'user');
+  assert.equal(ordinary.user.role, 'organizer');
   assert.equal(ordinary.user.demo, false);
   const admin = await f.login(900);
   assert.equal(admin.user.role, 'admin');
@@ -222,13 +163,12 @@ test('real events reject demo identities; demo can be entirely disabled', async 
 test('SQLite persists sessions and orders after server restart', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'za-stolom-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const config = { databasePath: join(directory, 'db.sqlite'), botToken: BOT_TOKEN, botUsername: '', maxWebhookSecret: '', restaurantAdminIds: [], demoEnabled: true };
+  const config = { databasePath: join(directory, 'db.sqlite'), botToken: BOT_TOKEN, botUsername: '', maxWebhookSecret: '', restaurantAdminIds: [], demoEnabled: true, openOrganizerSignup: true };
   const first = createApp(config);
   const session = first.store.loginMax({ id: '100', name: 'Persistent Owner' });
   const user = first.store.authenticate(session.token);
   const restaurant = first.store.restaurants(user)[0];
-  first.store.db.prepare("INSERT INTO restaurant_memberships VALUES (?,?,'organizer')").run(restaurant.id, user.id);
-  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, budget: 100000 });
+  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, foodBudget: 1000000 });
   first.store.bindPhone(user, '79990000001');
   first.store.addInvite(user, event.id, { name: 'Persistent Owner', phone: '79990000001' });
   const bound = first.store.authenticate(session.token);
@@ -380,62 +320,6 @@ test('common bot button finds only invitations for the signed MAX phone and clai
   assert.equal((await f.request(`/api/events/${first.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: first.menu[0].id, quantity: 1 }] } })).status, 200);
 });
 
-test('restaurant roles are scoped, delegated only by authorized admins, and do not block guest participation', async t => {
-  const f = await fixture(t);
-  const admin = await f.login(900);
-  const restaurantAdmin = await f.login(200);
-  const organizer = await f.login(300);
-  const another = await f.login(400);
-  const first = (await f.request('/api/restaurants', { token: admin.token })).data[0];
-  const second = await f.request('/api/restaurants', { token: admin.token, method: 'POST', body: { name: 'Второй ресторан', description: '', address: 'Москва' } });
-  assert.equal(second.status, 201);
-  assert.equal((await f.request('/api/restaurants', { token: organizer.token, method: 'POST', body: { name: 'Чужой ресторан' } })).status, 403);
-  const grant = (token, restaurantId, maxId, role) => f.request(`/api/restaurants/${restaurantId}/members/${maxId}`, { token, method: 'PUT', body: { role } });
-  assert.equal((await grant(admin.token, first.id, '200', 'restaurant_admin')).status, 200);
-  assert.equal((await grant(restaurantAdmin.token, first.id, '300', 'organizer')).status, 200);
-  assert.equal((await grant(restaurantAdmin.token, first.id, '400', 'restaurant_admin')).status, 403);
-  assert.equal((await grant(restaurantAdmin.token, second.data.id, '400', 'organizer')).status, 403);
-  assert.equal((await grant(organizer.token, first.id, '400', 'organizer')).status, 403);
-  assert.equal((await grant(restaurantAdmin.token, first.id, '400', 'organizer')).status, 200);
-  const roles = (await f.request('/api/me', { token: organizer.token })).data.restaurantRoles;
-  assert.deepEqual(roles.map(row => [row.restaurantId, row.role]), [[first.id, 'organizer']]);
-  const body = { title: 'Права', date: new Date(Date.now() + 14 * 86400000).toISOString(), deadline: new Date(Date.now() + 10 * 86400000).toISOString(), expectedGuests: 2, budget: 500000 };
-  assert.equal((await f.request('/api/events', { token: organizer.token, method: 'POST', body: { ...body, restaurantId: second.data.id } })).status, 403);
-  const event = await f.request('/api/events', { token: organizer.token, method: 'POST', body: { ...body, restaurantId: first.id } });
-  assert.equal(event.status, 201);
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: restaurantAdmin.token })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: another.token })).status, 404);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: organizer.token, method: 'POST', body: {} })).status, 403);
-  const secondEvent = await f.request('/api/events', { token: another.token, method: 'POST', body: { ...body, restaurantId: first.id } });
-  assert.equal(secondEvent.status, 201);
-  await f.inviteGuest(another.token, secondEvent.data, organizer.token, 300, '+79990000300');
-  assert.equal((await f.request(`/api/events/${secondEvent.data.id}/selection`, { token: organizer.token, method: 'PUT', body: { items: [{ menuItemId: first.menu[0].id, quantity: 1 }] } })).status, 200);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/200`, { token: admin.token, method: 'DELETE' })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: restaurantAdmin.token })).status, 404);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/300`, { token: admin.token, method: 'DELETE' })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: organizer.token })).status, 404);
-  assert.equal((await f.request(`/api/events/${event.data.id}/approve`, { token: organizer.token, method: 'POST', body: {} })).status, 403);
-  assert.equal((await f.request(`/api/events/${secondEvent.data.id}`, { token: organizer.token })).status, 200);
-});
-
-test('invite link lets a signed MAX user without a pre-entered phone join only as themselves', async t => {
-  const f = await fixture(t);
-  const owner = await f.login(100);
-  const guest = await f.login(200);
-  const stranger = await f.login(300);
-  const event = await f.event(owner.token);
-  assert.equal((await f.request(`/api/invites/${event.inviteCode}/join`, { token: guest.token, method: 'POST' })).status, 403);
-  assert.equal((await f.request('/api/me/phone', { token: guest.token, method: 'PUT', body: signedContact(200, '+79990000200') })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.id}`, { token: stranger.token })).status, 404);
-  assert.equal((await f.request(`/api/invites/${event.inviteCode}/join`, { token: guest.token, method: 'POST' })).status, 200);
-  const own = await f.request(`/api/events/${event.id}`, { token: guest.token });
-  assert.equal(own.data.canSelect, true);
-  assert.equal(own.data.event.guestBudget, 250000);
-  assert.equal(own.data.guests.length, 1);
-  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: event.menu[0].id, quantity: 1 }] } })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: stranger.token, method: 'PUT', body: { items: [{ menuItemId: event.menu[0].id, quantity: 1 }] } })).status, 403);
-});
-
 test('event administration edits metadata and event-only KBJU menu with revision and selection locks', async t => {
   const f = await fixture(t);
   const owner = await f.login(100);
@@ -506,10 +390,13 @@ test('photo upload validates image bytes and exposes only generated media path',
   const retrieved = await fetch(`${f.base}${photoUrl}`);
   assert.equal(retrieved.status, 200);
   assert.deepEqual(Buffer.from(await retrieved.arrayBuffer()), bytes);
-  const restaurants = await f.request('/api/restaurants', { token: owner.token });
-  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { title: 'С фото', restaurantId: restaurants.data[0].id, date: new Date(Date.now() + 14 * 86400000).toISOString(), deadline: new Date(Date.now() + 10 * 86400000).toISOString(), expectedGuests: 2, photoUrl } });
+  const restaurant = (await f.request('/api/restaurants', { token: owner.token })).data[0];
+  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { restaurantId: restaurant.id, title: 'Банкет с фото', photoUrl, date: new Date(Date.now() + 14 * 86400000).toISOString(), deadline: new Date(Date.now() + 10 * 86400000).toISOString(), expectedGuests: 3 } });
   assert.equal(created.status, 201);
   assert.equal(created.data.photoUrl, photoUrl);
   assert.equal((await f.request(`/api/events/${created.data.id}`, { token: owner.token })).data.event.photoUrl, photoUrl);
-  assert.equal((await f.request(`/api/events/${created.data.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: created.data.revision, photoUrl: 'https://other.example/image.png' } })).status, 400);
+  const edited = await f.request(`/api/events/${created.data.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: created.data.revision, photoUrl: '' } });
+  assert.equal(edited.status, 200);
+  assert.equal(edited.data.photoUrl, '');
+  assert.equal((await f.request(`/api/events/${created.data.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: edited.data.revision, photoUrl: '/api/media/untrusted.png' } })).status, 400);
 });

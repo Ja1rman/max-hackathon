@@ -9,7 +9,7 @@ async function request(path, { method = 'GET', body, token } = {}) {
 assert.equal((await request('/config')).demoEnabled, true, 'Smoke requires DEMO_ENABLED=true');
 const owner = await request('/auth/demo', { method: 'POST', body: { role: 'organizer' } });
 const restaurant = (await request('/restaurants', { token: owner.token }))[0];
-const event = await request('/events', { method: 'POST', token: owner.token, body: { title: 'Проверка релиза', restaurantId: restaurant.id, date: new Date(Date.now() + 7 * 86400000).toISOString(), deadline: new Date(Date.now() + 5 * 86400000).toISOString(), expectedGuests: 1, budget: 500000 } });
+const event = await request('/events', { method: 'POST', token: owner.token, body: { title: 'Проверка релиза', restaurantId: restaurant.id, date: new Date(Date.now() + 7 * 86400000).toISOString(), deadline: new Date(Date.now() + 5 * 86400000).toISOString(), expectedGuests: 1, foodBudget: 500000 } });
 const guest = await request('/auth/demo', { method: 'POST', body: { role: 'guest', inviteCode: event.inviteCode, name: 'Тестовый гость' } });
 await request(`/invites/${event.inviteCode}/join`, { method: 'POST', token: guest.token, body: {} });
 const selected = restaurant.menu[0];

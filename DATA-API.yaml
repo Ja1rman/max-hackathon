@@ -1,23 +1,26 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.1.0
+version: 1.6.0
 sources:
 - server/store.mjs
 - server/auth.mjs
 - server/index.mjs
 - server/max-bot.mjs
 - server/notifications.mjs
+- shared/seating.mjs
 api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 4
+  user_version: 9
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
     busy_timeout: 5000
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
-    DEFAULT0. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
+    ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
+    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. В v9 добавляется events.photo_url. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -78,15 +81,21 @@ tables:
       owner_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
       restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
       title: TEXT NOT NULL
+      photo_url: TEXT NOT NULL DEFAULT '' (путь загруженного фото мероприятия)
       date: TEXT NOT NULL (ISO-8601 UTC)
       deadline: TEXT NOT NULL (ISO-8601 UTC)
       expected_guests: INTEGER NOT NULL
-      budget: INTEGER NOT NULL (kopecks)
+      budget: INTEGER NOT NULL (kopecks, плановый итог = (food_budget + drink_budget) × expected_guests)
+      guest_budget: INTEGER NOT NULL DEFAULT 0 (устарело; = food_budget + drink_budget)
+      food_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на еду, 0 — без лимита)
+      drink_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на напитки, 0 — без лимита)
       status: TEXT NOT NULL DEFAULT 'collecting'
       invite_code: TEXT UNIQUE NOT NULL
       created_at: TEXT NOT NULL (ISO-8601 UTC)
       approved_at: TEXT NULL (ISO-8601 UTC)
       revision: INTEGER NOT NULL DEFAULT 0
+      seating_mode: TEXT NOT NULL DEFAULT 'off' (off | choice | fixed)
+      seating_layout: TEXT NOT NULL DEFAULT '{"tables":[]}' (JSON SeatingLayout)
     purpose: Сбор либо утверждённый заказ. invite_code24base64url. Дедлайн не меняет
       status автоматически.
   event_menu:
@@ -185,6 +194,57 @@ tables:
       - user_id
       - kind
     purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  restaurant_members:
+    columns:
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      role: TEXT NOT NULL CHECK(role IN ('admin','organizer'))
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - restaurant_id
+    - user_id
+    purpose: Доступ пользователя к ресторану. Нет строки — обычный пользователь (гость).
+      Суперадминистраторы из RESTAURANT_ADMIN_IDS администрируют все рестораны без строк.
+  kitchen_download_tokens:
+    columns:
+      token_hash: TEXT PRIMARY KEY (SHA-256)
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      format: TEXT NOT NULL (csv | xlsx)
+      expires_at: INTEGER NOT NULL (Unix milliseconds, 60 секунд)
+    purpose: Одноразовые ссылки на выгрузку раздела «Кухня» для WebApp.downloadFile.
+  shared_items:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      menu_item_id: TEXT NOT NULL
+      quantity: INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 1000)
+      price: INTEGER NOT NULL CHECK(price >= 0) (kopecks, снимок цены)
+      name: TEXT NOT NULL
+    primary_key:
+    - event_id
+    - menu_item_id
+    purpose: Блюда и закуски на общий стол, выбранные организатором. Входят в total и
+      сводку кухни, не входят в бюджет гостя; гости не могут заказать их сами.
+  seat_assignments:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      seat_id: TEXT NOT NULL (<tableId>-<n>, вычисляется из seating_layout)
+      invite_id: TEXT NULL REFERENCES guest_invites(id) ON DELETE CASCADE
+      user_id: TEXT NULL REFERENCES users(id) ON DELETE CASCADE
+      source: TEXT NOT NULL (guest | admin | auto)
+      assigned_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - seat_id
+    unique:
+    - - event_id
+      - invite_id
+    - - event_id
+      - user_id
+    check: Ровно одно из invite_id и user_id. Гость из списка приглашённых закрепляется
+      по invite_id (в том числе ещё не вошедший), гость по демо-ссылке без записи в
+      списке — по user_id.
+    purpose: Кто на каком месте. Первичный ключ исключает двойное бронирование одного
+      стула при одновременных запросах.
   media_assets:
     columns:
       file_name: TEXT PRIMARY KEY
@@ -207,7 +267,10 @@ derived:
   event.joined: COUNT(guests)
   guest.total: SUM(собственных selections.quantity * price)
   summary: GROUP BY menu_item_id,name; SUM(quantity), SUM(quantity*price)
+  seats: Стулья не хранятся; id и координаты вычисляются из стола функцией tableSeats
+    (shared/seating.mjs), поэтому сервер и интерфейс нумеруют места одинаково.
   revision: Увеличивается при новом присоединении, сохранении выбора и утверждении;
+    изменения рассадки revision не меняют;
     seed синтетических ответов создаётся до демонстрации.
 authorization:
   public:
@@ -219,14 +282,23 @@ authorization:
     чтение —404.
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
-  manager_detail: 'owner или restaurant: все гости, summary, budget, inviteCode, invite
+  kitchen: 'GET /api/kitchen только restaurant: банкеты scope с date >= вчера.'
+  users: 'GET /api/users, GET /api/restaurants/{id}/members и PUT/DELETE /api/restaurants/{id}/members/{userId}: глобальный администратор назначает администратора ресторана; администратор ресторана назначает только organizer. userId также принимает числовой MAX ID до первого входа.'
+  restaurants: 'POST /api/restaurants — суперадминистратор; PATCH — администратор ресторана.'
+  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: admin для глобального администратора, restaurant для администратора хотя бы одного ресторана, organizer или guest. Банкетом управляют владелец с действующей ролью и admin его ресторана; бывший владелец сохраняет только просмотр.'
+  manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
   create_event: organizer или restaurant.
-  live_guest: Подтверждённый MAX номер должен совпадать со списком guest_invites;
-    выбор доступен только для своей записи, без userId в запросе.
-  approve: Только owner независимо от глобальной роли.
+  live_guest: Подтверждённый MAX номер связывается со своей записью guest_invites;
+    по действительной персональной ссылке запись создаётся и для неизвестного номера. Выбор доступен только для своей записи, без userId в запросе.
+  approve: Только owner с действующим доступом к ресторану.
   menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
   csv: owner или restaurant, только approved.
+  seating_read: Любой участник видит схему, занятые места с именами гостей (seating.names)
+    и своё место; телефоны и полный список людей (seating.people) — только owner и restaurant.
+  seating_write: Схему, режим, ручные назначения и авторассадку меняют owner или
+    restaurant до утверждения. Гость выбирает место сам только в режиме choice и до
+    дедлайна.
   demo_invite: Создаёт только guest; demo запрещён доступ к live. Sandbox — секрет
     переключения ролей только собственной демонстрации.
   export_link: 'POST /api/events/{id}/export-link: owner/restaurant approved -> {url}.
@@ -238,7 +310,9 @@ lifecycle:
   approve: owner, expectedRevision=current revision, >=1 submitted. Транзакция BEGIN
     IMMEDIATE фиксирует approved_at и увеличивает revision.
   repeat_approve: approved возвращается идемпотентно без обязательного тела.
-  deadline: Запрещает новые joins и saveSelection; существующий join идемпотентен;
+  approve_seating: При seating_mode choice/fixed утверждение в той же транзакции
+    рассаживает гостей без места (сначала столы, где уже кто-то сидит).
+  deadline: Запрещает новые joins, saveSelection и выбор места гостем; существующий join идемпотентен;
     не утверждает автоматически.
   catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
     правке каталога.
