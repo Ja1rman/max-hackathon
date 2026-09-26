@@ -61,7 +61,8 @@ test('guests choose free seats, organizer edits layout and approval seats everyo
   assert.equal((await f.request(seatPath, { token: boris.token, method: 'PUT', body: { seatId: 't1-2' } })).status, 409);
   const moved = await f.request(seatPath, { token: anna.token, method: 'PUT', body: { seatId: 't1-3' } });
   assert.deepEqual(moved.data.occupied, ['t1-3']);
-  assert.equal(moved.data.people, undefined, 'guests do not see who sits where');
+  assert.equal(moved.data.people, undefined, 'guests get no roster or phones');
+  assert.deepEqual(moved.data.names, { 't1-3': 'Анна' }, 'everyone sees names on taken seats');
 
   const shrink = structuredClone(layout);
   shrink.tables[0].seats = 2;

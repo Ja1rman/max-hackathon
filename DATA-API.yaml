@@ -1,6 +1,6 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.3.0
+version: 1.4.0
 sources:
 - server/store.mjs
 - server/auth.mjs
@@ -12,7 +12,7 @@ api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 6
+  user_version: 7
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -84,8 +84,10 @@ tables:
       date: TEXT NOT NULL (ISO-8601 UTC)
       deadline: TEXT NOT NULL (ISO-8601 UTC)
       expected_guests: INTEGER NOT NULL
-      budget: INTEGER NOT NULL (kopecks, плановый итог = guest_budget × expected_guests)
-      guest_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя, 0 — без лимита)
+      budget: INTEGER NOT NULL (kopecks, плановый итог = (food_budget + drink_budget) × expected_guests)
+      guest_budget: INTEGER NOT NULL DEFAULT 0 (устарело; = food_budget + drink_budget)
+      food_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на еду, 0 — без лимита)
+      drink_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на напитки, 0 — без лимита)
       status: TEXT NOT NULL DEFAULT 'collecting'
       invite_code: TEXT UNIQUE NOT NULL
       created_at: TEXT NOT NULL (ISO-8601 UTC)
@@ -191,6 +193,18 @@ tables:
       - user_id
       - kind
     purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  organizers:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      phone: TEXT NOT NULL (международный формат без плюса)
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    unique:
+    - - scope
+      - phone
+    purpose: Организаторы, добавленные администратором. Live-пользователь с подтверждённым
+      номером из списка получает роль organizer; владелец уже созданного банкета тоже.
   shared_items:
     columns:
       event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
@@ -262,6 +276,8 @@ authorization:
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
   kitchen: 'GET /api/kitchen только restaurant: банкеты scope с date >= вчера.'
+  organizers: 'GET/POST /api/organizers, DELETE /api/organizers/{id}: только restaurant.'
+  roles: 'live: restaurant по RESTAURANT_ADMIN_IDS; organizer по подтверждённому телефону из organizers или при наличии своих банкетов (либо OPEN_ORGANIZER_SIGNUP=true); иначе guest.'
   manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
   create_event: organizer или restaurant.
@@ -270,8 +286,8 @@ authorization:
   approve: Только owner независимо от глобальной роли.
   menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
   csv: owner или restaurant, только approved.
-  seating_read: Гость видит схему, занятые seat_id без имён и своё место; owner и
-    restaurant — всех людей с местами.
+  seating_read: Любой участник видит схему, занятые места с именами гостей (seating.names)
+    и своё место; телефоны и полный список людей (seating.people) — только owner и restaurant.
   seating_write: Схему, режим, ручные назначения и авторассадку меняют owner или
     restaurant до утверждения. Гость выбирает место сам только в режиме choice и до
     дедлайна.

@@ -32,7 +32,8 @@ import {
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
 import { SEATING_TEMPLATES, generateLayout } from '../shared/seating.mjs';
-import { UNIT_RATES, formatUnits, spentByUnit, unitNumber, unitOf } from '../shared/currency.mjs';
+import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
+const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
 import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -187,7 +188,8 @@ function App() {
     [selected, setSelected] = useState(null),
     [detail, setDetail] = useState(null),
     [tab, setTab] = useState("guests"),
-    [board, setBoard] = useState(null);
+    [board, setBoard] = useState(null),
+    [organizers, setOrganizers] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
@@ -286,6 +288,12 @@ function App() {
     setBoard(null);
     api("/kitchen").then(setBoard).catch((e) => setError(e.message));
   }, [screen, session]);
+  const loadOrganizers = useCallback(() => api("/organizers").then(setOrganizers), []);
+  useEffect(() => {
+    if (screen !== "organizers" || !session) return;
+    setOrganizers(null);
+    loadOrganizers().catch((e) => setError(e.message));
+  }, [screen, session, loadOrganizers]);
   const loadDetail = useCallback(async (id) => {
     const d = await api(`/events/${id}`);
     setDetail(d);
@@ -553,7 +561,7 @@ function App() {
       </div>
     );
   const role = session.role,
-    guestFirst = !session.demo && role === 'organizer' && !events.some(event => event.isOwner),
+    guestFirst = !session.demo && role === 'guest',
     canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
     seatingOn = Boolean(detail && detail.seating?.mode !== "off"),
     displayTab = detail && !canManage ? (tab === "seat" && seatingOn ? "seat" : "menu") : tab,
@@ -589,6 +597,18 @@ function App() {
             >
               <Utensils size={19} />
               {role === "restaurant" ? "Меню ресторана" : "Меню ресторанов"}
+            </button>
+          )}
+          {role === "restaurant" && (
+            <button
+              className={screen === "organizers" ? "active" : ""}
+              onClick={() => {
+                setScreen("organizers");
+                setSelected(null);
+              }}
+            >
+              <Users size={19} />
+              Организаторы
             </button>
           )}
           {role === "restaurant" && (
@@ -649,7 +669,7 @@ function App() {
           <div className="breadcrumb desktop-only">
             Моё пространство <ChevronRight size={14} />
             <span>
-              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : "Банкеты"}
+              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : screen === "organizers" ? "Организаторы" : "Банкеты"}
             </span>
           </div>
           <div className="topbar-right">
@@ -711,7 +731,22 @@ function App() {
               </Button>
             </div>
           )}
-          {screen === "kitchen" && !selected ? (
+          {screen === "organizers" && !selected ? (
+            <>
+              <div className="page-heading">
+                <div className="eyebrow">КТО ПРОВОДИТ БАНКЕТЫ</div>
+                <h1>Организаторы</h1>
+                <p>Добавьте номер телефона организатора. Когда он войдёт в MAX и подтвердит этот номер, у него появится кнопка «Создать банкет».</p>
+              </div>
+              <OrganizersAdmin
+                organizers={organizers}
+                busy={busy}
+                demo={session.demo}
+                add={(values) => perform(async () => { await api("/organizers", { method: "POST", body: values }); await loadOrganizers(); notify("Организатор добавлен"); })}
+                remove={(id) => perform(async () => { await api(`/organizers/${id}`, { method: "DELETE" }); await loadOrganizers(); notify("Организатор удалён"); })}
+              />
+            </>
+          ) : screen === "kitchen" && !selected ? (
             <>
               <div className="page-heading">
                 <div className="eyebrow">ВСЁ ДЛЯ ПОДГОТОВКИ</div>
@@ -824,8 +859,8 @@ function App() {
                         label="Сумма заказа"
                         value={money(detail.event.total)}
                         detail={
-                          detail.event.guestBudget
-                            ? `Бюджет на гостя: ${money(detail.event.guestBudget)}`
+                          detail.event.foodBudget || detail.event.drinkBudget
+                            ? `На гостя: еда ${money(detail.event.foodBudget)}, напитки ${money(detail.event.drinkBudget)}`
                             : "По выбору гостей"
                         }
                       />
@@ -833,8 +868,8 @@ function App() {
                       <Stat
                         icon={Wallet}
                         label="Ваш бюджет"
-                        value={detail.event.guestBudget ? `${unitNumber(detail.event.guestBudget / UNIT_RATES.pie)} 🥧` : "Без ограничений"}
-                        detail={detail.event.guestBudget ? `или ${formatUnits(detail.event.guestBudget, "bottle")} 🍾` : "Выбирайте по вкусу"}
+                        value={detail.event.foodBudget ? units(detail.event.foodBudget, "pie") : "Без ограничений"}
+                        detail={detail.event.drinkBudget ? `и ${units(detail.event.drinkBudget, "bottle")} на напитки` : "Напитки без ограничения"}
                       />
                     )}
                     <Stat
@@ -1031,9 +1066,9 @@ function App() {
                           <span>Итого</span>
                           <strong>{money(detail.event.total)}</strong>
                         </div>
-                        {detail.event.guestBudget > 0 && (
+                        {detail.event.budget > 0 && (
                           <div className="order-line">
-                            <span>Бюджет {detail.event.guestBudget ? `${money(detail.event.guestBudget)} × ${detail.event.expectedGuests}` : ""}</span>
+                            <span>Бюджет {money(detail.event.foodBudget + detail.event.drinkBudget)} × {detail.event.expectedGuests}</span>
                             <strong>{money(detail.event.budget)}</strong>
                           </div>
                         )}
@@ -1191,7 +1226,7 @@ function App() {
                     <p>{session.phoneVerified ? 'Найдём банкеты, куда организатор добавил ваш подтверждённый номер MAX.' : 'Подтвердите свой номер через MAX. Мы найдём ваш банкет и откроем меню для выбора блюд.'}</p>
                   </div>
                   <Button disabled={busy} onClick={() => perform(findMyInvites)}>{session.phoneVerified ? 'Найти приглашения' : 'Подтвердить номер'}</Button>
-                  {!events.length && <button className="guest-discovery-create" onClick={() => setCreateOpen(true)}>Я организатор · создать банкет</button>}
+                  <small className="guest-discovery-hint">Вы организатор? Попросите администратора ресторана добавить ваш номер{session.phoneVerified ? '' : ' и подтвердите его здесь'} — появится кнопка «Создать банкет».</small>
                 </div>
               )}
               <div className="stats-row">
@@ -1304,7 +1339,7 @@ function App() {
                           </span>
                         ) : (
                           <span>
-                            Ваш бюджет<strong>{event.guestBudget ? `${unitNumber(event.guestBudget / UNIT_RATES.pie)} 🥧` : "Без ограничений"}</strong>
+                            Ваш бюджет<strong>{event.foodBudget || event.drinkBudget ? `${units(event.foodBudget, "pie")} · ${units(event.drinkBudget, "bottle")}` : "Без ограничений"}</strong>
                           </span>
                         )}
                         <span className="round-arrow">
@@ -1384,6 +1419,17 @@ function App() {
             >
               <Utensils size={19} />
               Меню
+            </button>
+          )}
+          {role === "restaurant" && (
+            <button
+              onClick={() => {
+                setScreen("organizers");
+                setSelected(null);
+              }}
+            >
+              <Users size={19} />
+              Организаторы
             </button>
           )}
           {role === "restaurant" && (
@@ -1613,30 +1659,30 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked, priceLabe
     </article>
   );
 }
-function BudgetMeter({ budget, total, spent, guestView }) {
-  const remaining = budget - total;
-  const percent = Math.min(100, Math.round((total / budget) * 100));
+/** Food (pie slices) and drinks (bottles) have independent per-guest limits. */
+function BudgetMeter({ foodBudget, drinkBudget, spent, guestView }) {
+  const rows = [
+    ["pie", "Еда", foodBudget, spent.pie],
+    ["bottle", "Напитки", drinkBudget, spent.bottle],
+  ];
+  const show = (value, unit) => (guestView ? units(value, unit) : money(value));
   return (
-    <div className={`budget-meter ${remaining < 0 ? "over" : ""}`}>
-      <div className="budget-meter-top">
-        <span>Ваш бюджет</span>
-        <strong>{guestView ? `${unitNumber(budget / UNIT_RATES.pie)} 🥧 или ${unitNumber(budget / UNIT_RATES.bottle)} 🍾` : money(budget)}</strong>
-      </div>
-      <div className="progress-track"><span style={{ width: `${percent}%` }} /></div>
-      <div className="budget-meter-bottom">
-        {guestView ? (
-          <span>Потрачено: {formatUnits(spent.pie, "pie")} · {formatUnits(spent.bottle, "bottle")}</span>
-        ) : (
-          <span>Потрачено: {money(total)}</span>
-        )}
-        <strong>
-          {remaining < 0
-            ? "Бюджет превышен"
-            : guestView
-              ? `Осталось ${unitNumber(remaining / UNIT_RATES.pie)} 🥧 или ${unitNumber(remaining / UNIT_RATES.bottle)} 🍾`
-              : `Осталось ${money(remaining)}`}
-        </strong>
-      </div>
+    <div className="budget-meter">
+      <span className="budget-meter-title">Ваш бюджет</span>
+      {rows.map(([unit, label, limit, used]) => (
+        <div key={unit} className={`budget-row ${limit > 0 && used > limit ? "over" : ""}`}>
+          <div className="budget-meter-top">
+            <span>{label}</span>
+            <strong>{limit > 0 ? `${show(used, unit)} из ${show(limit, unit)}` : `${show(used, unit)} · без ограничения`}</strong>
+          </div>
+          {limit > 0 && (
+            <>
+              <div className="progress-track"><span style={{ width: `${Math.min(100, Math.round((used / limit) * 100))}%` }} /></div>
+              <small>{used > limit ? "Бюджет превышен" : `Осталось ${show(limit - used, unit)}`}</small>
+            </>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1667,10 +1713,14 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
     total = chosen.reduce((n, i) => n + i.price * i.quantity, 0),
     count = chosen.reduce((n, i) => n + i.quantity, 0),
     spent = spentByUnit(chosen),
-    budget = detail.event.guestBudget || 0,
-    remaining = budget - total,
-    over = budget > 0 && remaining < 0;
-  const price = (item) => (guestView ? formatUnits(item.price, unitOf(item)) : money(item.price));
+    limits = { pie: detail.event.foodBudget || 0, bottle: detail.event.drinkBudget || 0 },
+    budgeted = limits.pie > 0 || limits.bottle > 0,
+    over = Object.keys(limits).some((unit) => limits[unit] > 0 && spent[unit] > limits[unit]);
+  const price = (item) => (guestView ? units(item.price, unitOf(item)) : money(item.price));
+  const fits = (item) => {
+    const unit = unitOf(item);
+    return !limits[unit] || spent[unit] + item.price <= limits[unit];
+  };
   useEffect(() => {
     const fn = (e) => {
       if (dirty) {
@@ -1694,8 +1744,8 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
           <p className="muted">
             {!canSelect ? 'Просмотр меню. Для выбора блюд войдите как приглашённый гость и подтвердите номер MAX.' : locked
               ? "Сбор завершён. Ваши блюда сохранены в заказе."
-              : budget
-                ? "Выберите блюда и напитки в пределах бюджета. Еда стоит кусочки пирога 🥧, напитки — бутылочки 🍾."
+              : budgeted
+                ? "Выберите блюда и напитки в пределах бюджета. Еда стоит кусочки пирога 🥧, напитки — бутылочки 🍾. Это две отдельные валюты."
                 : "Выберите блюда и укажите пожелания. До утверждения заказ можно изменить."}
           </p>
         </div>
@@ -1709,7 +1759,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
           Без мяса
         </label>
       </div>
-      {budget > 0 && <BudgetMeter budget={budget} total={total} spent={spent} guestView={guestView} />}
+      {budgeted && <BudgetMeter foodBudget={limits.pie} drinkBudget={limits.bottle} spent={spent} guestView={guestView} />}
       {shared.length > 0 && (
         <section className="shared-table">
           <h3>Уже на общем столе</h3>
@@ -1755,7 +1805,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
               item={i}
               locked={locked}
               priceLabel={price(i)}
-              canAdd={!budget || i.price <= remaining}
+              canAdd={fits(i)}
               quantity={items[i.id] || 0}
               onChange={(q) => {
                 setItems((v) => ({ ...v, [i.id]: q }));
@@ -1786,9 +1836,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
           <span>Ваш выбор · {count} порций</span>
           {guestView ? (
             <strong className="unit-total">
-              {formatUnits(spent.pie, "pie")}
-              <br />
-              {formatUnits(spent.bottle, "bottle")}
+              {units(spent.pie, "pie")} · {units(spent.bottle, "bottle")}
             </strong>
           ) : (
             <strong>{money(total)}</strong>
@@ -1853,16 +1901,17 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
         <form onSubmit={event => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), guestBudget: Math.round(Number(form.get('guestBudget') || 0) * 100) });
+          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <div className="form-grid">
             <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
             <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
-            <label>Бюджет на гостя, ₽<input type="number" name="guestBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.guestBudget / 100} disabled={!active} /></label>
+            <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>
+            <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>
           </div>
-          <small className="muted">Гость не сможет выбрать больше бюджета. Он увидит его во внутренней валюте: 1 кусочек пирога 🥧 = 10 ₽ (еда), 1 бутылочка 🍾 = 100 ₽ (напитки). 0 — без ограничения.</small>
+          <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>
           {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
         </form>
       </section>
@@ -1955,6 +2004,38 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
     </div>
   );
 }
+function OrganizersAdmin({ organizers, busy, demo, add, remove }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  if (!organizers) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем организаторов…</div>;
+  return (
+    <section className="panel admin-panel">
+      <form className="admin-guest-form" onSubmit={async (event) => {
+        event.preventDefault();
+        const result = await add({ name, phone });
+        if (result !== null) { setName(""); setPhone(""); }
+      }}>
+        <input aria-label="Имя организатора" placeholder="Имя или компания" maxLength={100} required value={name} onChange={(e) => setName(e.target.value)} />
+        <input aria-label="Телефон организатора" type="tel" placeholder="+7 999 123-45-67" required value={phone} onChange={(e) => setPhone(e.target.value)} />
+        <Button type="submit" disabled={busy}><Plus size={16} /> Добавить</Button>
+      </form>
+      {demo && <p className="muted">В демо роли переключаются вручную, поэтому список здесь только для примера.</p>}
+      <div className="admin-guest-list">
+        {organizers.length ? organizers.map((entry) => (
+          <div className="admin-guest" key={entry.id}>
+            <div>
+              <strong>{entry.name}</strong>
+              <small>+{entry.phone} · {entry.registered ? "Вошёл в MAX и подтвердил номер" : "Ещё не входил"}</small>
+            </div>
+            <div className="admin-actions">
+              <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Убрать ${entry.name} из организаторов? Уже созданные им банкеты останутся.`)) remove(entry.id); }}>Удалить</button>
+            </div>
+          </div>
+        )) : <p className="muted">Организаторов пока нет. Без записи здесь пользователь MAX может только принимать приглашения как гость.</p>}
+      </div>
+    </section>
+  );
+}
 function KitchenBoard({ board, open }) {
   if (!board) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем заказы…</div>;
   if (!board.length) return <Empty title="Запланированных банкетов нет">Когда организатор создаст банкет, он появится здесь.</Empty>;
@@ -2011,7 +2092,8 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             date: new Date(f.get("date")).toISOString(),
             deadline: new Date(f.get("deadline")).toISOString(),
             expectedGuests: Number(f.get("guests")),
-            guestBudget: Math.round(Number(f.get("guestBudget") || 0) * 100),
+            foodBudget: Math.round(Number(f.get("foodBudget") || 0) * 100),
+            drinkBudget: Math.round(Number(f.get("drinkBudget") || 0) * 100),
             seating: { mode: f.get("seatingMode"), template: f.get("seatingTemplate") },
           });
         }}
@@ -2067,15 +2149,12 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             />
           </label>
           <label>
-            Бюджет на гостя, ₽ <span className="optional">необязательно</span>
-            <input
-              type="number"
-              name="guestBudget"
-              min={0}
-              max={1000000}
-              step="1"
-              placeholder="Например, 3 000"
-            />
+            Еда на гостя, ₽ <span className="optional">необязательно</span>
+            <input type="number" name="foodBudget" min={0} max={1000000} step="1" placeholder="Например, 2 500" />
+          </label>
+          <label>
+            Напитки на гостя, ₽ <span className="optional">необязательно</span>
+            <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
           </label>
         </div>
         <div className="form-grid">

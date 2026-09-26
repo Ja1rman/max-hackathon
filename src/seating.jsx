@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Armchair, Circle, Minus, Plus, RectangleHorizontal, RotateCw, Shuffle, Trash2, UserMinus, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Armchair, Circle, Crosshair, Minus, Plus, RectangleHorizontal, RotateCw, Shuffle, Trash2, UserMinus, Wand2, X } from "lucide-react";
 import {
   RECT_SIDES,
   SEATING_TEMPLATES,
@@ -25,15 +25,18 @@ const SIDE_NAMES = { top: "Сверху", right: "Справа", bottom: "Сни
 const initials = (name = "") => name.split(/\s+/).filter(Boolean).map(part => part[0]).slice(0, 2).join("").toUpperCase();
 
 /**
- * SVG hall plan. `editable` enables dragging tables; `onSeat` makes chairs clickable.
- * `names` maps seatId → guest name (managers only); `occupied` is a Set of taken seat ids.
+ * SVG hall plan. `editable` enables moving tables; `onSeat` makes chairs clickable.
+ * `names` maps seatId → guest name; `occupied` is a Set of taken seat ids.
+ * On touch screens a table is dragged only after it has been selected, so scrolling the plan never moves tables.
+ * `onEmptyTap` receives plan coordinates of a tap on free floor; `toolbar` is rendered over the plan.
  */
-export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names, onSeat, canPick, editable = false, selectedTable, onSelectTable, onMoveTable, selectedSeat }) {
+export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names, onSeat, canPick, editable = false, selectedTable, onSelectTable, onMoveTable, selectedSeat, onEmptyTap, toolbar, showMine = false }) {
   const svg = useRef(null);
   const scroller = useRef(null);
   const drag = useRef(null);
   const [zoom, setZoom] = useState(1);
   const [frozen, setFrozen] = useState(null);
+  const [inspected, setInspected] = useState(null);
   const bounds = frozen || (editable ? padBounds(layoutBounds(layout, 80)) : layoutBounds(layout));
   useEffect(() => {
     // On phones start zoomed in so a chair is at least ~28px wide and easy to tap.
@@ -56,8 +59,9 @@ export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names,
     return { x: p.x, y: p.y };
   };
   const startDrag = (event, table) => {
+    const wasSelected = selectedTable === table.id;
     onSelectTable?.(table.id);
-    if (!editable) return;
+    if (!editable || (event.pointerType !== "mouse" && !wasSelected)) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture?.(event.pointerId);
     const start = point(event);
@@ -92,12 +96,17 @@ export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names,
           onPointerMove={moveDrag}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
-          onClick={event => { if (event.target === svg.current) onSelectTable?.(null); }}
+          onClick={event => {
+            if (event.target !== svg.current) return;
+            setInspected(null);
+            if (onEmptyTap) onEmptyTap(point(event));
+            else onSelectTable?.(null);
+          }}
         >
           {layout.tables.map(table => {
             const cx = table.x + table.w / 2, cy = table.y + table.h / 2;
             return (
-              <g key={table.id} className={`seating-table ${selectedTable === table.id ? "selected" : ""} ${editable ? "editable" : ""}`}>
+              <g key={table.id} className={`seating-table ${selectedTable === table.id ? "selected" : ""} ${editable ? "editable" : ""}`} onClick={() => setInspected(null)}>
                 <g transform={`rotate(${table.rotation || 0} ${cx} ${cy})`} onPointerDown={event => startDrag(event, table)}>
                   {table.shape === "round"
                     ? <circle cx={cx} cy={cy} r={table.w / 2} />
@@ -110,18 +119,19 @@ export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names,
                   const name = names?.get(seat.id);
                   const clickable = onSeat && (canPick ? canPick(seat.id) : true);
                   const title = `${tableTitle(table)}, место ${seat.number}${mine ? " — ваше место" : name ? ` — ${name}` : taken ? " — занято" : " — свободно"}`;
+                  const activate = clickable ? () => onSeat(seat.id) : (taken || mine) ? () => setInspected(title) : undefined;
                   return (
                     <g
                       key={seat.id}
                       className={`seat ${mine ? "mine" : taken ? "taken" : "free"} ${selectedSeat === seat.id ? "selected" : ""} ${clickable ? "clickable" : ""}`}
-                      onClick={clickable ? () => onSeat(seat.id) : undefined}
-                      onKeyDown={clickable ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSeat(seat.id); } } : undefined}
-                      role={clickable ? "button" : undefined}
-                      tabIndex={clickable ? 0 : undefined}
+                      onClick={activate ? event => { event.stopPropagation(); activate(); } : undefined}
+                      onKeyDown={activate ? event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); activate(); } } : undefined}
+                      role={activate ? "button" : undefined}
+                      tabIndex={activate ? 0 : undefined}
                       aria-label={title}
                     >
                       <title>{title}</title>
-                      {clickable && <circle className="hit" cx={seat.x} cy={seat.y} r={SEAT_RADIUS + 8} />}
+                      {activate && <circle className="hit" cx={seat.x} cy={seat.y} r={SEAT_RADIUS + 8} />}
                       <circle cx={seat.x} cy={seat.y} r={SEAT_RADIUS} />
                       <text x={seat.x} y={seat.y}>{name ? initials(name) : seat.number}</text>
                     </g>
@@ -132,10 +142,12 @@ export function SeatingMap({ layout, occupied = new Set(), mySeat = null, names,
           })}
         </svg>
       </div>
+      {toolbar}
+      {inspected && <div className="seat-inspect" role="status">{inspected}</div>}
       <div className="seating-legend">
         <span><i className="free" /> Свободно</span>
-        <span><i className="taken" /> Занято</span>
-        {mySeat !== undefined && !names && <span><i className="mine" /> Ваше место</span>}
+        <span><i className="taken" /> Занято · нажмите, чтобы увидеть гостя</span>
+        {showMine && <span><i className="mine" /> Ваше место</span>}
       </div>
     </div>
   );
@@ -150,6 +162,7 @@ function padBounds(bounds) {
 export function SeatPicker({ detail, busy, canSelect, choose }) {
   const seating = detail.seating;
   const occupied = useMemo(() => new Set(seating.occupied), [seating.occupied]);
+  const names = useMemo(() => new Map(Object.entries(seating.names || {})), [seating.names]);
   const locked = detail.event.status === "approved" || new Date(detail.event.deadline).getTime() < Date.now() || !canSelect;
   const choice = seating.mode === "choice";
   const pickable = choice && !locked;
@@ -186,12 +199,15 @@ export function SeatPicker({ detail, busy, canSelect, choose }) {
           layout={seating.layout}
           occupied={occupied}
           mySeat={seating.mySeat}
+          names={names}
+          showMine
           onSeat={pickable && !busy ? seatId => choose(seatId) : undefined}
           canPick={seatId => !occupied.has(seatId)}
         />
       ) : (
         <p className="muted">Организатор ещё готовит схему зала.</p>
       )}
+      <TableGuests layout={seating.layout} names={names} mySeat={seating.mySeat} />
     </section>
   );
 }
@@ -205,6 +221,7 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   const [layout, setLayout] = useState(seating.layout);
   const [dirty, setDirty] = useState(false);
   const [selected, setSelected] = useState(null);
+  const [placing, setPlacing] = useState(false);
   const [template, setTemplate] = useState("rounds");
   const [guests, setGuests] = useState(Math.max(detail.event.expectedGuests || 1, detail.invitedGuests?.length || 0));
   useEffect(() => {
@@ -232,6 +249,29 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   };
   const unseated = people.filter(person => !person.seatId).length;
   const saved = !dirty;
+  const nudge = (dx, dy) => updateTable(table.id, { x: table.x + dx, y: table.y + dy });
+  const select = id => { setSelected(id); if (!id) setPlacing(false); };
+  const toolbar = table && active ? (
+    <div className="map-toolbar" onPointerDown={event => event.stopPropagation()}>
+      <strong>{tableTitle(table)}</strong>
+      <div className="map-toolbar-row">
+        <button type="button" aria-label="Сдвинуть влево" onClick={() => nudge(-20, 0)}><ArrowLeft size={16} /></button>
+        <button type="button" aria-label="Сдвинуть вверх" onClick={() => nudge(0, -20)}><ArrowUp size={16} /></button>
+        <button type="button" aria-label="Сдвинуть вниз" onClick={() => nudge(0, 20)}><ArrowDown size={16} /></button>
+        <button type="button" aria-label="Сдвинуть вправо" onClick={() => nudge(20, 0)}><ArrowRight size={16} /></button>
+        <button type="button" className={placing ? "active" : ""} aria-pressed={placing} onClick={() => setPlacing(value => !value)}><Crosshair size={16} /> Сюда</button>
+      </div>
+      <div className="map-toolbar-row">
+        <button type="button" aria-label="Меньше мест" disabled={table.seats <= 0} onClick={() => updateTable(table.id, { seats: table.seats - 1 }, true)}><Minus size={16} /></button>
+        <span>{table.seats} мест</span>
+        <button type="button" aria-label="Больше мест" disabled={table.seats >= 40} onClick={() => updateTable(table.id, { seats: table.seats + 1 }, true)}><Plus size={16} /></button>
+        <button type="button" aria-label="Повернуть" onClick={() => updateTable(table.id, { rotation: ((table.rotation || 0) + 90) % 360 })}><RotateCw size={16} /></button>
+        <button type="button" aria-label="Удалить стол" onClick={() => { change(layout.tables.filter(entry => entry.id !== table.id)); select(null); }}><Trash2 size={16} /></button>
+        <button type="button" aria-label="Снять выделение" onClick={() => select(null)}><X size={16} /></button>
+      </div>
+      {placing && <small>Нажмите на свободное место схемы — стол переместится туда.</small>}
+    </div>
+  ) : null;
   return (
     <div className="admin-layout seating-admin">
       <section className="panel admin-panel">
@@ -277,7 +317,7 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
           <div className="section-head">
             <div>
               <h2>Схема зала</h2>
-              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}. Перетаскивайте столы, номера можно переименовать.</p>
+              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}. Нажмите на стол, чтобы выбрать его: затем двигайте пальцем, стрелками или кнопкой «Сюда».</p>
             </div>
             {active && (
               <div className="admin-actions seating-tools">
@@ -293,8 +333,16 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
               names={names}
               editable={active}
               selectedTable={selected}
-              onSelectTable={setSelected}
+              onSelectTable={select}
               onMoveTable={(id, x, y) => updateTable(id, { x, y })}
+              onEmptyTap={active ? point => {
+                if (placing && table) {
+                  const snap = value => Math.round(value / 10) * 10;
+                  updateTable(table.id, { x: snap(point.x - table.w / 2), y: snap(point.y - table.h / 2) });
+                  setPlacing(false);
+                } else select(null);
+              } : undefined}
+              toolbar={toolbar}
             />
           ) : (
             <p className="muted">Выберите шаблон или добавьте столы вручную.</p>
@@ -422,5 +470,23 @@ export function SeatingOverview({ seating }) {
         )}
       </div>
     </>
+  );
+}
+
+/** Who sits at which table — visible to every participant. */
+function TableGuests({ layout, names, mySeat }) {
+  const tables = layout.tables
+    .map(table => ({ table, guests: tableSeats(table).filter(seat => names.has(seat.id)).map(seat => ({ seat, name: names.get(seat.id) })) }))
+    .filter(entry => entry.guests.length);
+  if (!tables.length) return null;
+  return (
+    <div className="seating-overview table-guests">
+      {tables.map(({ table, guests }) => (
+        <div key={table.id}>
+          <strong>{tableTitle(table)}</strong>
+          {guests.map(({ seat, name }) => <span key={seat.id} className={seat.id === mySeat ? "mine" : ""}>{seat.number}. {name}{seat.id === mySeat ? " (вы)" : ""}</span>)}
+        </div>
+      ))}
+    </div>
   );
 }
