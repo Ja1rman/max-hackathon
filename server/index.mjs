@@ -20,6 +20,7 @@ export function readConfig(env = process.env) {
     botToken: env.MAX_BOT_TOKEN || '', botUsername: (env.MAX_BOT_USERNAME || '').replace(/^@/, ''),
     maxWebhookSecret: env.MAX_WEBHOOK_SECRET || '', maxApiUrl: env.MAX_API_URL || 'https://platform-api2.max.ru',
     restaurantAdminIds: (env.RESTAURANT_ADMIN_IDS || '').split(',').map(value => value.trim()).filter(Boolean),
+    openOrganizerSignup: env.OPEN_ORGANIZER_SIGNUP === 'true',
     demoEnabled: (env.DEMO_ENABLED || 'true') === 'true', distPath: resolve(env.DIST_PATH || 'dist'),
     trustProxy: env.TRUST_PROXY === 'true', maxDemoSpaces, authRateLimit: 180,
   };
@@ -175,6 +176,9 @@ export function createApp(options = {}) {
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editEventMenu(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteEventMenu(user, match[1], match[2]));
       if (path === '/api/kitchen' && req.method === 'GET') return json(store.kitchen(user));
+      if (path === '/api/organizers' && req.method === 'GET') return json(store.organizers(user));
+      if (path === '/api/organizers' && req.method === 'POST') return json(store.addOrganizer(user, await readBody(req)), 201);
+      if ((match = path.match(/^\/api\/organizers\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteOrganizer(user, match[1]));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/shared$/)) && req.method === 'PUT') return json(store.saveShared(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/import$/)) && req.method === 'POST') return json(store.importMenu(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/seating$/)) && req.method === 'PUT') return json(store.saveSeating(user, match[1], await readBody(req)));

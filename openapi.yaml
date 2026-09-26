@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.3.0
+  version: 1.4.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
@@ -606,7 +606,8 @@ paths:
         номер из списка приглашённых; в демо владелец присоединяется автоматически.
         Обновление транзакционное, revision увеличивается,
         цена берётся из event_menu. Позиции с forGuests=false и позиции общего стола
-        выбрать нельзя (400). Сумма выбора выше guestBudget отклоняется (409).
+        выбрать нельзя (400). Блюда дороже foodBudget или напитки дороже drinkBudget
+        отклоняются (409); лимиты независимы.
       responses:
         '200':
           description: Успешно
@@ -677,6 +678,71 @@ paths:
               "$ref": "#/components/schemas/Approve"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+  "/api/organizers":
+    get:
+      operationId: listOrganizers
+      summary: Организаторы, добавленные администратором
+      description: Только администратор (restaurant). Пользователь MAX, подтвердивший номер
+        из списка, получает роль organizer; остальные пользователи — guest.
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/Organizer"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+    post:
+      operationId: addOrganizer
+      summary: Добавить организатора по номеру телефона
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/OrganizerCreate"
+      responses:
+        '201':
+          description: Добавлен
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Organizer"
+        '400':
+          "$ref": "#/components/responses/400"
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '409':
+          "$ref": "#/components/responses/409"
+        '429':
+          "$ref": "#/components/responses/429"
+  "/api/organizers/{organizerId}":
+    delete:
+      operationId: deleteOrganizer
+      summary: Удалить организатора из списка
+      description: Уже созданные им банкеты остаются, и он продолжает управлять ими.
+      parameters:
+      - name: organizerId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Удалён
+        '401':
+          "$ref": "#/components/responses/401"
+        '403':
+          "$ref": "#/components/responses/403"
+        '404':
+          "$ref": "#/components/responses/404"
   "/api/kitchen":
     get:
       operationId: kitchenBoard
@@ -1615,16 +1681,21 @@ components:
         revision:
           type: integer
           minimum: 0
-        guestBudget:
+        foodBudget:
           type: integer
           minimum: 0
-          description: Бюджет на одного гостя, целые копейки; 0 — без ограничения. Жёсткий
-            лимит суммы собственного выбора гостя. Виден участникам банкета.
+          description: Бюджет одного гостя на еду, копейки; 0 — без ограничения. Жёсткий
+            лимит, независимый от drinkBudget. Виден участникам банкета.
+        drinkBudget:
+          type: integer
+          minimum: 0
+          description: Бюджет одного гостя на напитки (категория «Напитки»), копейки;
+            0 — без ограничения. Жёсткий лимит, независимый от foodBudget.
         budget:
           type: integer
           minimum: 0
-          description: Только владелец и администратор. Плановый бюджет банкета = guestBudget
-            × expectedGuests, копейки.
+          description: Только владелец и администратор. Плановый бюджет банкета = (foodBudget
+            + drinkBudget) × expectedGuests, копейки.
         sharedTotal:
           type: integer
           minimum: 0
@@ -1654,7 +1725,8 @@ components:
       - approvedAt
       - isOwner
       - revision
-      - guestBudget
+      - foodBudget
+      - drinkBudget
       description: budget и inviteCode присутствуют только для владельца или ресторанной
         роли. total/responded/joined доступны также присоединившемуся гостю.
     EventCreate:
@@ -1678,13 +1750,18 @@ components:
           type: integer
           minimum: 1
           maximum: 1000
-        guestBudget:
+        foodBudget:
           type: integer
           minimum: 0
           maximum: 10000000000
           default: 0
-          description: Бюджет на одного гостя, копейки; 0 — без ограничения. Гость не
-            может сохранить выбор дороже этой суммы.
+          description: Бюджет одного гостя на еду, копейки; 0 — без ограничения.
+        drinkBudget:
+          type: integer
+          minimum: 0
+          maximum: 10000000000
+          default: 0
+          description: Бюджет одного гостя на напитки, копейки; 0 — без ограничения.
       required:
       - restaurantId
       - title
@@ -1702,7 +1779,8 @@ components:
         date: { type: string, format: date-time }
         deadline: { type: string, format: date-time }
         expectedGuests: { type: integer, minimum: 1, maximum: 1000 }
-        guestBudget: { type: integer, minimum: 0, maximum: 10000000000 }
+        foodBudget: { type: integer, minimum: 0, maximum: 10000000000 }
+        drinkBudget: { type: integer, minimum: 0, maximum: 10000000000 }
     InvitedGuestCreate:
       type: object
       required: [name, phone]
@@ -2138,8 +2216,12 @@ components:
           - 'null'
         occupied:
           type: array
-          description: Занятые места без имён; гость не видит, кто где сидит.
           items:
+            type: string
+        names:
+          type: object
+          description: Имена гостей на занятых местах, seatId → имя; видны всем участникам.
+          additionalProperties:
             type: string
         people:
           type: array
@@ -2152,6 +2234,7 @@ components:
       - seatCount
       - mySeat
       - occupied
+      - names
     SeatingPut:
       type: object
       properties:
@@ -2278,6 +2361,23 @@ components:
                   properties:
                     name: { type: string }
                     quantity: { type: integer }
+    Organizer:
+      type: object
+      required: [id, name, phone, createdAt, registered]
+      properties:
+        id: { type: string }
+        name: { type: string, maxLength: 100 }
+        phone: { type: string, description: Международный формат без плюса. }
+        createdAt: { type: string, format: date-time }
+        registered:
+          type: boolean
+          description: Пользователь MAX уже подтвердил этот номер.
+    OrganizerCreate:
+      type: object
+      required: [name, phone]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        phone: { type: string, description: 'Международный номер; +7 и 8 для РФ нормализуются.' }
     ExportLink:
       type: object
       required:

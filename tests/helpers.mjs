@@ -18,7 +18,7 @@ export function signedContact(userId, phone) {
 }
 
 export async function fixture(t, overrides = {}) {
-  const app = createApp({ databasePath: ':memory:', botToken: BOT_TOKEN, botUsername: '', maxWebhookSecret: '', demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', ...overrides });
+  const app = createApp({ databasePath: ':memory:', botToken: BOT_TOKEN, botUsername: '', maxWebhookSecret: '', demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', openOrganizerSignup: true, ...overrides });
   app.server.listen(0, '127.0.0.1');
   await once(app.server, 'listening');
   t.after(() => new Promise((resolve, reject) => app.server.close(error => error ? reject(error) : resolve())));
@@ -41,7 +41,7 @@ export async function fixture(t, overrides = {}) {
   const event = async token => {
     const restaurants = await request('/api/restaurants', { token });
     const restaurant = restaurants.data[0];
-    const response = await request('/api/events', { token, method: 'POST', body: { title: 'Банкет', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 12, guestBudget: 300000 } });
+    const response = await request('/api/events', { token, method: 'POST', body: { title: 'Банкет', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 12, foodBudget: 300000 } });
     assert.equal(response.status, 201);
     return { ...response.data, menu: restaurant.menu };
   };
