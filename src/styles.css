@@ -321,7 +321,28 @@ a {
   display: flex;
   align-items: center;
   gap: 20px;
+  position: relative;
 }
+.profile-trigger { border: 0; cursor: pointer; flex: 0 0 auto; }
+.profile-popover { position: absolute; z-index: 90; right: 0; top: calc(100% + 14px); width: min(330px, calc(100vw - 24px)); padding: 18px; border: 1px solid #dce3d8; border-radius: 14px; background: white; box-shadow: 0 16px 36px #243c3229; overflow-wrap: anywhere; }
+.profile-popover > strong, .profile-popover > small { display: block; }
+.profile-popover > small { margin-top: 3px; color: #849087; }
+.profile-popover p { margin: 9px 0; font-size: 12px; line-height: 1.45; }
+.profile-rights { margin: 14px 0; padding: 12px 0; border-top: 1px solid #e5e9e2; border-bottom: 1px solid #e5e9e2; }
+.profile-rights b { font-size: 12px; }
+.profile-rights p { display: flex; flex-direction: column; gap: 3px; }
+.profile-rights span { color: #527257; }
+.profile-actions { display: grid; gap: 8px; }
+.profile-actions small { color: #7b897b; }
+.profile-actions button, .profile-logout { min-height: 40px; padding: 7px 10px; text-align: left; border: 1px solid #dde4da; border-radius: 8px; background: #f7faf5; color: #355743; cursor: pointer; }
+.profile-logout { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 10px; }
+.restaurant-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.member-form { display: grid; gap: 10px; }
+.member-form .btn { justify-self: start; }
+.member-list { margin-top: 18px; }
+.member-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid #e6ebe4; }
+.member-row small { display: block; margin-top: 4px; }
+.member-row button { min-height: 40px; background: none; border: 0; color: #8a4a3b; cursor: pointer; }
 .demo-switch {
   display: flex;
   align-items: center;
@@ -493,6 +514,10 @@ main {
   position: relative;
   overflow: hidden;
 }
+.event-cover { position: absolute; width: 100%; height: 100%; inset: 0; object-fit: cover; }
+.event-art:has(.event-cover) .event-date { z-index: 1; }
+.event-art:has(.event-cover) .art-caption { z-index: 1; background: #ffffffd9; border-radius: 4px; padding: 3px 5px; }
+.detail-photo { display: block; width: min(100%, 560px); max-height: 220px; aspect-ratio: 16 / 7; object-fit: cover; border-radius: 14px; margin: 0 0 18px; }
 .mini-plate {
   height: 145px;
   width: 145px;
@@ -1185,38 +1210,22 @@ main {
   background: #ede6dc;
 }
 .veg-tag {
-  position: absolute;
-  left: 10px;
-  top: 10px;
-  font-size: 7px;
+  font-size: 9px;
   display: flex;
   gap: 4px;
   align-items: center;
-  background: #ffffffc9;
-  padding: 5px 6px;
-  border-radius: 4px;
+  background: #fffffff0;
+  padding: 5px 7px;
+  border-radius: 5px;
   color: #6b8656;
+  box-shadow: 0 1px 4px #0001;
 }
-.dish-labels {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 7px 0 2px;
-}
-.dish-label {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: #eef4e7;
-  color: #355e31;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-}
-.dish-label.protein { background: #f4ede1; color: #79542c; }
-.dish-label.light { background: #e8f1f3; color: #356275; }
+.dish-badges { position: absolute; z-index: 1; top: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
+.diet-filters { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 16px; }
+.diet-filters .vegetarian-filter { min-height: 40px; padding: 7px 10px; border: 1px solid #dce5d8; border-radius: 8px; background: #f6faf3; cursor: pointer; }
+.guest-guide { margin-top: 16px; padding: 14px; border-radius: 12px; background: #f1f7ed; border: 1px solid #dfe9d9; }
+.guest-guide strong { display: block; margin-bottom: 6px; }
+.guest-guide p { margin: 6px 0; font-size: 12px; line-height: 1.5; }
 .dish-label-fieldset { border: 0; padding: 0; margin: 18px 0; min-width: 0; }
 .dish-label-fieldset legend { font-weight: 700; margin-bottom: 10px; }
 .dish-label-options { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
@@ -1950,8 +1959,11 @@ main {
     gap: 10px;
   }
   .top-avatar {
-    display: none;
+    display: grid;
+    width: 38px;
+    height: 38px;
   }
+  .connected { display: none; }
   .demo-switch {
     font-size: 8px;
   }
@@ -2220,9 +2232,8 @@ main {
     min-width: 12px;
   }
   .veg-tag {
-    font-size: 6px;
-    top: 7px;
-    left: 6px;
+    font-size: 10px;
+    padding: 5px 7px;
   }
   .veg-tag svg {
     width: 10px;

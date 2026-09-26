@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.1.0
+  version: 1.2.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
@@ -55,8 +55,8 @@ paths:
       operationId: loginMax
       summary: Обмен подписанных данных MAX на сессию
       description: HMAC-SHA256 по алгоритму MAX; auth_date не старше часа и не более
-        30 секунд в будущем. MAX user ID из RESTAURANT_ADMIN_IDS получает restaurant,
-        остальные organizer. Live-сессия 7 суток; не более 10 активных сессий на пользователя.
+        30 секунд в будущем. MAX user ID из RESTAURANT_ADMIN_IDS получает глобальную роль admin,
+        остальные user; права в ресторанах выдаются отдельно. Live-сессия 7 суток.
       responses:
         '200':
           description: Успешно
@@ -334,6 +334,91 @@ paths:
           "$ref": "#/components/responses/401"
         '500':
           "$ref": "#/components/responses/500"
+    post:
+      operationId: createRestaurant
+      summary: Создать ресторан (администратор сервиса)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RestaurantInput"
+      responses:
+        '201':
+          description: Созданный ресторан
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restaurant"
+        '403': { "$ref": "#/components/responses/403" }
+  "/api/restaurants/{restaurantId}":
+    patch:
+      operationId: editRestaurant
+      summary: Изменить название, описание или адрес ресторана
+      description: Доступно глобальному администратору и администратору этого ресторана.
+      parameters: [{ "$ref": "#/components/parameters/restaurantId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/RestaurantPatch" }
+      responses:
+        '200':
+          description: Обновлённый ресторан
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/Restaurant" }
+        '403': { "$ref": "#/components/responses/403" }
+        '404': { "$ref": "#/components/responses/404" }
+  "/api/restaurants/{restaurantId}/members":
+    get:
+      operationId: restaurantMembers
+      summary: Список назначенных ролей конкретного ресторана
+      description: Доступно глобальному администратору и администратору этого ресторана.
+      parameters: [{ "$ref": "#/components/parameters/restaurantId" }]
+      responses:
+        '200':
+          description: Роли сотрудников
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { "$ref": "#/components/schemas/RestaurantMember" }
+        '403': { "$ref": "#/components/responses/403" }
+  "/api/restaurants/{restaurantId}/members/{maxId}":
+    put:
+      operationId: setRestaurantMember
+      summary: Назначить роль пользователю по числовому MAX ID
+      description: Глобальный администратор назначает restaurant_admin или organizer. Администратор ресторана назначает только organizer в своём ресторане.
+      parameters:
+      - { "$ref": "#/components/parameters/restaurantId" }
+      - { name: maxId, in: path, required: true, schema: { type: string, pattern: "^[1-9][0-9]{0,18}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { type: string, enum: [restaurant_admin, organizer] }
+              required: [role]
+      responses:
+        '200':
+          description: Назначенная роль
+          content:
+            application/json:
+              schema: { "$ref": "#/components/schemas/RestaurantMember" }
+        '403': { "$ref": "#/components/responses/403" }
+    delete:
+      operationId: deleteRestaurantMember
+      summary: Снять роль в конкретном ресторане
+      description: Глобальный администратор снимает любую ресторанную роль; администратор ресторана — только organizer.
+      parameters:
+      - { "$ref": "#/components/parameters/restaurantId" }
+      - { name: maxId, in: path, required: true, schema: { type: string, pattern: "^[1-9][0-9]{0,18}$" } }
+      responses:
+        '200': { description: Роль снята }
+        '403': { "$ref": "#/components/responses/403" }
   "/api/events":
     get:
       operationId: events
@@ -356,7 +441,7 @@ paths:
     post:
       operationId: createEvent
       summary: Создать банкет и снимок доступного меню
-      description: Organizer или restaurant. Создание события и event_menu в транзакции. Не
+      description: Администратор сервиса или назначенный organizer/restaurant_admin выбранного ресторана. Создание события и event_menu в транзакции. Не
         более 30 событий на демо-организатора или 500 на live-организатора.
       responses:
         '201':
@@ -577,8 +662,9 @@ paths:
       summary: Присоединить текущего пользователя к банкету
       description: Тело не требуется и не обрабатывается. Повтор для уже присоединившегося
         идемпотентен, в том числе после утверждения/дедлайна. В live требуется
-        предварительно подтверждённый MAX номер, совпадающий со списком приглашённых.
-        Новое присоединение только в открытый банкет своего scope, максимум 1000 участников.
+        предварительно подтверждённый MAX номер. Если номера ещё нет в списке приглашённых,
+        действительная ссылка создаёт запись гостя на этот номер. Новое присоединение только
+        в открытый банкет своего scope, максимум 1000 участников.
       responses:
         '200':
           description: Успешно
@@ -680,7 +766,7 @@ paths:
     post:
       operationId: createMenuItem
       summary: Добавить блюдо в каталог
-      description: Только restaurant в своём scope; максимум 500 блюд. Это изменение
+      description: Только администратор сервиса или администратор этого ресторана; максимум 500 блюд. Это изменение
         текущего каталога, не снимков существующих событий.
       responses:
         '201':
@@ -751,7 +837,7 @@ paths:
     delete:
       operationId: deleteCatalogMenuItem
       summary: Удалить позицию общего каталога ресторана
-      description: Только restaurant. Меню уже созданных банкетов не меняется.
+      description: Только администратор сервиса или администратор этого ресторана. Меню уже созданных банкетов не меняется.
       parameters:
       - "$ref": "#/components/parameters/restaurantId"
       - "$ref": "#/components/parameters/itemId"
@@ -945,12 +1031,27 @@ components:
         name:
           type: string
           maxLength: 160
+        maxId:
+          type: [string, 'null']
+          description: Числовой MAX ID для живой сессии.
         role:
           type: string
           enum:
+          - admin
+          - user
           - organizer
           - guest
           - restaurant
+          description: admin/user для MAX; organizer/guest/restaurant для демо. Ресторанные роли перечислены отдельно.
+        restaurantRoles:
+          type: array
+          items:
+            type: object
+            properties:
+              restaurantId: { type: string }
+              name: { type: string }
+              role: { type: string, enum: [admin, restaurant_admin, organizer] }
+            required: [restaurantId, name, role]
         demo:
           type: boolean
         phoneVerified:
@@ -963,7 +1064,9 @@ components:
       required:
       - id
       - name
+      - maxId
       - role
+      - restaurantRoles
       - demo
       - phoneVerified
       - phone
@@ -1232,6 +1335,10 @@ components:
           type: string
         sampleMenu:
           type: boolean
+        accessRole:
+          type: [string, 'null']
+          enum: [admin, restaurant_admin, organizer, restaurant, guest, null]
+          description: Права текущего пользователя в этом ресторане; null означает отсутствие назначения.
         menu:
           type: array
           items:
@@ -1242,7 +1349,28 @@ components:
       - description
       - address
       - sampleMenu
+      - accessRole
       - menu
+    RestaurantInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        address: { type: string, maxLength: 200 }
+      required: [name]
+    RestaurantPatch:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        address: { type: string, maxLength: 200 }
+    RestaurantMember:
+      type: object
+      properties:
+        maxId: { type: string }
+        name: { type: string }
+        role: { type: string, enum: [restaurant_admin, organizer] }
+      required: [maxId, role]
     PublicEvent:
       type: object
       properties:
@@ -1251,6 +1379,8 @@ components:
           description: Непрозрачный идентификатор из ответа API; не интерпретировать
             как UUID без префикса.
         title:
+          type: string
+        photoUrl:
           type: string
         date:
           type: string
@@ -1279,6 +1409,7 @@ components:
       required:
       - id
       - title
+      - photoUrl
       - date
       - deadline
       - status
@@ -1295,6 +1426,8 @@ components:
           description: Непрозрачный идентификатор из ответа API; не интерпретировать
             как UUID без префикса.
         title:
+          type: string
+        photoUrl:
           type: string
         date:
           type: string
@@ -1341,6 +1474,12 @@ components:
           format: date-time
         isOwner:
           type: boolean
+        canManage:
+          type: boolean
+        guestBudget:
+          type: integer
+          minimum: 0
+          description: Ориентир на одного гостя в копейках; не жёсткий лимит.
         revision:
           type: integer
           minimum: 0
@@ -1354,6 +1493,7 @@ components:
       required:
       - id
       - title
+      - photoUrl
       - date
       - deadline
       - status
@@ -1368,6 +1508,8 @@ components:
       - joined
       - approvedAt
       - isOwner
+      - canManage
+      - guestBudget
       - revision
       description: budget и inviteCode присутствуют только для владельца или ресторанной
         роли. total/responded/joined доступны также присоединившемуся гостю.
@@ -1382,6 +1524,9 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        photoUrl:
+          type: string
+          description: URL из POST /api/media; необязателен.
         date:
           type: string
           format: date-time
@@ -1412,6 +1557,7 @@ components:
       properties:
         expectedRevision: { type: integer, minimum: 0 }
         title: { type: string, minLength: 1, maxLength: 120 }
+        photoUrl: { type: string, description: Пустая строка снимает фото; иначе URL из POST /api/media. }
         date: { type: string, format: date-time }
         deadline: { type: string, format: date-time }
         expectedGuests: { type: integer, minimum: 1, maximum: 1000 }

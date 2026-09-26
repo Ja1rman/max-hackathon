@@ -155,7 +155,7 @@ export function createApp(options = {}) {
       if (path === '/api/me/claim-invitations' && req.method === 'POST') return json(store.transaction(() => store.claimInvitations(user)));
       if (path === '/api/me/notifications' && req.method === 'PUT') return json(store.setNotifications(user, (await readBody(req)).enabled));
       if (path === '/api/media' && req.method === 'POST') {
-        if (user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');
+        if ((!user.demo && !store.isAdmin(user) && !store.db.prepare('SELECT 1 FROM restaurant_memberships WHERE user_id=?').get(user.id)) || (user.demo && user.role === 'guest')) throw new HttpError(403, 'Загружать фото может организатор или администратор ресторана.');
         const { bytes, extension } = await readImage(req);
         const fileName = `${randomUUID()}.${extension}`;
         await mkdir(config.uploadDir, { recursive: true, mode: 0o700 });
@@ -165,6 +165,14 @@ export function createApp(options = {}) {
         return json({ photoUrl: `/api/media/${fileName}` }, 201);
       }
       if (path === '/api/restaurants' && req.method === 'GET') return json(store.restaurants(user));
+      if (path === '/api/restaurants' && req.method === 'POST') return json(store.createRestaurant(user, await readBody(req)), 201);
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editRestaurant(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members$/)) && req.method === 'GET') return json(store.restaurantMembers(user, match[1]));
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'PUT') {
+        const body = await readBody(req);
+        return json(store.transaction(() => store.setRestaurantMember(user, match[1], match[2], body.role)));
+      }
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteRestaurantMember(user, match[1], match[2]));
       if (path === '/api/events' && req.method === 'GET') return json(store.events(user));
       if (path === '/api/events' && req.method === 'POST') { const body = await readBody(req); return json(store.transaction(() => store.createEvent(user, body)), 201); }
       if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'GET') return json(store.detail(user, match[1]));

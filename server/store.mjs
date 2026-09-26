@@ -72,6 +72,7 @@ export class Store {
     this.config = config;
     if (config.databasePath !== ':memory:') mkdirSync(dirname(config.databasePath), { recursive: true });
     this.db = new DatabaseSync(config.databasePath);
+    const migrateLegacyRoles = !this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='restaurant_memberships'").get();
     this.db.exec(`PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS scopes (id TEXT PRIMARY KEY, secret_hash TEXT UNIQUE, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, scope TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE, external_id TEXT, name TEXT NOT NULL, role TEXT NOT NULL, demo INTEGER NOT NULL DEFAULT 0);
@@ -93,6 +94,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS notification_jobs (id TEXT PRIMARY KEY, event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, due_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, sent_at INTEGER, cancelled_at INTEGER, UNIQUE(event_id,user_id,kind));
       CREATE INDEX IF NOT EXISTS notification_due_idx ON notification_jobs(due_at) WHERE sent_at IS NULL AND cancelled_at IS NULL;
       CREATE TABLE IF NOT EXISTS media_assets (file_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS restaurant_memberships (restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('restaurant_admin','organizer')), PRIMARY KEY(restaurant_id,user_id));
       `);
     if (!this.db.prepare('PRAGMA table_info(events)').all().some(column => column.name === 'revision')) {
       this.db.exec('ALTER TABLE events ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
@@ -101,9 +103,11 @@ export class Store {
     if (!userColumns.includes('phone')) this.db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
     if (!userColumns.includes('phone_verified_at')) this.db.exec('ALTER TABLE users ADD COLUMN phone_verified_at INTEGER');
     if (!userColumns.includes('notifications_enabled')) this.db.exec('ALTER TABLE users ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0');
+    if (!this.db.prepare('PRAGMA table_info(events)').all().some(column => column.name === 'photo_url')) this.db.exec("ALTER TABLE events ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_live_phone_idx ON users(phone) WHERE scope='live' AND phone IS NOT NULL; PRAGMA user_version = 4;");
     this.db.prepare('INSERT OR IGNORE INTO scopes VALUES (?, NULL, ?)').run('live', iso(Date.now()));
     if (!this.db.prepare('SELECT id FROM restaurants WHERE scope = ?').get('live')) this.seedRestaurant('live');
+    if (migrateLegacyRoles) this.db.exec("INSERT OR IGNORE INTO restaurant_memberships (restaurant_id,user_id,role) SELECT DISTINCT restaurant_id,owner_id,'organizer' FROM events WHERE scope='live'");
     this.migrateSampleNutrition();
     this.cleanup();
   }
@@ -156,7 +160,21 @@ export class Store {
     }
     return restaurantId;
   }
-  publicUser(user) { return { id: user.id, name: user.name, role: user.role, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled) }; }
+  isAdmin(user) { return !user.demo && this.config.restaurantAdminIds.includes(user.external_id); }
+  membership(user, restaurantId) { return this.db.prepare('SELECT role FROM restaurant_memberships WHERE restaurant_id=? AND user_id=?').get(restaurantId, user.id)?.role || null; }
+  canOrganize(user, restaurantId) { return user.demo ? user.role !== 'guest' : this.isAdmin(user) || Boolean(this.membership(user, restaurantId)); }
+  canEditRestaurant(user, restaurantId) { return user.demo ? user.role === 'restaurant' : this.isAdmin(user) || this.membership(user, restaurantId) === 'restaurant_admin'; }
+  eventPhoto(value) {
+    if (typeof value !== 'string' || (value && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(value))) throw new HttpError(400, 'Загрузите фото мероприятия через API сервиса.');
+    if (value && !this.db.prepare('SELECT 1 FROM media_assets WHERE file_name=?').get(value.slice('/api/media/'.length))) throw new HttpError(400, 'Фото мероприятия не найдено.');
+    return value;
+  }
+  publicUser(user) {
+    const restaurantRoles = user.demo ? [] : this.isAdmin(user)
+      ? this.db.prepare("SELECT id AS restaurantId,name,'admin' AS role FROM restaurants WHERE scope='live' ORDER BY name").all()
+      : this.db.prepare('SELECT restaurants.id AS restaurantId,restaurants.name,restaurant_memberships.role FROM restaurant_memberships JOIN restaurants ON restaurants.id=restaurant_memberships.restaurant_id WHERE restaurant_memberships.user_id=? ORDER BY restaurants.name').all(user.id);
+    return { id: user.id, maxId: user.external_id || null, name: user.name, role: user.demo ? user.role : this.isAdmin(user) ? 'admin' : 'user', restaurantRoles, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled) };
+  }
   bindPhone(user, phone) {
     if (user.demo || !user.external_id) throw new HttpError(403, 'Подтверждение номера доступно только в MAX.');
     return this.transaction(() => {
@@ -200,7 +218,8 @@ export class Store {
   }
   cancelNotice(jobId) { this.db.prepare('UPDATE notification_jobs SET cancelled_at=? WHERE id=?').run(Date.now(), jobId); }
   registerMedia(user, fileName) {
-    if (user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');
+    if (!user.demo && !this.isAdmin(user) && !this.db.prepare('SELECT 1 FROM restaurant_memberships WHERE user_id=?').get(user.id)) throw new HttpError(403, 'Загружать фото может организатор или администратор ресторана.');
+    if (user.demo && user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');
     if (this.db.prepare('SELECT COUNT(*) AS count FROM media_assets WHERE owner_id=?').get(user.id).count >= 500) throw new HttpError(429, 'Достигнут предел фотографий.');
     this.db.prepare('INSERT INTO media_assets VALUES (?,?,?)').run(fileName, user.id, Date.now());
   }
@@ -217,12 +236,12 @@ export class Store {
     if (!user) throw new HttpError(401, 'Сессия истекла. Войдите снова.');
     if (user.demo && !this.config.demoEnabled) throw new HttpError(401, 'Демонстрационный режим выключен. Войдите через MAX.');
     // Configuration changes revoke restaurant permissions on the next request.
-    if (!user.demo) user.role = this.config.restaurantAdminIds.includes(user.external_id) ? 'restaurant' : 'organizer';
+    if (!user.demo) user.role = this.isAdmin(user) ? 'admin' : 'user';
     return user;
   }
   loginMax(profile) {
     const userId = `max_${profile.id}`;
-    const role = this.config.restaurantAdminIds.includes(profile.id) ? 'restaurant' : 'organizer';
+    const role = this.config.restaurantAdminIds.includes(profile.id) ? 'admin' : 'user';
     this.db.prepare(`INSERT INTO users (id,scope,external_id,name,role,demo) VALUES (?,'live',?,?,?,0) ON CONFLICT(id) DO UPDATE SET name=excluded.name,role=excluded.role`).run(userId, profile.id, profile.name, role);
     return this.issueSession(this.db.prepare('SELECT * FROM users WHERE id=?').get(userId));
   }
@@ -288,8 +307,51 @@ export class Store {
   restaurants(user) {
     return this.db.prepare('SELECT * FROM restaurants WHERE scope=? ORDER BY name').all(user.scope).map(row => ({
       id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu),
+      accessRole: user.demo ? user.role : this.isAdmin(user) ? 'admin' : this.membership(user, row.id),
       menu: this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => presentMenuItem(item.data)),
     }));
+  }
+  createRestaurant(user, body) {
+    if (!this.isAdmin(user)) throw new HttpError(403, 'Добавить ресторан может только администратор сервиса.');
+    if (this.db.prepare("SELECT COUNT(*) AS count FROM restaurants WHERE scope='live'").get().count >= 100) throw new HttpError(429, 'Достигнут предел ресторанов.');
+    const restaurantId = id('restaurant');
+    this.db.prepare('INSERT INTO restaurants VALUES (?,?,?,?,?,0)').run(restaurantId, 'live', string(body.name, 'Название ресторана', 120), string(body.description || '', 'Описание', 500, true), string(body.address || '', 'Адрес', 200, true));
+    return this.restaurants(user).find(row => row.id === restaurantId);
+  }
+  editRestaurant(user, restaurantId, body) {
+    const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+    if (!this.canEditRestaurant(user, restaurantId)) throw new HttpError(403, 'Нет доступа к ресторану.');
+    this.db.prepare('UPDATE restaurants SET name=?,description=?,address=? WHERE id=?').run(
+      body.name === undefined ? restaurant.name : string(body.name, 'Название ресторана', 120),
+      body.description === undefined ? restaurant.description : string(body.description, 'Описание', 500, true),
+      body.address === undefined ? restaurant.address : string(body.address, 'Адрес', 200, true), restaurantId);
+    return this.restaurants(user).find(row => row.id === restaurantId);
+  }
+  restaurantMembers(user, restaurantId) {
+    const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+    if (!this.canEditRestaurant(user, restaurantId) || user.demo) throw new HttpError(403, 'Нет доступа к ролям ресторана.');
+    return this.db.prepare('SELECT users.external_id AS maxId,users.name,restaurant_memberships.role FROM restaurant_memberships JOIN users ON users.id=restaurant_memberships.user_id WHERE restaurant_memberships.restaurant_id=? ORDER BY restaurant_memberships.role,users.name').all(restaurantId);
+  }
+  setRestaurantMember(user, restaurantId, maxId, role) {
+    this.restaurantMembers(user, restaurantId);
+    if (!/^[1-9][0-9]{0,18}$/.test(maxId)) throw new HttpError(400, 'Укажите числовой MAX ID пользователя.');
+    if (!['restaurant_admin', 'organizer'].includes(role)) throw new HttpError(400, 'Неизвестная роль ресторана.');
+    if (!this.isAdmin(user) && role !== 'organizer') throw new HttpError(403, 'Назначить администратора ресторана может только администратор сервиса.');
+    const targetId = `max_${maxId}`;
+    this.db.prepare("INSERT OR IGNORE INTO users (id,scope,external_id,name,role,demo) VALUES (?,'live',?,?,'user',0)").run(targetId, maxId, `MAX ${maxId}`);
+    this.db.prepare('INSERT INTO restaurant_memberships VALUES (?,?,?) ON CONFLICT(restaurant_id,user_id) DO UPDATE SET role=excluded.role').run(restaurantId, targetId, role);
+    return { maxId, role };
+  }
+  deleteRestaurantMember(user, restaurantId, maxId) {
+    this.restaurantMembers(user, restaurantId);
+    if (!/^[1-9][0-9]{0,18}$/.test(maxId)) throw new HttpError(400, 'Укажите числовой MAX ID пользователя.');
+    const current = this.db.prepare('SELECT role FROM restaurant_memberships WHERE restaurant_id=? AND user_id=?').get(restaurantId, `max_${maxId}`);
+    if (!current) throw new HttpError(404, 'Роль не найдена.');
+    if (!this.isAdmin(user) && current.role !== 'organizer') throw new HttpError(403, 'Снять администратора ресторана может только администратор сервиса.');
+    this.db.prepare('DELETE FROM restaurant_memberships WHERE restaurant_id=? AND user_id=?').run(restaurantId, `max_${maxId}`);
+    return { success: true };
   }
   eventMenu(eventId) { return this.db.prepare('SELECT data FROM event_menu WHERE event_id=? ORDER BY rowid').all(eventId).map(row => presentMenuItem(row.data)); }
   eventRow(eventId, user) {
@@ -297,7 +359,7 @@ export class Store {
     if (!row) throw new HttpError(404, 'Банкет не найден.');
     return row;
   }
-  isManager(user, event) { return event.scope === user.scope && (event.owner_id === user.id || user.role === 'restaurant'); }
+  isManager(user, event) { return event.scope === user.scope && (this.canEditRestaurant(user, event.restaurant_id) || (event.owner_id === user.id && this.canOrganize(user, event.restaurant_id))); }
   canRead(user, event) {
     if (this.isManager(user, event)) return true;
     const joined = this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id);
@@ -308,8 +370,8 @@ export class Store {
     const total = this.db.prepare('SELECT COALESCE(SUM(quantity*price),0) AS total FROM selections WHERE event_id=?').get(row.id).total;
     const counts = this.db.prepare('SELECT COUNT(*) AS joined, COALESCE(SUM(submitted),0) AS responded FROM guests WHERE event_id=?').get(row.id);
     const restaurant = this.db.prepare('SELECT name,sample_menu FROM restaurants WHERE id=?').get(row.restaurant_id);
-    const event = { id: row.id, title: row.title, date: row.date, deadline: row.deadline, status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true };
-    if (!publicOnly) Object.assign(event, { expectedGuests: row.expected_guests, total, responded: counts.responded, joined: counts.joined, approvedAt: row.approved_at, isOwner: user?.id === row.owner_id, revision: row.revision });
+    const event = { id: row.id, title: row.title, photoUrl: row.photo_url || '', date: row.date, deadline: row.deadline, status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true };
+    if (!publicOnly) Object.assign(event, { expectedGuests: row.expected_guests, total, responded: counts.responded, joined: counts.joined, approvedAt: row.approved_at, isOwner: user?.id === row.owner_id, canManage: this.isManager(user, row), guestBudget: row.budget ? Math.floor(row.budget / row.expected_guests) : 0, revision: row.revision });
     if (!publicOnly && this.isManager(user, row)) Object.assign(event, { budget: row.budget, inviteCode: row.invite_code });
     return event;
   }
@@ -317,21 +379,23 @@ export class Store {
     return this.db.prepare('SELECT * FROM events WHERE scope=? ORDER BY created_at DESC').all(user.scope).filter(row => this.canRead(user, row)).map(row => this.presentEvent(row, user));
   }
   createEvent(user, body) {
-    if (user.role === 'guest') throw new HttpError(403, 'Создать банкет может организатор или администратор ресторана.');
+    if (user.demo && user.role === 'guest') throw new HttpError(403, 'Создать банкет может организатор или администратор ресторана.');
     const count = this.db.prepare('SELECT COUNT(*) AS count FROM events WHERE owner_id=?').get(user.id).count;
     if (count >= (user.demo ? 30 : 500)) throw new HttpError(429, 'Достигнут предел банкетов для этого организатора.');
     const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(body.restaurantId, user.scope);
     if (!restaurant) throw new HttpError(400, 'Выберите доступный ресторан.');
+    if (!this.canOrganize(user, restaurant.id)) throw new HttpError(403, 'Для создания банкета нужна роль в выбранном ресторане.');
     const title = string(body.title, 'Название', 120);
     const eventDate = date(body.date, 'Дата банкета');
     const deadline = date(body.deadline, 'Срок выбора');
     if (Date.parse(eventDate) < Date.now() || Date.parse(deadline) < Date.now() || deadline > eventDate) throw new HttpError(400, 'Срок выбора должен быть в будущем и не позже банкета.');
     const expected = integer(body.expectedGuests, 'Число гостей', 1, 1000);
     const budget = integer(body.budget ?? 0, 'Бюджет');
+    const photoUrl = this.eventPhoto(body.photoUrl || '');
     const menu = this.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(restaurant.id).filter(row => JSON.parse(row.data).available);
     if (!menu.length) throw new HttpError(409, 'В ресторане пока нет доступных блюд.');
     const eventId = id('event');
-    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,status,invite_code,created_at,approved_at) VALUES (?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, budget, secret().slice(0, 24), iso(Date.now()));
+    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,status,invite_code,created_at,approved_at,photo_url) VALUES (?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, budget, secret().slice(0, 24), iso(Date.now()), photoUrl);
     const add = this.db.prepare('INSERT INTO event_menu VALUES (?,?,?)');
     for (const item of menu) add.run(eventId, item.id, item.data);
     return this.presentEvent(this.eventRow(eventId, user), user);
@@ -349,7 +413,8 @@ export class Store {
       const count = this.db.prepare('SELECT COUNT(*) AS count FROM guest_invites WHERE event_id=?').get(event.id).count;
       const expected = body.expectedGuests === undefined ? event.expected_guests : integer(body.expectedGuests, 'Число гостей', Math.max(1, count), 1000);
       const budget = body.budget === undefined ? event.budget : integer(body.budget, 'Бюджет');
-      this.db.prepare('UPDATE events SET title=?,date=?,deadline=?,expected_guests=?,budget=?,revision=revision+1 WHERE id=?').run(title, eventDate, deadline, expected, budget, event.id);
+      const photoUrl = body.photoUrl === undefined ? event.photo_url : this.eventPhoto(body.photoUrl);
+      this.db.prepare('UPDATE events SET title=?,date=?,deadline=?,expected_guests=?,budget=?,photo_url=?,revision=revision+1 WHERE id=?').run(title, eventDate, deadline, expected, budget, photoUrl, event.id);
       if (deadline !== event.deadline) {
         const reminderAt = Math.max(Date.now() + 120_000, Date.parse(deadline) - 24 * 3600_000);
         this.db.prepare("UPDATE notification_jobs SET due_at=?,sent_at=NULL,cancelled_at=NULL,attempts=0 WHERE event_id=? AND kind='reminder'").run(reminderAt, event.id);
@@ -457,8 +522,16 @@ export class Store {
     const existing = this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id);
     if (event.scope === 'live') {
       if (!user.phone || !user.phone_verified_at) throw new HttpError(403, 'Подтвердите номер телефона через MAX, чтобы принять приглашение.');
-      const slot = this.db.prepare('SELECT * FROM guest_invites WHERE event_id=? AND phone=?').get(event.id, user.phone);
-      if (!slot) throw new HttpError(403, 'Ваш номер отсутствует в списке гостей. Попросите организатора добавить его.');
+      let slot = this.db.prepare('SELECT * FROM guest_invites WHERE event_id=? AND phone=?').get(event.id, user.phone);
+      if (!slot) {
+        this.assertOpen(event);
+        const count = this.db.prepare('SELECT COUNT(*) AS count FROM guest_invites WHERE event_id=?').get(event.id).count;
+        if (count >= 1000) throw new HttpError(409, 'Достигнут предел гостей.');
+        const inviteId = id('invite');
+        this.db.prepare('INSERT INTO guest_invites (id,event_id,name,phone,user_id,created_at) VALUES (?,?,?,?,?,?)').run(inviteId, event.id, user.name, user.phone, user.id, iso(Date.now()));
+        if (count >= event.expected_guests) this.db.prepare('UPDATE events SET expected_guests=expected_guests+1 WHERE id=?').run(event.id);
+        slot = this.db.prepare('SELECT * FROM guest_invites WHERE id=?').get(inviteId);
+      }
       if (slot.user_id && slot.user_id !== user.id) throw new HttpError(403, 'Приглашение уже закреплено за другим пользователем MAX.');
       if (this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND id!=?').get(event.id, user.id, slot.id)) throw new HttpError(409, 'Аккаунт уже привязан к другому гостю.');
       this.db.prepare('UPDATE guest_invites SET user_id=? WHERE id=?').run(user.id, slot.id);
@@ -556,6 +629,7 @@ export class Store {
     return this.transaction(() => {
       const event = this.eventRow(eventId, user);
       if (event.owner_id !== user.id) throw new HttpError(403, 'Утвердить заказ может только организатор.');
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Роль организатора в этом ресторане снята.');
       if (event.status === 'approved') return this.presentEvent(event, user);
       if (body.expectedRevision === undefined) throw new HttpError(400, 'Перед утверждением откройте актуальную версию заказа.');
       if (integer(body.expectedRevision, 'Версия заказа') !== event.revision) {
@@ -567,16 +641,18 @@ export class Store {
       this.db.prepare("UPDATE notification_jobs SET cancelled_at=? WHERE event_id=? AND sent_at IS NULL AND kind='reminder'").run(Date.now(), event.id);
       if (event.scope === 'live') {
         for (const guest of this.db.prepare('SELECT user_id FROM guests WHERE event_id=?').all(event.id)) this.queueNotice(event.id, guest.user_id, 'approved');
+        const recipients = this.db.prepare("SELECT user_id AS id FROM restaurant_memberships WHERE restaurant_id=? AND role='restaurant_admin'").all(event.restaurant_id);
         for (const adminId of this.config.restaurantAdminIds) {
           const admin = this.db.prepare("SELECT id FROM users WHERE scope='live' AND external_id=?").get(adminId);
-          if (admin) this.queueNotice(event.id, admin.id, 'restaurant_approved');
+          if (admin) recipients.push(admin);
         }
+        for (const recipient of recipients) this.queueNotice(event.id, recipient.id, 'restaurant_approved');
       }
       return this.presentEvent(this.eventRow(event.id, user), user);
     });
   }
   editMenu(user, restaurantId, itemId, body) {
-    if (user.role !== 'restaurant') throw new HttpError(403, 'Редактирование доступно только ресторану.');
+    if (!this.canEditRestaurant(user, restaurantId)) throw new HttpError(403, 'Редактирование доступно администратору ресторана.');
     const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
     if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
     if (!itemId && this.db.prepare('SELECT COUNT(*) AS count FROM menu_items WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд в меню.');
@@ -589,7 +665,7 @@ export class Store {
     return item;
   }
   deleteMenu(user, restaurantId, itemId) {
-    if (user.role !== 'restaurant') throw new HttpError(403, 'Редактирование доступно только ресторану.');
+    if (!this.canEditRestaurant(user, restaurantId)) throw new HttpError(403, 'Редактирование доступно администратору ресторана.');
     const restaurant = this.db.prepare('SELECT id FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
     if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
     if (this.db.prepare('DELETE FROM menu_items WHERE id=? AND restaurant_id=?').run(itemId, restaurantId).changes !== 1) throw new HttpError(404, 'Блюдо не найдено.');
@@ -627,7 +703,7 @@ export class Store {
       if (!grant) throw new HttpError(404, 'Ссылка на выгрузку недействительна. Создайте новую.');
       const user = this.db.prepare('SELECT * FROM users WHERE id=?').get(grant.user_id);
       if (!user || (user.demo && !this.config.demoEnabled)) throw new HttpError(404, 'Ссылка на выгрузку недействительна. Создайте новую.');
-      if (!user.demo) user.role = this.config.restaurantAdminIds.includes(user.external_id) ? 'restaurant' : 'organizer';
+      if (!user.demo) user.role = this.isAdmin(user) ? 'admin' : 'user';
       const event = this.eventRow(grant.event_id, user);
       if (!this.isManager(user, event) || event.status !== 'approved' || event.revision !== grant.event_revision) throw new HttpError(404, 'Ссылка на выгрузку недействительна. Создайте новую.');
       const csv = this.exportCsv(user, event.id);

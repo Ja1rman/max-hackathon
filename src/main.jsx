@@ -52,7 +52,10 @@ const roleNames = {
   organizer: "Организатор",
   guest: "Гость",
   restaurant: "Ресторан",
+  admin: "Администратор",
+  user: "Участник",
 };
+const restaurantRoleNames = { admin: 'Администратор', restaurant_admin: 'Администратор ресторана', organizer: 'Организатор' };
 let authToken = sessionStorage.getItem("banquet-token") || "";
 async function api(path, options = {}) {
   const response = await fetch(`${BASE}/api${path}`, {
@@ -188,7 +191,10 @@ function App() {
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
     [filter, setFilter] = useState("all"),
-    [helpOpen, setHelpOpen] = useState(false);
+    [helpOpen, setHelpOpen] = useState(false),
+    [profileOpen, setProfileOpen] = useState(false),
+    [memberRestaurant, setMemberRestaurant] = useState(null),
+    [restaurantDraft, setRestaurantDraft] = useState(false);
   const startParam =
     new URLSearchParams(location.search).get("invite") ||
     location.pathname.match(/\/invite\/([A-Za-z0-9_-]+)\/?$/)?.[1] ||
@@ -222,9 +228,10 @@ function App() {
     setScreen("events");
   };
   const refresh = useCallback(async () => {
-    const [es, rs] = await Promise.all([api("/events"), api("/restaurants")]);
+    const [es, rs, me] = await Promise.all([api("/events"), api("/restaurants"), api('/me')]);
     setEvents(Array.isArray(es) ? es : es.events);
     setRestaurants(Array.isArray(rs) ? rs : rs.restaurants);
+    setSession(previous => JSON.stringify(previous) === JSON.stringify(me) ? previous : me);
   }, []);
   useEffect(() => {
     (async () => {
@@ -243,10 +250,27 @@ function App() {
             if (sp.startsWith('event_')) setStartEvent(sp);
             else setInvite(sp);
           }
-          if (login.user.phoneVerified) {
+          const launchInvite = (sp && !sp.startsWith('event_') ? sp : startParam && !startParam.startsWith('event_') ? startParam : '');
+          let verified = login.user.phoneVerified;
+          if (launchInvite) {
+            try {
+              await api(`/invites/${launchInvite}`);
+              if (!verified) {
+                const contact = await window.WebApp.requestContact();
+                if (!contact || contact.error) throw new Error('Подтвердите номер в MAX, чтобы принять приглашение.');
+                setSession(await api('/me/phone', { method: 'PUT', body: contact }));
+                verified = true;
+              }
+              const joined = await api(`/invites/${launchInvite}/join`, { method: 'POST', body: {} });
+              setSelected(joined.eventId);
+              setTab('menu');
+              setInvite('');
+            } catch (joinError) { setError(joinError.message); }
+          }
+          if (verified) {
             try {
               const claimed = await api('/me/claim-invitations', { method: 'POST', body: {} });
-              if (!sp && !startParam && claimed.eventIds.length === 1) {
+              if (!launchInvite && !sp && !startParam && claimed.eventIds.length === 1) {
                 setSelected(claimed.eventIds[0]);
                 setTab('menu');
               }
@@ -256,6 +280,14 @@ function App() {
         } else if (authToken) {
           const me = await api("/me");
           setSession(me.user || me);
+          if (startParam && !startParam.startsWith('event_') && (me.user || me).phoneVerified) {
+            try {
+              const joined = await api(`/invites/${startParam}/join`, { method: 'POST', body: {} });
+              setSelected(joined.eventId);
+              setTab('menu');
+              setInvite('');
+            } catch (joinError) { setError(joinError.message); }
+          }
           if ((me.user || me).phoneVerified) {
             const claimed = await api('/me/claim-invitations', { method: 'POST', body: {} });
             if (!startParam && claimed.eventIds.length === 1) {
@@ -396,13 +428,9 @@ function App() {
     setSession(null);
     setSelected(null);
     setDetail(null);
+    setProfileOpen(false);
   };
   const share = async () => {
-    if (!session.demo && !detail.invitedGuests?.length) {
-      setError('Сначала добавьте гостей с номерами телефонов в разделе «Управление».');
-      setTab('admin');
-      return;
-    }
     const link =
       (!session.demo && detail.maxInviteUrl) ||
       detail.inviteUrl ||
@@ -429,6 +457,7 @@ function App() {
           body: {},
         });
         await window.WebApp.downloadFile(url, "banquet-kitchen.csv");
+        notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
         return;
       }
       const res = await fetch(`${BASE}/api/events/${selected}/export.csv`, {
@@ -440,6 +469,7 @@ function App() {
       a.href = url;
       a.download = "zakaz-kuhne.csv";
       a.click();
+      notify('CSV скачан. Проверьте папку «Загрузки» браузера.');
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
   if (loading)
@@ -544,8 +574,9 @@ function App() {
       </div>
     );
   const role = session.role,
-    guestFirst = !session.demo && role === 'organizer' && !events.some(event => event.isOwner),
-    canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
+    canCreate = session.demo ? role !== 'guest' : role === 'admin' || session.restaurantRoles?.length > 0,
+    guestFirst = !session.demo && role === 'user' && !session.restaurantRoles?.length && !events.some(event => event.isOwner),
+    canManage = Boolean(detail?.event.canManage),
     displayTab = detail && !canManage ? "menu" : tab,
     activeEvents = events.filter((e) => e.status === "collecting"),
     approvedEvents = events.filter((e) => e.status === "approved");
@@ -566,10 +597,10 @@ function App() {
             }}
           >
             <CalendarDays size={19} />
-            {role === "restaurant" ? "Заказы на банкеты" : guestFirst ? 'Мои приглашения' : "Мои банкеты"}
+            {role === "restaurant" || role === 'admin' ? "Заказы на банкеты" : guestFirst ? 'Мои приглашения' : "Мои банкеты"}
             <span>{events.length}</span>
           </button>
-          {role !== "guest" && (
+          {role !== 'guest' && !guestFirst && (
             <button
               className={screen === "catalog" ? "active" : ""}
               onClick={() => {
@@ -578,7 +609,7 @@ function App() {
               }}
             >
               <Utensils size={19} />
-              {role === "restaurant" ? "Меню ресторана" : "Меню ресторанов"}
+              Меню ресторанов
             </button>
           )}
           <button onClick={() => setHelpOpen(true)}>
@@ -587,17 +618,6 @@ function App() {
           </button>
         </nav>
         <div className="sidebar-bottom">
-          {!session.demo && (
-            <div className="profile-controls">
-              <small>{session.phoneVerified ? `Номер подтверждён: +${session.phone}` : 'Номер MAX ещё не подтверждён'}</small>
-              {!session.phoneVerified && <button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер и найти приглашения</button>}
-              <button disabled={busy} onClick={() => perform(async () => {
-                const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
-                setSession(updated);
-                notify(updated.notificationsEnabled ? 'Уведомления включены. Начните диалог с ботом MAX.' : 'Уведомления выключены');
-              })}>{session.notificationsEnabled ? 'Выключить уведомления' : 'Включить уведомления'}</button>
-            </div>
-          )}
           <div className="max-connect">
             <span className="max-logo">м</span>
             <div>
@@ -606,16 +626,6 @@ function App() {
                 {session.demo ? "Демонстрационный режим" : "Вы вошли через MAX"}
               </small>
             </div>
-          </div>
-          <div className="profile">
-            <div className="avatar">{session.name?.slice(0, 1) || "Я"}</div>
-            <div>
-              <strong>{session.name}</strong>
-              <small>{roleNames[role]}</small>
-            </div>
-            <button aria-label="Выйти" onClick={logout} className="icon-btn">
-              <LogOut size={17} />
-            </button>
           </div>
         </div>
       </aside>
@@ -640,9 +650,9 @@ function App() {
                   disabled={busy || !sandbox.current}
                   onChange={(e) => demo(e.target.value)}
                 >
-                  {Object.entries(roleNames).map(([k, v]) => (
+                  {['organizer', 'guest', 'restaurant'].map(k => (
                     <option key={k} value={k}>
-                      {v}
+                      {roleNames[k]}
                     </option>
                   ))}
                 </select>
@@ -653,7 +663,26 @@ function App() {
                 <ShieldCheck size={15} /> MAX подключён
               </span>
             )}
-            <div className="avatar top-avatar">{session.name?.slice(0, 1)}</div>
+            <button className="avatar top-avatar profile-trigger" aria-label="Открыть профиль" aria-expanded={profileOpen} onClick={() => setProfileOpen(value => !value)}>{session.name?.slice(0, 1)}</button>
+            {profileOpen && <div className="profile-popover">
+              <strong>{session.name}</strong>
+              <small>{roleNames[role]}{session.maxId ? ` · MAX ID ${session.maxId}` : ''}</small>
+              {role === 'admin' && <p>Администратор сервиса · права во всех ресторанах</p>}
+              {!session.demo && <div className="profile-rights">
+                <b>Права в ресторанах</b>
+                {session.restaurantRoles?.length ? session.restaurantRoles.map(entry => <p key={entry.restaurantId}>{entry.name}<span>{restaurantRoleNames[entry.role]}</span></p>) : <p>Назначенных ролей нет</p>}
+              </div>}
+              {!session.demo && <div className="profile-actions">
+                <small>{session.phoneVerified ? `Номер MAX: +${session.phone}` : 'Номер MAX не подтверждён'}</small>
+                {!session.phoneVerified && <button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер MAX</button>}
+                <button disabled={busy} onClick={() => perform(async () => {
+                  const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
+                  setSession(updated);
+                  notify(updated.notificationsEnabled ? 'Уведомления включены' : 'Уведомления выключены');
+                })}>{session.notificationsEnabled ? 'Выключить уведомления' : 'Включить уведомления'}</button>
+              </div>}
+              <button className="profile-logout" onClick={logout}><LogOut size={16} /> Выйти</button>
+            </div>}
           </div>
         </header>
         <main>
@@ -682,7 +711,7 @@ function App() {
             <div className="invite-banner">
               <div>
                 <strong>Вас пригласили за стол</strong>
-                <p>{!session.demo && !session.phoneVerified ? 'Подтвердите свой номер в MAX. Выбрать блюда сможет только гость из списка приглашённых.' : 'Присоединитесь к банкету и выберите блюда.'}</p>
+                <p>{!session.demo && !session.phoneVerified ? 'Подтвердите свой номер через MAX, чтобы приглашение закрепилось только за вами.' : 'Присоединитесь к банкету и выберите блюда.'}</p>
               </div>
               <Button disabled={busy} onClick={joinInvite}>
                 {!session.demo && !session.phoneVerified ? 'Подтвердить номер' : 'Принять приглашение'} <ArrowUpRight size={16} />
@@ -694,14 +723,15 @@ function App() {
               <div className="page-heading">
                 <div className="eyebrow">ПОДОБРАНО СО ВКУСОМ</div>
                 <h1>
-                  {role === "restaurant" ? "Меню ресторана" : "Меню ресторанов"}
+                  Меню ресторанов
                 </h1>
                 <p>
-                  {role === "restaurant"
+                  {role === "restaurant" || role === 'admin'
                     ? "Изменения меню будут доступны в новых банкетах."
                     : "Выберите ресторан при создании банкета. Цены сохранятся для вашего события."}
                 </p>
               </div>
+              {role === 'admin' && <Button variant="secondary" onClick={() => setRestaurantDraft({})}><Plus size={16} /> Добавить ресторан</Button>}
               {restaurants.map((r) => (
                 <section key={r.id}>
                   <div className="section-head">
@@ -709,7 +739,9 @@ function App() {
                       <h2>{r.name}</h2>
                       <p className="muted">{r.address || r.description}</p>
                     </div>
-                    {role === "restaurant" && (
+                    {(role === 'admin' || role === 'restaurant' || r.accessRole === 'restaurant_admin') && <div className="restaurant-actions">
+                      {!session.demo && <Button variant="secondary" onClick={() => setMemberRestaurant(r)}>Права доступа</Button>}
+                      {!session.demo && <Button variant="secondary" onClick={() => setRestaurantDraft(r)}>Редактировать ресторан</Button>}
                       <Button
                         variant="secondary"
                         onClick={() =>
@@ -725,14 +757,14 @@ function App() {
                         <Plus size={16} />
                         Добавить блюдо
                       </Button>
-                    )}
+                    </div>}
                   </div>
                   <div className="menu-grid catalog">
                     {r.menu?.map((item) => (
                       <DishCard
                         key={item.id}
                         item={item}
-                        admin={role === "restaurant"}
+                        admin={role === 'admin' || role === 'restaurant' || r.accessRole === 'restaurant_admin'}
                         edit={() =>
                           setEditItem({ ...item, restaurantId: r.id })
                         }
@@ -763,6 +795,7 @@ function App() {
                   </button>
                   <div className="detail-heading">
                     <div>
+                      {detail.event.photoUrl && <img className="detail-photo" src={`${BASE}${detail.event.photoUrl}`} alt="Фото мероприятия" />}
                       <Tag approved={detail.event.status === "approved"} />
                       <h1>{detail.event.title}</h1>
                       <p>
@@ -787,15 +820,11 @@ function App() {
                       value={`${detail.event.responded} из ${detail.event.expectedGuests}`}
                       detail="гостей за вашим столом"
                     />
-                    <Stat
+                      <Stat
                       icon={Wallet}
-                      label="Сумма заказа"
-                      value={money(detail.event.total)}
-                      detail={
-                        detail.event.budget
-                          ? `Бюджет: ${money(detail.event.budget)}`
-                          : "По выбору гостей"
-                      }
+                      label={canManage ? 'Сумма заказа' : 'Ваш выбор'}
+                      value={money(canManage ? detail.event.total : detail.selection?.total || 0)}
+                      detail={canManage ? detail.event.budget ? `Бюджет: ${money(detail.event.budget)}` : 'По выбору гостей' : detail.event.guestBudget ? `Ориентир на гостя: ${money(detail.event.guestBudget)}` : 'Лимит не указан'}
                     />
                     <Stat
                       icon={Clock3}
@@ -831,12 +860,12 @@ function App() {
                         Гости <span>{detail.guests?.length || 0}</span>
                       </button>
                     )}
-                    {role !== "restaurant" && (
+                    {canManage && detail.canSelect && (
                       <button
                         className={displayTab === "menu" ? "active" : ""}
                         onClick={() => setTab("menu")}
                       >
-                        {!canManage ? "Выбрать блюда" : "Мой выбор"}
+                        Мой выбор
                       </button>
                     )}
                     {canManage && (
@@ -992,6 +1021,7 @@ function App() {
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
                       deleteGuest={id => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'DELETE' }), 'Гость удалён')}
                       editDish={item => setEditItem({ ...item, eventId: selected })}
+                      uploadPhoto={file => perform(() => uploadImage(file))}
                       deleteDish={id => updateAdmin(() => api(`/events/${selected}/menu/${id}`, { method: 'DELETE' }), 'Блюдо удалено из банкета')}
                     />
                   ) : (
@@ -1064,7 +1094,7 @@ function App() {
                 <div>
                   <div className="eyebrow">ПОВОД СОБРАТЬСЯ ВМЕСТЕ</div>
                   <h1>
-                    {role === "restaurant"
+                    {role === "restaurant" || role === 'admin'
                       ? "Заказы на банкеты"
                       : role === "guest" || guestFirst
                         ? "Ваши приглашения"
@@ -1079,21 +1109,21 @@ function App() {
                         : "Гости выбирают любимое. Вы держите всё под контролем."}
                   </p>
                 </div>
-                {role === "organizer" && !guestFirst && (
+                {canCreate && !guestFirst && (
                   <Button onClick={() => setCreateOpen(true)}>
                     <Plus size={18} />
                     Создать банкет
                   </Button>
                 )}
               </div>
-              {guestFirst && !invite && (
+              {guestFirst && !invite && !events.length && (
                 <div className="guest-discovery">
                   <div>
-                    <strong>{session.phoneVerified ? 'Проверить приглашения' : 'Вас пригласили на банкет?'}</strong>
-                    <p>{session.phoneVerified ? 'Найдём банкеты, куда организатор добавил ваш подтверждённый номер MAX.' : 'Подтвердите свой номер через MAX. Мы найдём ваш банкет и откроем меню для выбора блюд.'}</p>
+                    <strong>{session.phoneVerified ? 'Приглашений пока нет' : 'Вас пригласили на банкет?'}</strong>
+                    <p>{session.phoneVerified ? 'Новые банкеты на ваш номер появятся автоматически при следующем входе. Если вам прислали ссылку, откройте её в MAX.' : 'Подтвердите номер в MAX один раз. После этого новые приглашения будут появляться автоматически.'}</p>
                   </div>
-                  <Button disabled={busy} onClick={() => perform(findMyInvites)}>{session.phoneVerified ? 'Найти приглашения' : 'Подтвердить номер'}</Button>
-                  {!events.length && <button className="guest-discovery-create" onClick={() => setCreateOpen(true)}>Я организатор · создать банкет</button>}
+                  {!session.phoneVerified && <Button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер MAX</Button>}
+                  {!canCreate && <small>Нет роли организатора? Попросите администратора ресторана назначить её по вашему MAX ID.</small>}
                 </div>
               )}
               <div className="stats-row">
@@ -1141,13 +1171,10 @@ function App() {
                   <button
                     className="event-card"
                     key={event.id}
-                    onClick={() => openEvent(event.id, !event.isOwner && role !== 'restaurant')}
+                    onClick={() => openEvent(event.id, !event.canManage)}
                   >
                     <div className={`event-art art-${i % 3}`}>
-                      <div className="mini-plate">
-                        <Utensils size={30} />
-                      </div>
-                      <span className="event-art-leaf">✳</span>
+                      {event.photoUrl ? <img className="event-cover" src={`${BASE}${event.photoUrl}`} alt="" loading="lazy" /> : <><div className="mini-plate"><Utensils size={30} /></div><span className="event-art-leaf">✳</span></>}
                       <div className="event-date">
                         <strong>{new Date(event.date).getDate()}</strong>
                         <span>
@@ -1204,7 +1231,7 @@ function App() {
                     </div>
                   </button>
                 ))}
-                {role !== "guest" && !guestFirst && filter === "all" && (
+                {canCreate && !guestFirst && filter === "all" && (
                   <button
                     className="new-event-card"
                     onClick={() => setCreateOpen(true)}
@@ -1265,7 +1292,7 @@ function App() {
             <CalendarDays size={19} />
             Банкеты
           </button>
-          {role !== "guest" && (
+          {role !== 'guest' && !guestFirst && (
             <button
               onClick={() => {
                 setScreen("catalog");
@@ -1290,9 +1317,10 @@ function App() {
       )}
       {createOpen && (
         <CreateEvent
-          restaurants={restaurants}
+          restaurants={restaurants.filter(r => session.demo ? role !== 'guest' : role === 'admin' || Boolean(r.accessRole))}
           busy={busy}
           onClose={() => setCreateOpen(false)}
+          uploadPhoto={file => perform(() => uploadImage(file))}
           submit={(body) =>
             perform(async () => {
               const e = await api("/events", { method: "POST", body });
@@ -1304,6 +1332,18 @@ function App() {
           }
         />
       )}
+      {memberRestaurant && <RestaurantAccess restaurant={memberRestaurant} session={session} busy={busy} perform={perform} refresh={refresh} notify={notify} onClose={() => setMemberRestaurant(null)} />}
+      {restaurantDraft && <Modal title={restaurantDraft.id ? 'Редактировать ресторан' : 'Новый ресторан'} onClose={() => setRestaurantDraft(false)}>
+        <form onSubmit={event => { event.preventDefault(); const form = new FormData(event.currentTarget); perform(async () => {
+          await api(restaurantDraft.id ? `/restaurants/${restaurantDraft.id}` : '/restaurants', { method: restaurantDraft.id ? 'PATCH' : 'POST', body: { name: form.get('name'), description: form.get('description'), address: form.get('address') } });
+          await refresh(); setRestaurantDraft(false); notify('Ресторан сохранён');
+        }); }}>
+          <label>Название<input name="name" required maxLength={120} defaultValue={restaurantDraft.name || ''} /></label>
+          <label>Описание<textarea name="description" maxLength={500} defaultValue={restaurantDraft.description || ''} /></label>
+          <label>Адрес<input name="address" maxLength={200} defaultValue={restaurantDraft.address || ''} /></label>
+          <div className="modal-actions"><Button type="button" variant="secondary" onClick={() => setRestaurantDraft(false)}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
+        </form>
+      </Modal>}
       {approveOpen && (
         <Modal title="Утвердить заказ?" onClose={() => setApproveOpen(false)}>
           <p>
@@ -1428,19 +1468,16 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
     <article className={`dish-card ${!item.available ? "unavailable" : ""}`}>
       <div className={`dish-visual category-${item.category?.length % 4}`}>
         {item.photoUrl ? <img src={`${BASE}${item.photoUrl}`} alt={item.name} loading="lazy" /> : <span>{item.emoji || "🍽️"}</span>}
-        {item.vegetarian && (
-          <span className="veg-tag">
-            <Leaf size={12} />
-            Вегетарианское
-          </span>
-        )}
+        {(item.vegetarian || item.labels?.length > 0) && <div className="dish-badges">
+          {item.vegetarian && <span className="veg-tag"><Leaf size={12} /> Вегетарианское</span>}
+          {item.labels?.map(label => <span className="veg-tag" key={label}>{label}</span>)}
+        </div>}
       </div>
       <div className="dish-content">
         <span className="dish-category">
           {item.category} {item.weight ? "· " + item.weight : ""}
         </span>
         <h3>{item.name}</h3>
-        {item.labels?.length > 0 && <div className="dish-labels">{item.labels.map(label => <span key={label} className={`dish-label ${label === 'Халяль' ? 'halal' : label === 'Много белка' ? 'protein' : 'light'}`}>{label}</span>)}</div>}
         <p>{item.description}</p>
         {item.nutrition && <small className="nutrition">На порцию: {item.nutrition.kcal} ккал · Б {item.nutrition.protein} г · Ж {item.nutrition.fat} г · У {item.nutrition.carbs} г</small>}
         {item.allergens?.length > 0 && (
@@ -1493,6 +1530,7 @@ function GuestMenu({ detail, busy, save, canSelect }) {
     [notes, setNotes] = useState(selection?.notes || ""),
     [category, setCategory] = useState("Все блюда"),
     [vegetarian, setVegetarian] = useState(false),
+    [selectedLabels, setSelectedLabels] = useState([]),
     [dirty, setDirty] = useState(false);
   const locked =
     detail.event.status === "approved" ||
@@ -1531,16 +1569,16 @@ function GuestMenu({ detail, busy, save, canSelect }) {
               ? "Сбор завершён. Ваши блюда сохранены в заказе."
               : "Выберите блюда и укажите пожелания. До утверждения заказ можно изменить."}
           </p>
+          {canSelect && <div className="guest-guide">
+            <strong>Как выбрать</strong>
+            <p>Добавьте нужное количество порций кнопками у блюд, затем нажмите «Сохранить выбор» внизу страницы. Организатор увидит ваш заказ; до окончания сбора вы сможете его изменить.</p>
+            {detail.event.guestBudget > 0 && <p>Ваш ориентир по стоимости — <b>{money(detail.event.guestBudget)}</b>. Сейчас выбрано на <b>{money(total)}</b>; {total <= detail.event.guestBudget ? `осталось ${money(detail.event.guestBudget - total)}` : `сверх ориентира ${money(total - detail.event.guestBudget)}`}. Это ориентир, окончательный заказ утверждает организатор.</p>}
+          </div>}
         </div>
-        <label className="vegetarian-filter">
-          <input
-            type="checkbox"
-            checked={vegetarian}
-            onChange={(e) => setVegetarian(e.target.checked)}
-          />
-          <Leaf size={15} />
-          Без мяса
-        </label>
+      </div>
+      <div className="diet-filters" aria-label="Фильтры блюд">
+        <label className="vegetarian-filter"><input type="checkbox" checked={vegetarian} onChange={event => setVegetarian(event.target.checked)} /><Leaf size={15} /> Без мяса</label>
+        {MENU_LABELS.map(label => <label key={label} className="vegetarian-filter"><input type="checkbox" checked={selectedLabels.includes(label)} onChange={event => setSelectedLabels(values => event.target.checked ? [...values, label] : values.filter(value => value !== label))} />{label}</label>)}
       </div>
       <div className="category-tabs">
         {categories.map((c) => (
@@ -1558,7 +1596,7 @@ function GuestMenu({ detail, busy, save, canSelect }) {
           .filter(
             (i) =>
               (category === "Все блюда" || i.category === category) &&
-              (!vegetarian || i.vegetarian),
+              (!vegetarian || i.vegetarian) && selectedLabels.every(label => i.labels?.includes(label)),
           )
           .map((i) => (
             <DishCard
@@ -1573,6 +1611,7 @@ function GuestMenu({ detail, busy, save, canSelect }) {
             />
           ))}
       </div>
+      {!detail.menu.some(i => (category === 'Все блюда' || i.category === category) && (!vegetarian || i.vegetarian) && selectedLabels.every(label => i.labels?.includes(label))) && <p className="muted">По выбранным фильтрам блюд нет. Снимите одну из пометок.</p>}
       <div className="selection-bottom">
         <label>
           Пожелания для кухни
@@ -1627,7 +1666,7 @@ function GuestMenu({ detail, busy, save, canSelect }) {
     </>
   );
 }
-function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest, editDish, deleteDish }) {
+function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest, editDish, deleteDish, uploadPhoto }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [editing, setEditing] = useState(null);
@@ -1636,12 +1675,16 @@ function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest,
     <div className="admin-layout">
       <section className="panel admin-panel">
         <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет.</p></div></div>
-        <form onSubmit={event => {
+        <form onSubmit={async event => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), budget: Math.round(Number(form.get('budget') || 0) * 100) });
+          let photoUrl = detail.event.photoUrl || '';
+          const photo = form.get('photo');
+          if (photo?.size) { const uploaded = await uploadPhoto(photo); if (!uploaded) return; photoUrl = uploaded.photoUrl; }
+          await saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), budget: Math.round(Number(form.get('budget') || 0) * 100), photoUrl });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
+          <label>Фото мероприятия<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} />{detail.event.photoUrl && <small>Новое фото заменит текущее.</small>}</label>
           <div className="form-grid">
             <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
             <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
@@ -1693,7 +1736,33 @@ function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest,
     </div>
   );
 }
-function CreateEvent({ restaurants, busy, onClose, submit }) {
+function RestaurantAccess({ restaurant, session, busy, perform, refresh, notify, onClose }) {
+  const [members, setMembers] = useState([]);
+  const [maxId, setMaxId] = useState('');
+  const [memberRole, setMemberRole] = useState('organizer');
+  const [loadError, setLoadError] = useState('');
+  const path = `/restaurants/${restaurant.id}/members`;
+  useEffect(() => { api(path).then(setMembers).catch(error => setLoadError(error.message)); }, [path]);
+  const reload = async () => { setMembers(await api(path)); await refresh(); };
+  return <Modal title={`Права · ${restaurant.name}`} onClose={onClose}>
+    <p className="muted">Назначайте права по числовому MAX ID. Администратор ресторана управляет меню и мероприятиями своего ресторана; организатор создаёт и ведёт свои банкеты. Любой из них может быть гостем.</p>
+    {loadError && <p className="alert error">{loadError}</p>}
+    <form className="member-form" onSubmit={event => { event.preventDefault(); perform(async () => {
+      await api(`${path}/${maxId.trim()}`, { method: 'PUT', body: { role: memberRole } });
+      await reload(); setMaxId(''); notify('Роль назначена');
+    }); }}>
+      <label>MAX ID пользователя<input inputMode="numeric" pattern="[1-9][0-9]*" required value={maxId} onChange={event => setMaxId(event.target.value)} placeholder="Например, 220827457" /></label>
+      <label>Роль<select value={memberRole} onChange={event => setMemberRole(event.target.value)}><option value="organizer">Организатор</option>{session.role === 'admin' && <option value="restaurant_admin">Администратор ресторана</option>}</select></label>
+      <Button type="submit" disabled={busy}>Назначить</Button>
+    </form>
+    <div className="member-list">{members.map(member => <div className="member-row" key={member.maxId}>
+      <div><strong>{member.name}</strong><small>MAX ID {member.maxId} · {restaurantRoleNames[member.role]}</small></div>
+      {(session.role === 'admin' || member.role === 'organizer') && <button disabled={busy} onClick={() => perform(async () => { await api(`${path}/${member.maxId}`, { method: 'DELETE' }); await reload(); notify('Роль снята'); })}>Снять роль</button>}
+    </div>)}{!members.length && <p className="muted">Назначенных сотрудников пока нет.</p>}</div>
+  </Modal>;
+}
+
+function CreateEvent({ restaurants, busy, onClose, submit, uploadPhoto }) {
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -1707,11 +1776,15 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
         гостю.
       </p>
       <form
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
-          submit({
+          let photoUrl = '';
+          const photo = f.get('photo');
+          if (photo?.size) { const uploaded = await uploadPhoto(photo); if (!uploaded) return; photoUrl = uploaded.photoUrl; }
+          await submit({
             title: f.get("title"),
+            photoUrl,
             restaurantId: f.get("restaurantId"),
             date: new Date(f.get("date")).toISOString(),
             deadline: new Date(f.get("deadline")).toISOString(),
@@ -1730,6 +1803,7 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             placeholder="Например, день рождения Ани"
           />
         </label>
+        <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
         <label>
           Ресторан
           <select name="restaurantId" required>
