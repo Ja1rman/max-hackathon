@@ -14,6 +14,7 @@ import {
   tableSeats,
   tableTitle,
 } from "../shared/seating.mjs";
+import { ask } from "./confirm.jsx";
 
 export const SEATING_MODE_NAMES = {
   off: "Без рассадки",
@@ -242,8 +243,8 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
     change([...layout.tables, created]);
     setSelected(created.id);
   };
-  const applyTemplate = () => {
-    if (layout.tables.length && !window.confirm("Заменить текущую схему шаблоном?")) return;
+  const applyTemplate = async () => {
+    if (layout.tables.length && !(await ask("Заменить текущую схему шаблоном?", { confirmLabel: "Заменить" }))) return;
     change(generateLayout(template, guests).tables);
     setSelected(null);
   };

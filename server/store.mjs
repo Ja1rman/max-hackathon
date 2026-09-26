@@ -597,7 +597,7 @@ export class Store {
       GROUP BY menu_item_id,name ORDER BY name`).all(event.id, event.id) : [];
     const sharedIds = new Set(shared.map(item => item.menuItemId));
     const menu = this.eventMenu(event.id).filter(item => manager || item.forGuests || sharedIds.has(item.id));
-    const result = { event: this.presentEvent(event, user), menu, guests, canSelect: Boolean(own) || (event.scope !== 'live' && event.owner_id === user.id), selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary, shared, seating };
+    const result = { event: this.presentEvent(event, user), menu, guests, canSelect: Boolean(own) || event.owner_id === user.id, selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary, shared, seating };
     if (manager) {
       const invitedGuests = this.db.prepare(`SELECT guest_invites.id,guest_invites.name,guest_invites.phone,guest_invites.user_id AS userId,
         COALESCE(guests.submitted,0) AS submitted FROM guest_invites LEFT JOIN guests ON guests.event_id=guest_invites.event_id AND guests.user_id=guest_invites.user_id
@@ -611,12 +611,13 @@ export class Store {
       const event = this.eventRow(eventId, user);
       this.assertOpen(event);
       let guest = this.db.prepare('SELECT * FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id);
-      if (!guest && event.scope !== 'live' && event.owner_id === user.id) {
+      // The organizer can order for themselves without being on their own guest list.
+      if (!guest && event.owner_id === user.id) {
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, user.id, '', iso(Date.now()));
         guest = true;
       }
       if (!guest) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
-      if (event.scope === 'live' && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
+      if (event.scope === 'live' && event.owner_id !== user.id && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
         throw new HttpError(403, 'Выбор доступен только гостю с подтверждённым номером MAX из списка приглашённых.');
       }
       if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 50) throw new HttpError(400, 'Выберите от 1 до 50 блюд.');
@@ -645,7 +646,7 @@ export class Store {
       this.db.prepare('UPDATE guests SET submitted=1,notes=?,updated_at=? WHERE event_id=? AND user_id=?').run(notes, iso(Date.now()), event.id, user.id);
       this.db.prepare('UPDATE events SET revision=revision+1 WHERE id=?').run(event.id);
       this.db.prepare("UPDATE notification_jobs SET cancelled_at=? WHERE event_id=? AND user_id=? AND kind='reminder' AND sent_at IS NULL").run(Date.now(), event.id, user.id);
-      if (event.scope === 'live') this.queueNotice(event.id, event.owner_id, `selection:${event.revision + 1}`);
+      if (event.scope === 'live' && event.owner_id !== user.id) this.queueNotice(event.id, event.owner_id, `selection:${event.revision + 1}`);
       return { success: true, total };
     });
   }
@@ -905,10 +906,10 @@ export class Store {
       if (event.seating_mode !== 'choice') throw new HttpError(409, 'В этом банкете места распределяет организатор.');
       this.assertOpen(event);
       if (!this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id)) {
-        if (event.scope === 'live' || event.owner_id !== user.id) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
+        if (event.owner_id !== user.id) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, user.id, '', iso(Date.now()));
       }
-      if (event.scope === 'live' && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
+      if (event.scope === 'live' && event.owner_id !== user.id && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
         throw new HttpError(403, 'Выбор места доступен только гостю с подтверждённым номером MAX из списка приглашённых.');
       }
       const key = this.personKey(user, event);

@@ -111,3 +111,26 @@ test('v8 migration turns the old organizer list and banquet owners into restaura
   assert.equal(migrated.db.prepare("SELECT 1 FROM sqlite_master WHERE name='organizers'").get(), undefined);
   assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 8);
 });
+
+test('a live organizer orders and picks a seat at their own banquet without being on the guest list', async t => {
+  const f = await fixture(t, { openOrganizerSignup: false });
+  const root = await f.login(900, 'Суперадмин');
+  const owner = await f.login(300, 'Ольга');
+  const stranger = await f.login(400, 'Пётр');
+  const [restaurant] = (await f.request('/api/restaurants', { token: root.token })).data;
+  await f.request(`/api/restaurants/${restaurant.id}/members/${owner.user.id}`, { token: root.token, method: 'PUT', body: { role: 'organizer' } });
+  const event = (await f.request('/api/events', { token: owner.token, method: 'POST', body: banquet(restaurant.id) })).data;
+  const detail = (await f.request(`/api/events/${event.id}`, { token: owner.token })).data;
+  assert.equal(detail.canSelect, true);
+  assert.equal(detail.event.canManage, true);
+  const dish = detail.menu[2];
+  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: owner.token, method: 'PUT', body: { items: [{ menuItemId: dish.id, quantity: 1 }] } })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: stranger.token, method: 'PUT', body: { items: [{ menuItemId: dish.id, quantity: 1 }] } })).status, 403);
+  await f.request(`/api/events/${event.id}/seating`, { token: owner.token, method: 'PUT', body: { mode: 'choice', layout: { tables: [{ id: 't1', shape: 'round', label: '1', x: 0, y: 0, w: 120, h: 120, rotation: 0, seats: 4 }] } } });
+  assert.equal((await f.request(`/api/events/${event.id}/seat`, { token: owner.token, method: 'PUT', body: { seatId: 't1-1' } })).data.mySeat, 't1-1');
+  const after = (await f.request(`/api/events/${event.id}`, { token: owner.token })).data;
+  assert.equal(after.event.responded, 1);
+  assert.equal(after.guests[0].name, 'Ольга Тестовая');
+  const revision = after.event.revision;
+  assert.equal((await f.request(`/api/events/${event.id}/approve`, { token: owner.token, method: 'POST', body: { expectedRevision: revision } })).data.status, 'approved');
+});

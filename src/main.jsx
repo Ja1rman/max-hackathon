@@ -42,6 +42,7 @@ import { SEATING_TEMPLATES, generateLayout } from '../shared/seating.mjs';
 import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
 const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
 import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
+import { ConfirmHost, ask } from './confirm.jsx';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -135,6 +136,7 @@ function openExternal(link) {
   else if (window.WebApp?.openLink) window.WebApp.openLink(link);
   else window.open(link, "_blank", "noopener");
 }
+const positions = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "позиция" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "позиции" : "позиций"}`;
 const localDateTime = value => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '' : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -339,6 +341,26 @@ function App() {
   useEffect(() => {
     if (session) refresh().catch((e) => setError(e.message));
   }, [session, refresh]);
+  // MAX keeps the mini app alive in the background: pick up roles granted meanwhile.
+  const sessionKey = session ? JSON.stringify([session.role, session.access, session.phoneVerified, session.notificationsEnabled, session.botConnected]) : "";
+  useEffect(() => {
+    if (!sessionKey) return;
+    const check = () => {
+      if (document.visibilityState === "hidden") return;
+      api("/me").then((me) => {
+        const key = JSON.stringify([me.role, me.access, me.phoneVerified, me.notificationsEnabled, me.botConnected]);
+        if (key !== sessionKey) setSession(me);
+      }).catch(() => {});
+    };
+    const interval = setInterval(check, 30000);
+    document.addEventListener("visibilitychange", check);
+    window.addEventListener("focus", check);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", check);
+      window.removeEventListener("focus", check);
+    };
+  }, [sessionKey]);
   useEffect(() => {
     if (screen !== "kitchen" || !session) return;
     setBoard(null);
@@ -1316,7 +1338,7 @@ function App() {
                     <p>{session.phoneVerified ? 'Найдём банкеты, куда организатор добавил ваш подтверждённый номер MAX.' : 'Подтвердите свой номер через MAX. Мы найдём ваш банкет и откроем меню для выбора блюд.'}</p>
                   </div>
                   <Button disabled={busy} onClick={() => perform(findMyInvites)}>{session.phoneVerified ? 'Найти приглашения' : 'Подтвердить номер'}</Button>
-                  <small className="guest-discovery-hint">Вы организатор? Попросите администратора ресторана добавить ваш номер{session.phoneVerified ? '' : ' и подтвердите его здесь'} — появится кнопка «Создать банкет».</small>
+                  <small className="guest-discovery-hint">Вы организатор? Попросите администратора ресторана выдать вам роль «Организатор» в разделе «Пользователи». Кнопка «Создать банкет» появится здесь сама, перезапускать приложение не нужно.</small>
                 </div>
               )}
               <div className="stats-row">
@@ -1519,6 +1541,7 @@ function App() {
           </button>
         </nav>
       </div>
+      <ConfirmHost />
       {toast && (
         <div className="toast" role="status">
           <CheckCircle2 size={18} />
@@ -1884,7 +1907,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
         <div>
           <h2>{locked ? "Ваш выбор" : "Что вам приготовить?"}</h2>
           <p className="muted">
-            {!canSelect ? 'Просмотр меню. Для выбора блюд войдите как приглашённый гость и подтвердите номер MAX.' : locked
+            {!canSelect ? 'Просмотр меню. Для выбора блюд войдите как приглашённый гость и подтвердите номер MAX.' : !guestView && !locked ? 'Вы тоже можете выбрать блюда для себя — они войдут в общий заказ.' : locked
               ? "Сбор завершён. Ваши блюда сохранены в заказе."
               : budgeted
                 ? "Выберите блюда и напитки в пределах бюджета. Еда стоит кусочки пирога 🥧, напитки — бутылочки 🍾. Это две отдельные валюты."
@@ -2038,6 +2061,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
   const setSharedQty = (id, quantity) => { setShared(value => ({ ...value, [id]: quantity })); setSharedDirty(true); };
   return (
     <div className="admin-layout">
+      {!active && <div className="alert">Заказ утверждён: параметры, гости и меню больше не меняются.</div>}
       <section className="panel admin-panel">
         <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет на одного гостя.</p></div></div>
         <form onSubmit={event => {
@@ -2071,7 +2095,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
         <div className="admin-guest-list">
           {detail.invitedGuests?.length ? detail.invitedGuests.map(guest => <div className="admin-guest" key={guest.id}>
             <div><strong>{guest.name}</strong><small>+{guest.phone} · {guest.submitted ? 'Выбор сохранён' : guest.joined ? 'Номер подтверждён' : 'Ожидает входа'}</small></div>
-            {active && <div className="admin-actions"><button type="button" onClick={() => setEditing({ ...guest, phone: `+${guest.phone}` })}>Изменить</button><button type="button" disabled={busy || guest.submitted} onClick={() => { if (window.confirm(`Удалить ${guest.name} из списка?`)) deleteGuest(guest.id); }}>Удалить</button></div>}
+            {active && <div className="admin-actions"><button type="button" onClick={() => setEditing({ ...guest, phone: `+${guest.phone}` })}>Изменить</button><button type="button" disabled={busy || guest.submitted} onClick={async () => { if (await ask(`Удалить ${guest.name} из списка гостей?`, { confirmLabel: 'Удалить' })) deleteGuest(guest.id); }}>Удалить</button></div>}
           </div>) : <p className="muted">Добавьте гостей перед отправкой приглашения. Один номер соответствует одному гостю.</p>}
         </div>
       </section>
@@ -2085,7 +2109,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
         <div className="shared-summary">
           <div>
             <strong>Общий стол</strong>
-            <small>{Object.values(shared).filter(Boolean).length} позиций · {money(sharedTotal)} · не входит в бюджет гостей</small>
+            <small>{positions(Object.values(shared).filter(Boolean).length)} · {money(sharedTotal)} · не входит в бюджет гостей</small>
           </div>
           {active && sharedDirty && <>
             <Button type="button" variant="secondary" disabled={busy} onClick={() => { setShared(toDraft()); setSharedDirty(false); }}>Отменить</Button>
@@ -2112,7 +2136,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, del
                   <button type="button" aria-label={`Больше «${item.name}» на общий стол`} disabled={!active || !item.available || orderedIds.has(item.id)} onClick={() => setSharedQty(item.id, (shared[item.id] || 0) + 1)}><Plus size={14} /></button>
                 </div>
               </div>
-              {active && <button type="button" className="text-button" disabled={busy || onShared || orderedIds.has(item.id)} onClick={() => { if (window.confirm(`Убрать «${item.name}» из меню банкета?`)) deleteDish(item.id); }}>Убрать из меню</button>}
+              {active && <button type="button" className="text-button" disabled={busy || onShared || orderedIds.has(item.id)} onClick={async () => { if (await ask(`Убрать «${item.name}» из меню банкета?`, { confirmLabel: 'Убрать' })) deleteDish(item.id); }}>Убрать из меню</button>}
             </div>
           </div>;
         })}</div>
@@ -2248,6 +2272,7 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
         Задайте детали вечера. Меню выбранного ресторана будет доступно каждому
         гостю.
       </p>
+      {!restaurants.length && <div className="alert">Нет ресторанов, где у вас есть доступ организатора. Попросите администратора ресторана выдать его.</div>}
       <form
         onSubmit={(e) => {
           e.preventDefault();
