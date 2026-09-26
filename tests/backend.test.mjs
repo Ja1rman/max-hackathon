@@ -168,7 +168,7 @@ test('SQLite persists sessions and orders after server restart', async t => {
   const session = first.store.loginMax({ id: '100', name: 'Persistent Owner' });
   const user = first.store.authenticate(session.token);
   const restaurant = first.store.restaurants(user)[0];
-  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, budget: 100000 });
+  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, guestBudget: 1000000 });
   first.store.bindPhone(user, '79990000001');
   first.store.addInvite(user, event.id, { name: 'Persistent Owner', phone: '79990000001' });
   const bound = first.store.authenticate(session.token);

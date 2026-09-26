@@ -1,6 +1,6 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.2.0
+version: 1.3.0
 sources:
 - server/store.mjs
 - server/auth.mjs
@@ -12,14 +12,15 @@ api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 5
+  user_version: 6
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
     busy_timeout: 5000
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
     DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
-    ('{"tables":[]}'). Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
+    (старый бюджет был общим на банкет). Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -83,7 +84,8 @@ tables:
       date: TEXT NOT NULL (ISO-8601 UTC)
       deadline: TEXT NOT NULL (ISO-8601 UTC)
       expected_guests: INTEGER NOT NULL
-      budget: INTEGER NOT NULL (kopecks)
+      budget: INTEGER NOT NULL (kopecks, плановый итог = guest_budget × expected_guests)
+      guest_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя, 0 — без лимита)
       status: TEXT NOT NULL DEFAULT 'collecting'
       invite_code: TEXT UNIQUE NOT NULL
       created_at: TEXT NOT NULL (ISO-8601 UTC)
@@ -189,6 +191,18 @@ tables:
       - user_id
       - kind
     purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  shared_items:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      menu_item_id: TEXT NOT NULL
+      quantity: INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 1000)
+      price: INTEGER NOT NULL CHECK(price >= 0) (kopecks, снимок цены)
+      name: TEXT NOT NULL
+    primary_key:
+    - event_id
+    - menu_item_id
+    purpose: Блюда и закуски на общий стол, выбранные организатором. Входят в total и
+      сводку кухни, не входят в бюджет гостя; гости не могут заказать их сами.
   seat_assignments:
     columns:
       event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
@@ -247,7 +261,8 @@ authorization:
     чтение —404.
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
-  manager_detail: 'owner или restaurant: все гости, summary, budget, inviteCode, invite
+  kitchen: 'GET /api/kitchen только restaurant: банкеты scope с date >= вчера.'
+  manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
   create_event: organizer или restaurant.
   live_guest: Подтверждённый MAX номер должен совпадать со списком guest_invites;

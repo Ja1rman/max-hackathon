@@ -2664,3 +2664,42 @@ main {
   .my-seat .btn { width: 100%; justify-content: center; }
   .seating-scroll { max-height: 60vh; }
 }
+
+/* Budget, shared table, event menu */
+.budget-meter { display: grid; gap: 8px; padding: 14px 16px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.budget-meter-top, .budget-meter-bottom { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; font-size: 11px; color: var(--muted); }
+.budget-meter-top strong { font-size: 14px; color: var(--ink); }
+.budget-meter-bottom strong { color: var(--green); }
+.budget-meter.over .progress-track span { background: var(--red); }
+.budget-meter.over .budget-meter-bottom strong { color: var(--red); }
+.shared-table { margin-bottom: 20px; padding: 16px; border-radius: 10px; background: var(--soft); }
+.shared-table h3 { margin: 0 0 4px; font-size: 14px; }
+.shared-table > .muted { margin: 0 0 12px; }
+.shared-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.shared-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: #fff; }
+.shared-item > div { flex: 1; min-width: 0; }
+.shared-item strong { display: block; font-size: 12px; }
+.shared-item small { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
+.shared-emoji { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 8px; background: #f6f8f3; font-size: 20px; overflow: hidden; flex: none; }
+.shared-emoji img { width: 100%; height: 100%; object-fit: cover; }
+.shared-qty { font-size: 12px; font-weight: 750; color: var(--green); }
+.unit-total { line-height: 1.35; }
+.ingredients { display: block; font-size: 9px; color: #7d8a74; margin: 4px 0; line-height: 1.5; }
+.shared-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 16px; border-radius: 10px; background: var(--soft); }
+.shared-summary > div { flex: 1 1 200px; }
+.shared-summary strong { display: block; font-size: 12px; color: var(--green); }
+.shared-summary small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
+.event-dish { display: grid; gap: 8px; align-content: start; }
+.event-dish.hidden-dish .dish-card { opacity: 0.5; }
+.event-dish-controls { display: grid; gap: 8px; padding: 10px; border-radius: 8px; background: #f6f8f3; }
+.admin-panel .event-dish-controls label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.admin-panel .event-dish-controls input[type="checkbox"] { width: auto; }
+.shared-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; font-weight: 600; color: #647856; }
+.shared-control .stepper { min-width: 120px; }
+.event-dish-controls .text-button { margin: 0; justify-self: start; }
+.import-list { display: grid; gap: 4px; max-height: 50vh; overflow: auto; margin: 12px 0; }
+.import-list label.check { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; }
+.import-list input { width: auto; }
+.import-list small { color: var(--muted); font-size: 10px; }
+.kitchen-board { display: grid; gap: 18px; }
+.kitchen-board .section-head h2 { margin: 8px 0 4px; }
