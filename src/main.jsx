@@ -31,6 +31,9 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
+import { SEATING_TEMPLATES, generateLayout } from '../shared/seating.mjs';
+import { UNIT_RATES, formatUnits, spentByUnit, unitNumber, unitOf } from '../shared/currency.mjs';
+import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -51,7 +54,7 @@ const dateText = (value, time = false) =>
 const roleNames = {
   organizer: "Организатор",
   guest: "Гость",
-  restaurant: "Ресторан",
+  restaurant: "Администратор",
 };
 let authToken = sessionStorage.getItem("banquet-token") || "";
 async function api(path, options = {}) {
@@ -183,7 +186,8 @@ function App() {
     [screen, setScreen] = useState("events"),
     [selected, setSelected] = useState(null),
     [detail, setDetail] = useState(null),
-    [tab, setTab] = useState("guests");
+    [tab, setTab] = useState("guests"),
+    [board, setBoard] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
@@ -277,6 +281,11 @@ function App() {
   useEffect(() => {
     if (session) refresh().catch((e) => setError(e.message));
   }, [session, refresh]);
+  useEffect(() => {
+    if (screen !== "kitchen" || !session) return;
+    setBoard(null);
+    api("/kitchen").then(setBoard).catch((e) => setError(e.message));
+  }, [screen, session]);
   const loadDetail = useCallback(async (id) => {
     const d = await api(`/events/${id}`);
     setDetail(d);
@@ -546,7 +555,8 @@ function App() {
   const role = session.role,
     guestFirst = !session.demo && role === 'organizer' && !events.some(event => event.isOwner),
     canManage = Boolean(detail?.event.isOwner) || role === "restaurant",
-    displayTab = detail && !canManage ? "menu" : tab,
+    seatingOn = Boolean(detail && detail.seating?.mode !== "off"),
+    displayTab = detail && !canManage ? (tab === "seat" && seatingOn ? "seat" : "menu") : tab,
     activeEvents = events.filter((e) => e.status === "collecting"),
     approvedEvents = events.filter((e) => e.status === "approved");
   const filtered = events.filter(
@@ -579,6 +589,18 @@ function App() {
             >
               <Utensils size={19} />
               {role === "restaurant" ? "Меню ресторана" : "Меню ресторанов"}
+            </button>
+          )}
+          {role === "restaurant" && (
+            <button
+              className={screen === "kitchen" ? "active" : ""}
+              onClick={() => {
+                setScreen("kitchen");
+                setSelected(null);
+              }}
+            >
+              <ChefHat size={19} />
+              Кухня
             </button>
           )}
           <button onClick={() => setHelpOpen(true)}>
@@ -627,7 +649,7 @@ function App() {
           <div className="breadcrumb desktop-only">
             Моё пространство <ChevronRight size={14} />
             <span>
-              {selected ? "Банкет" : screen === "catalog" ? "Меню" : "Банкеты"}
+              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : "Банкеты"}
             </span>
           </div>
           <div className="topbar-right">
@@ -689,7 +711,16 @@ function App() {
               </Button>
             </div>
           )}
-          {screen === "catalog" ? (
+          {screen === "kitchen" && !selected ? (
+            <>
+              <div className="page-heading">
+                <div className="eyebrow">ВСЁ ДЛЯ ПОДГОТОВКИ</div>
+                <h1>Кухня</h1>
+                <p>Порции по каждому запланированному банкету, общий стол, пожелания и места гостей.</p>
+              </div>
+              <KitchenBoard board={board} open={(id) => { openEvent(id); setTab("kitchen"); }} />
+            </>
+          ) : screen === "catalog" ? (
             <>
               <div className="page-heading">
                 <div className="eyebrow">ПОДОБРАНО СО ВКУСОМ</div>
@@ -787,16 +818,25 @@ function App() {
                       value={`${detail.event.responded} из ${detail.event.expectedGuests}`}
                       detail="гостей за вашим столом"
                     />
-                    <Stat
-                      icon={Wallet}
-                      label="Сумма заказа"
-                      value={money(detail.event.total)}
-                      detail={
-                        detail.event.budget
-                          ? `Бюджет: ${money(detail.event.budget)}`
-                          : "По выбору гостей"
-                      }
-                    />
+                    {canManage ? (
+                      <Stat
+                        icon={Wallet}
+                        label="Сумма заказа"
+                        value={money(detail.event.total)}
+                        detail={
+                          detail.event.guestBudget
+                            ? `Бюджет на гостя: ${money(detail.event.guestBudget)}`
+                            : "По выбору гостей"
+                        }
+                      />
+                    ) : (
+                      <Stat
+                        icon={Wallet}
+                        label="Ваш бюджет"
+                        value={detail.event.guestBudget ? `${unitNumber(detail.event.guestBudget / UNIT_RATES.pie)} 🥧` : "Без ограничений"}
+                        detail={detail.event.guestBudget ? `или ${formatUnits(detail.event.guestBudget, "bottle")} 🍾` : "Выбирайте по вкусу"}
+                      />
+                    )}
                     <Stat
                       icon={Clock3}
                       label="Собираем до"
@@ -839,12 +879,25 @@ function App() {
                         {!canManage ? "Выбрать блюда" : "Мой выбор"}
                       </button>
                     )}
+                    {!canManage && seatingOn && (
+                      <button
+                        className={displayTab === "seat" ? "active" : ""}
+                        onClick={() => setTab("seat")}
+                      >
+                        Место {detail.seating.mySeat && <span>✓</span>}
+                      </button>
+                    )}
                     {canManage && (
                       <button
                         className={displayTab === "kitchen" ? "active" : ""}
                         onClick={() => setTab("kitchen")}
                       >
                         Заказ для кухни
+                      </button>
+                    )}
+                    {canManage && (
+                      <button className={displayTab === "seating" ? "active" : ""} onClick={() => setTab("seating")}>
+                        Рассадка
                       </button>
                     )}
                     {canManage && (
@@ -859,6 +912,7 @@ function App() {
                       detail={detail}
                       busy={busy}
                       canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
+                      guestView={!canManage}
                       save={(values) =>
                         perform(async () => {
                           await api(`/events/${selected}/selection`, {
@@ -867,9 +921,36 @@ function App() {
                           });
                           await loadDetail(selected);
                           await refresh();
-                          notify("Ваш выбор сохранён");
+                          notify(canManage ? "Ваш выбор сохранён" : "Заказ отправлен организатору на согласование");
                         })
                       }
+                    />
+                  ) : displayTab === "seat" ? (
+                    <SeatPicker
+                      detail={detail}
+                      busy={busy}
+                      canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
+                      choose={(seatId) =>
+                        perform(async () => {
+                          await api(`/events/${selected}/seat`, { method: "PUT", body: { seatId } });
+                          await loadDetail(selected);
+                          notify(seatId ? "Место закреплено за вами" : "Место освобождено");
+                        })
+                      }
+                    />
+                  ) : displayTab === "seating" ? (
+                    <SeatingAdmin
+                      key={selected}
+                      detail={detail}
+                      busy={busy}
+                      notify={notify}
+                      save={(values) => updateAdmin(() => api(`/events/${selected}/seating`, { method: "PUT", body: values }), "Рассадка сохранена")}
+                      assign={(guest, seatId) => updateAdmin(() => api(`/events/${selected}/seating/assignments`, { method: "PUT", body: { guest, seatId } }), seatId ? "Место назначено" : "Гость снят с места")}
+                      autoSeat={() => perform(async () => {
+                        const result = await api(`/events/${selected}/seating/auto`, { method: "POST", body: {} });
+                        await loadDetail(selected);
+                        return result;
+                      })}
                     />
                   ) : displayTab === "guests" ? (
                     <div className="detail-columns">
@@ -893,6 +974,7 @@ function App() {
                                 </div>
                                 <div className="guest-info">
                                   <strong>{g.name}</strong>
+                                  {g.seat && <span className="guest-seat">{g.seat}</span>}
                                   <small>
                                     {g.submitted
                                       ? g.items
@@ -949,6 +1031,12 @@ function App() {
                           <span>Итого</span>
                           <strong>{money(detail.event.total)}</strong>
                         </div>
+                        {detail.event.guestBudget > 0 && (
+                          <div className="order-line">
+                            <span>Бюджет {detail.event.guestBudget ? `${money(detail.event.guestBudget)} × ${detail.event.expectedGuests}` : ""}</span>
+                            <strong>{money(detail.event.budget)}</strong>
+                          </div>
+                        )}
                         {detail.event.budget > 0 &&
                           detail.event.total > detail.event.budget && (
                             <p className="budget-warning">
@@ -986,7 +1074,11 @@ function App() {
                   ) : displayTab === 'admin' ? (
                     <EventAdmin
                       detail={detail}
+                      catalog={restaurants.find((r) => r.id === detail.event.restaurantId)}
                       busy={busy}
+                      setForGuests={(item, forGuests) => updateAdmin(() => api(`/events/${selected}/menu/${item.id}`, { method: 'PATCH', body: { forGuests } }), forGuests ? 'Позиция доступна гостям' : 'Позиция скрыта от гостей')}
+                      saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Общий стол сохранён')}
+                      importItems={itemIds => updateAdmin(() => api(`/events/${selected}/menu/import`, { method: 'POST', body: { itemIds } }), 'Позиции добавлены в меню банкета')}
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
                       addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
@@ -1039,6 +1131,11 @@ function App() {
                           <strong>{money(detail.event.total)}</strong>
                         </div>
                       </div>
+                      {detail.shared?.length > 0 && (
+                        <p className="muted">
+                          Из них на общий стол: {detail.shared.map((s) => `${s.name} × ${s.quantity}`).join(", ")}
+                        </p>
+                      )}
                       <h3>Пожелания гостей</h3>
                       {detail.guests?.filter((g) => g.notes).length ? (
                         detail.guests
@@ -1053,6 +1150,7 @@ function App() {
                       ) : (
                         <p className="muted">Особых пожеланий пока нет.</p>
                       )}
+                      {seatingOn && <SeatingOverview seating={detail.seating} />}
                     </section>
                   )}
                 </>
@@ -1169,6 +1267,12 @@ function App() {
                         <Utensils size={14} />
                         {event.restaurantName}
                       </p>
+                      {role === "restaurant" && event.ownerName && (
+                        <p>
+                          <Users size={14} />
+                          Организатор: {event.ownerName}
+                        </p>
+                      )}
                       <div className="event-progress">
                         <div>
                           <span>
@@ -1194,9 +1298,15 @@ function App() {
                         </div>
                       </div>
                       <div className="event-footer">
-                        <span>
-                          Сумма заказа<strong>{money(event.total)}</strong>
-                        </span>
+                        {event.isOwner || role === "restaurant" ? (
+                          <span>
+                            Сумма заказа<strong>{money(event.total)}</strong>
+                          </span>
+                        ) : (
+                          <span>
+                            Ваш бюджет<strong>{event.guestBudget ? `${unitNumber(event.guestBudget / UNIT_RATES.pie)} 🥧` : "Без ограничений"}</strong>
+                          </span>
+                        )}
                         <span className="round-arrow">
                           <ArrowUpRight size={20} />
                         </span>
@@ -1276,6 +1386,17 @@ function App() {
               Меню
             </button>
           )}
+          {role === "restaurant" && (
+            <button
+              onClick={() => {
+                setScreen("kitchen");
+                setSelected(null);
+              }}
+            >
+              <ChefHat size={19} />
+              Кухня
+            </button>
+          )}
           <button onClick={() => setHelpOpen(true)}>
             <CircleHelp size={19} />
             Помощь
@@ -1293,9 +1414,12 @@ function App() {
           restaurants={restaurants}
           busy={busy}
           onClose={() => setCreateOpen(false)}
-          submit={(body) =>
+          submit={({ seating, ...body }) =>
             perform(async () => {
               const e = await api("/events", { method: "POST", body });
+              if (seating.mode !== "off") {
+                await api(`/events/${e.id}/seating`, { method: "PUT", body: { mode: seating.mode, layout: generateLayout(seating.template, body.expectedGuests) } });
+              }
               await refresh();
               setCreateOpen(false);
               openEvent(e.id || e.event?.id);
@@ -1319,6 +1443,11 @@ function App() {
                 detail.event.expectedGuests - detail.event.responded,
               )}{" "}
               гостей не выбрали блюда. Их выбор не войдёт в этот заказ.
+            </div>
+          )}
+          {detail.seating?.mode !== "off" && detail.seating?.people?.some((p) => !p.seatId) && (
+            <div className="alert">
+              Гостей без места: {detail.seating.people.filter((p) => !p.seatId).length}. При утверждении они будут рассажены автоматически на свободные места.
             </div>
           )}
           <div className="modal-actions">
@@ -1423,7 +1552,7 @@ function Stat({ icon: Icon, label, value, detail }) {
     </div>
   );
 }
-function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
+function DishCard({ item, quantity = 0, onChange, admin, edit, locked, priceLabel, canAdd = true }) {
   return (
     <article className={`dish-card ${!item.available ? "unavailable" : ""}`}>
       <div className={`dish-visual category-${item.category?.length % 4}`}>
@@ -1442,6 +1571,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
         <h3>{item.name}</h3>
         {item.labels?.length > 0 && <div className="dish-labels">{item.labels.map(label => <span key={label} className={`dish-label ${label === 'Халяль' ? 'halal' : label === 'Много белка' ? 'protein' : 'light'}`}>{label}</span>)}</div>}
         <p>{item.description}</p>
+        {item.ingredients && <small className="ingredients">Состав: {item.ingredients}</small>}
         {item.nutrition && <small className="nutrition">На порцию: {item.nutrition.kcal} ккал · Б {item.nutrition.protein} г · Ж {item.nutrition.fat} г · У {item.nutrition.carbs} г</small>}
         {item.allergens?.length > 0 && (
           <small className="allergens">
@@ -1449,7 +1579,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
           </small>
         )}
         <div className="dish-bottom">
-          <strong>{money(item.price)}</strong>
+          <strong>{priceLabel || money(item.price)}</strong>
           {admin ? (
             <button
               className="icon-btn"
@@ -1469,7 +1599,7 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
               </button>
               <span>{quantity}</span>
               <button
-                disabled={locked || quantity >= 10 || !item.available}
+                disabled={locked || quantity >= 10 || !item.available || !canAdd}
                 aria-label={`Добавить ${item.name}`}
                 onClick={() => onChange(quantity + 1)}
               >
@@ -1483,7 +1613,34 @@ function DishCard({ item, quantity = 0, onChange, admin, edit, locked }) {
     </article>
   );
 }
-function GuestMenu({ detail, busy, save, canSelect }) {
+function BudgetMeter({ budget, total, spent, guestView }) {
+  const remaining = budget - total;
+  const percent = Math.min(100, Math.round((total / budget) * 100));
+  return (
+    <div className={`budget-meter ${remaining < 0 ? "over" : ""}`}>
+      <div className="budget-meter-top">
+        <span>Ваш бюджет</span>
+        <strong>{guestView ? `${unitNumber(budget / UNIT_RATES.pie)} 🥧 или ${unitNumber(budget / UNIT_RATES.bottle)} 🍾` : money(budget)}</strong>
+      </div>
+      <div className="progress-track"><span style={{ width: `${percent}%` }} /></div>
+      <div className="budget-meter-bottom">
+        {guestView ? (
+          <span>Потрачено: {formatUnits(spent.pie, "pie")} · {formatUnits(spent.bottle, "bottle")}</span>
+        ) : (
+          <span>Потрачено: {money(total)}</span>
+        )}
+        <strong>
+          {remaining < 0
+            ? "Бюджет превышен"
+            : guestView
+              ? `Осталось ${unitNumber(remaining / UNIT_RATES.pie)} 🥧 или ${unitNumber(remaining / UNIT_RATES.bottle)} 🍾`
+              : `Осталось ${money(remaining)}`}
+        </strong>
+      </div>
+    </div>
+  );
+}
+function GuestMenu({ detail, busy, save, canSelect, guestView }) {
   const selection = detail.selection;
   const [items, setItems] = useState(() =>
       Object.fromEntries(
@@ -1497,15 +1654,23 @@ function GuestMenu({ detail, busy, save, canSelect }) {
   const locked =
     detail.event.status === "approved" ||
     new Date(detail.event.deadline).getTime() < Date.now() || !canSelect;
+  const shared = detail.shared || [];
+  const sharedIds = new Set(shared.map((s) => s.menuItemId));
+  const selectable = detail.menu.filter((i) => i.forGuests !== false && !sharedIds.has(i.id));
   const categories = [
     "Все блюда",
-    ...new Set(detail.menu.map((i) => i.category)),
+    ...new Set(selectable.map((i) => i.category)),
   ];
-  const total = detail.menu.reduce(
-      (n, i) => n + i.price * (items[i.id] || 0),
-      0,
-    ),
-    count = Object.values(items).reduce((a, b) => a + b, 0);
+  const chosen = selectable
+      .filter((i) => items[i.id] > 0)
+      .map((i) => ({ ...i, quantity: items[i.id] })),
+    total = chosen.reduce((n, i) => n + i.price * i.quantity, 0),
+    count = chosen.reduce((n, i) => n + i.quantity, 0),
+    spent = spentByUnit(chosen),
+    budget = detail.event.guestBudget || 0,
+    remaining = budget - total,
+    over = budget > 0 && remaining < 0;
+  const price = (item) => (guestView ? formatUnits(item.price, unitOf(item)) : money(item.price));
   useEffect(() => {
     const fn = (e) => {
       if (dirty) {
@@ -1529,7 +1694,9 @@ function GuestMenu({ detail, busy, save, canSelect }) {
           <p className="muted">
             {!canSelect ? 'Просмотр меню. Для выбора блюд войдите как приглашённый гость и подтвердите номер MAX.' : locked
               ? "Сбор завершён. Ваши блюда сохранены в заказе."
-              : "Выберите блюда и укажите пожелания. До утверждения заказ можно изменить."}
+              : budget
+                ? "Выберите блюда и напитки в пределах бюджета. Еда стоит кусочки пирога 🥧, напитки — бутылочки 🍾."
+                : "Выберите блюда и укажите пожелания. До утверждения заказ можно изменить."}
           </p>
         </div>
         <label className="vegetarian-filter">
@@ -1542,6 +1709,28 @@ function GuestMenu({ detail, busy, save, canSelect }) {
           Без мяса
         </label>
       </div>
+      {budget > 0 && <BudgetMeter budget={budget} total={total} spent={spent} guestView={guestView} />}
+      {shared.length > 0 && (
+        <section className="shared-table">
+          <h3>Уже на общем столе</h3>
+          <p className="muted">Эти блюда организатор заказал для всех. Добавлять их в свой заказ не нужно.</p>
+          <div className="shared-list">
+            {shared.map((s) => {
+              const item = detail.menu.find((m) => m.id === s.menuItemId);
+              return (
+                <div key={s.menuItemId} className="shared-item">
+                  <span className="shared-emoji">{item?.photoUrl ? <img src={`${BASE}${item.photoUrl}`} alt="" loading="lazy" /> : item?.emoji || "🍽️"}</span>
+                  <div>
+                    <strong>{s.name}</strong>
+                    <small>{item?.category}{item?.weight ? ` · ${item.weight}` : ""}</small>
+                  </div>
+                  <span className="shared-qty">× {s.quantity}</span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
       <div className="category-tabs">
         {categories.map((c) => (
           <button
@@ -1554,7 +1743,7 @@ function GuestMenu({ detail, busy, save, canSelect }) {
         ))}
       </div>
       <div className="menu-grid">
-        {detail.menu
+        {selectable
           .filter(
             (i) =>
               (category === "Все блюда" || i.category === category) &&
@@ -1565,6 +1754,8 @@ function GuestMenu({ detail, busy, save, canSelect }) {
               key={i.id}
               item={i}
               locked={locked}
+              priceLabel={price(i)}
+              canAdd={!budget || i.price <= remaining}
               quantity={items[i.id] || 0}
               onChange={(q) => {
                 setItems((v) => ({ ...v, [i.id]: q }));
@@ -1593,13 +1784,21 @@ function GuestMenu({ detail, busy, save, canSelect }) {
         </label>
         <div className="selection-total">
           <span>Ваш выбор · {count} порций</span>
-          <strong>{money(total)}</strong>
+          {guestView ? (
+            <strong className="unit-total">
+              {formatUnits(spent.pie, "pie")}
+              <br />
+              {formatUnits(spent.bottle, "bottle")}
+            </strong>
+          ) : (
+            <strong>{money(total)}</strong>
+          )}
           <Button
-            disabled={busy || locked || count === 0}
+            disabled={busy || locked || count === 0 || over}
             onClick={async () => {
               const result = await save({
                 items: Object.entries(items)
-                  .filter(([, q]) => q > 0)
+                  .filter(([id, q]) => q > 0 && selectable.some((i) => i.id === id))
                   .map(([menuItemId, quantity]) => ({ menuItemId, quantity })),
                 notes,
               });
@@ -1614,40 +1813,56 @@ function GuestMenu({ detail, busy, save, canSelect }) {
             {locked
               ? "Выбор зафиксирован"
               : selection?.submitted
-                ? "Обновить выбор"
-                : "Сохранить выбор"}
+                ? "Обновить заказ"
+                : "Отправить организатору"}
           </Button>
-          {dirty ? (
+          {over ? (
+            <small className="budget-warning">Выбор превышает бюджет — уберите что-нибудь</small>
+          ) : dirty ? (
             <small>Есть несохранённые изменения</small>
+          ) : detail.event.status === "approved" && selection?.submitted ? (
+            <small className="green">Организатор согласовал заказ</small>
           ) : selection?.submitted ? (
-            <small className="green">Ваш выбор сохранён</small>
+            <small className="green">Отправлено организатору на согласование</small>
           ) : null}
         </div>
       </div>
     </>
   );
 }
-function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest, editDish, deleteDish }) {
+function EventAdmin({ detail, catalog, busy, saveEvent, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [editing, setEditing] = useState(null);
+  const [importing, setImporting] = useState(null);
+  const serverShared = JSON.stringify(detail.shared || []);
+  const toDraft = () => Object.fromEntries((detail.shared || []).map(s => [s.menuItemId, s.quantity]));
+  const [shared, setShared] = useState(toDraft);
+  const [sharedDirty, setSharedDirty] = useState(false);
+  useEffect(() => { if (!sharedDirty) setShared(toDraft()); }, [serverShared]);
   const active = detail.event.status === 'collecting';
+  const inMenu = new Set(detail.menu.map(item => item.id));
+  const missing = (catalog?.menu || []).filter(item => item.available && !inMenu.has(item.id));
+  const orderedIds = new Set(detail.guests.flatMap(guest => guest.items.map(item => item.menuItemId)));
+  const sharedTotal = detail.menu.reduce((sum, item) => sum + item.price * (shared[item.id] || 0), 0);
+  const setSharedQty = (id, quantity) => { setShared(value => ({ ...value, [id]: quantity })); setSharedDirty(true); };
   return (
     <div className="admin-layout">
       <section className="panel admin-panel">
-        <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет.</p></div></div>
+        <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет на одного гостя.</p></div></div>
         <form onSubmit={event => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), budget: Math.round(Number(form.get('budget') || 0) * 100) });
+          saveEvent({ title: form.get('title'), date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), guestBudget: Math.round(Number(form.get('guestBudget') || 0) * 100) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <div className="form-grid">
             <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
             <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
-            <label>Бюджет, ₽<input type="number" name="budget" min="0" max="100000000" step="0.01" defaultValue={detail.event.budget / 100} disabled={!active} /></label>
+            <label>Бюджет на гостя, ₽<input type="number" name="guestBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.guestBudget / 100} disabled={!active} /></label>
           </div>
+          <small className="muted">Гость не сможет выбрать больше бюджета. Он увидит его во внутренней валюте: 1 кусочек пирога 🥧 = 10 ₽ (еда), 1 бутылочка 🍾 = 100 ₽ (напитки). 0 — без ограничения.</small>
           {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
         </form>
       </section>
@@ -1670,14 +1885,61 @@ function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest,
         </div>
       </section>
       <section className="panel admin-panel">
-        <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Изменения действуют только для этого мероприятия. Цена и название выбранного блюда фиксируются после ответа гостя.</p></div>
-          {active && <Button variant="secondary" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={16} /> Добавить позицию</Button>}
+        <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Отметьте, что могут выбрать гости, и что поставить на общий стол. Изменения действуют только для этого мероприятия.</p></div>
+          {active && <div className="admin-actions">
+            <button type="button" disabled={!missing.length} onClick={() => setImporting([])}><Plus size={15} /> Из каталога{missing.length ? ` (${missing.length})` : ''}</button>
+            <button type="button" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={15} /> Своя позиция</button>
+          </div>}
         </div>
-        <div className="menu-grid catalog">{detail.menu.map(item => <div key={item.id}>
-          <DishCard item={item} admin={active} edit={() => editDish(item)} />
-          {active && <button type="button" className="text-button" disabled={busy} onClick={() => { if (window.confirm(`Убрать «${item.name}» из меню банкета?`)) deleteDish(item.id); }}>Убрать из меню</button>}
-        </div>)}</div>
+        <div className="shared-summary">
+          <div>
+            <strong>Общий стол</strong>
+            <small>{Object.values(shared).filter(Boolean).length} позиций · {money(sharedTotal)} · не входит в бюджет гостей</small>
+          </div>
+          {active && sharedDirty && <>
+            <Button type="button" variant="secondary" disabled={busy} onClick={() => { setShared(toDraft()); setSharedDirty(false); }}>Отменить</Button>
+            <Button type="button" disabled={busy} onClick={async () => {
+              const result = await saveShared(Object.entries(shared).filter(([, quantity]) => quantity > 0).map(([menuItemId, quantity]) => ({ menuItemId, quantity })));
+              if (result !== null) setSharedDirty(false);
+            }}>Сохранить общий стол</Button>
+          </>}
+        </div>
+        <div className="menu-grid catalog">{detail.menu.map(item => {
+          const onShared = (shared[item.id] || 0) > 0;
+          return <div key={item.id} className={`event-dish ${item.forGuests === false && !onShared ? 'hidden-dish' : ''}`}>
+            <DishCard item={item} admin={active} edit={() => editDish(item)} />
+            <div className="event-dish-controls">
+              <label className="check">
+                <input type="checkbox" checked={item.forGuests !== false && !onShared} disabled={!active || busy || onShared || (item.forGuests !== false && orderedIds.has(item.id))} onChange={event => setForGuests(item, event.target.checked)} />
+                Гостям на выбор
+              </label>
+              <div className="shared-control">
+                <span>На общий стол</span>
+                <div className="stepper">
+                  <button type="button" aria-label={`Меньше «${item.name}» на общий стол`} disabled={!active || !onShared} onClick={() => setSharedQty(item.id, (shared[item.id] || 0) - 1)}><Minus size={14} /></button>
+                  <span>{shared[item.id] || 0}</span>
+                  <button type="button" aria-label={`Больше «${item.name}» на общий стол`} disabled={!active || !item.available || orderedIds.has(item.id)} onClick={() => setSharedQty(item.id, (shared[item.id] || 0) + 1)}><Plus size={14} /></button>
+                </div>
+              </div>
+              {active && <button type="button" className="text-button" disabled={busy || onShared || orderedIds.has(item.id)} onClick={() => { if (window.confirm(`Убрать «${item.name}» из меню банкета?`)) deleteDish(item.id); }}>Убрать из меню</button>}
+            </div>
+          </div>;
+        })}</div>
       </section>
+      {importing && <Modal title="Добавить из каталога" onClose={() => setImporting(null)}>
+        <p className="muted">Позиции общего меню ресторана, которых ещё нет в этом банкете.</p>
+        <div className="import-list">
+          {missing.map(item => <label key={item.id} className="check">
+            <input type="checkbox" checked={importing.includes(item.id)} onChange={event => setImporting(event.target.checked ? [...importing, item.id] : importing.filter(id => id !== item.id))} />
+            <span>{item.emoji || '🍽️'} {item.name}</span>
+            <small>{item.category} · {money(item.price)}</small>
+          </label>)}
+        </div>
+        <div className="modal-actions">
+          <Button type="button" variant="secondary" onClick={() => setImporting(null)}>Отмена</Button>
+          <Button type="button" disabled={busy || !importing.length} onClick={async () => { const result = await importItems(importing); if (result !== null) setImporting(null); }}>Добавить {importing.length || ''}</Button>
+        </div>
+      </Modal>}
       {editing && <Modal title="Данные гостя" onClose={() => setEditing(null)}>
         <form onSubmit={async event => {
           event.preventDefault();
@@ -1693,7 +1955,40 @@ function EventAdmin({ detail, busy, saveEvent, addGuest, editGuest, deleteGuest,
     </div>
   );
 }
+function KitchenBoard({ board, open }) {
+  if (!board) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем заказы…</div>;
+  if (!board.length) return <Empty title="Запланированных банкетов нет">Когда организатор создаст банкет, он появится здесь.</Empty>;
+  return (
+    <div className="kitchen-board">
+      {board.map(({ event, summary, shared, guests }) => (
+        <section className="panel kitchen" key={event.id}>
+          <div className="section-head">
+            <div>
+              <Tag approved={event.status === "approved"} />
+              <h2>{event.title}</h2>
+              <p className="muted">{dateText(event.date, true)} · Организатор: {event.ownerName || "—"} · ответили {event.responded} из {event.expectedGuests}</p>
+            </div>
+            <Button variant="secondary" onClick={() => open(event.id)}>Открыть</Button>
+          </div>
+          <div className="kitchen-table">
+            <div className="kitchen-row table-header"><span>Блюдо</span><span>Порции</span><span>Стоимость</span></div>
+            {summary.map(item => <div className="kitchen-row" key={item.menuItemId}><strong>{item.name}</strong><span>{item.quantity} шт.</span><strong>{money(item.total)}</strong></div>)}
+            <div className="kitchen-row table-total"><strong>Итого</strong><span>{summary.reduce((n, v) => n + v.quantity, 0)} шт.</span><strong>{money(event.total)}</strong></div>
+          </div>
+          {shared.length > 0 && <p className="muted">Из них на общий стол: {shared.map(item => `${item.name} × ${item.quantity}`).join(", ")}</p>}
+          {guests.some(guest => guest.notes || guest.seat) && <>
+            <h3>Гости</h3>
+            {guests.filter(guest => guest.notes || guest.seat).map((guest, index) => <div className="dietary-row" key={index}>
+              <Leaf size={16} /><strong>{guest.name}</strong><span>{[guest.seat, guest.notes].filter(Boolean).join(" · ")}</span>
+            </div>)}
+          </>}
+        </section>
+      ))}
+    </div>
+  );
+}
 function CreateEvent({ restaurants, busy, onClose, submit }) {
+  const [seatingMode, setSeatingMode] = useState("off");
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -1716,7 +2011,8 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             date: new Date(f.get("date")).toISOString(),
             deadline: new Date(f.get("deadline")).toISOString(),
             expectedGuests: Number(f.get("guests")),
-            budget: Math.round(Number(f.get("budget") || 0) * 100),
+            guestBudget: Math.round(Number(f.get("guestBudget") || 0) * 100),
+            seating: { mode: f.get("seatingMode"), template: f.get("seatingTemplate") },
           });
         }}
       >
@@ -1771,16 +2067,36 @@ function CreateEvent({ restaurants, busy, onClose, submit }) {
             />
           </label>
           <label>
-            Бюджет, ₽ <span className="optional">необязательно</span>
+            Бюджет на гостя, ₽ <span className="optional">необязательно</span>
             <input
               type="number"
-              name="budget"
+              name="guestBudget"
               min={0}
-              max={10000000}
+              max={1000000}
               step="1"
-              placeholder="Например, 40 000"
+              placeholder="Например, 3 000"
             />
           </label>
+        </div>
+        <div className="form-grid">
+          <label>
+            Рассадка
+            <select name="seatingMode" value={seatingMode} onChange={(e) => setSeatingMode(e.target.value)}>
+              {Object.entries(SEATING_MODE_NAMES).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </label>
+          {seatingMode !== "off" && (
+            <label>
+              Схема зала
+              <select name="seatingTemplate" defaultValue="rounds">
+                {SEATING_TEMPLATES.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="modal-actions">
           <Button variant="secondary" type="button" onClick={onClose}>
@@ -1814,6 +2130,7 @@ function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
           await submit({
             name: f.get("name"),
             description: f.get("description"),
+            ingredients: f.get("ingredients"),
             category: f.get("category"),
             price: Math.round(Number(f.get("price")) * 100),
             weight: f.get("weight"),
@@ -1846,6 +2163,15 @@ function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
             name="description"
             defaultValue={item.description}
             maxLength={500}
+          />
+        </label>
+        <label>
+          Состав
+          <textarea
+            name="ingredients"
+            defaultValue={item.ingredients}
+            maxLength={1000}
+            placeholder="Например: филе лосося, лимон, оливковое масло, соль"
           />
         </label>
         <label>Фото блюда или напитка (JPEG, PNG, WebP, до 3 МБ)
