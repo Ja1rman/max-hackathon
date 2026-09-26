@@ -84,6 +84,10 @@ export function createApp(options = {}) {
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://st.max.ru https://dev.max.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'self' https://*.max.ru https://max.ru; base-uri 'self'; form-action 'self'");
+    const sendFile = ({ body, contentType, fileName }, capability = false) => {
+      res.writeHead(200, { 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${fileName}"`, 'Cache-Control': capability ? 'private, no-store' : 'no-store', ...(capability ? { 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } : {}) });
+      res.end(body);
+    };
     const json = (value, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
     try {
       const url = new URL(req.url, 'http://localhost');
@@ -144,6 +148,7 @@ export function createApp(options = {}) {
         res.writeHead(200, { 'Content-Type': { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' }[extname(match[1]).slice(1)], 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' });
         return res.end(file);
       }
+      if ((match = path.match(/^\/api\/downloads\/kitchen\/([^/]+)$/)) && req.method === 'GET') return sendFile(store.consumeKitchenExportLink(match[1]), true);
       if ((match = path.match(/^\/api\/downloads\/([^/]+)$/)) && req.method === 'GET') {
         const csv = store.consumeExportLink(match[1]);
         res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="banquet-kitchen.csv"', 'Cache-Control': 'private, no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive' });
@@ -176,9 +181,12 @@ export function createApp(options = {}) {
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editEventMenu(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteEventMenu(user, match[1], match[2]));
       if (path === '/api/kitchen' && req.method === 'GET') return json(store.kitchen(user));
-      if (path === '/api/organizers' && req.method === 'GET') return json(store.organizers(user));
-      if (path === '/api/organizers' && req.method === 'POST') return json(store.addOrganizer(user, await readBody(req)), 201);
-      if ((match = path.match(/^\/api\/organizers\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteOrganizer(user, match[1]));
+      if (path === '/api/kitchen/export' && req.method === 'GET') return sendFile(store.kitchenExport(user, url.searchParams.get('format') || 'csv'));
+      if (path === '/api/kitchen/export-link' && req.method === 'POST') return json(store.createKitchenExportLink(user, (await readBody(req)).format));
+      if (path === '/api/users' && req.method === 'GET') return json(store.users(user, url.searchParams.get('q') || ''));
+      if (path === '/api/restaurants' && req.method === 'POST') return json(store.createRestaurant(user, await readBody(req)), 201);
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editRestaurant(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'PUT') return json(store.setMember(user, match[1], match[2], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/shared$/)) && req.method === 'PUT') return json(store.saveShared(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/import$/)) && req.method === 'POST') return json(store.importMenu(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/seating$/)) && req.method === 'PUT') return json(store.saveSeating(user, match[1], await readBody(req)));

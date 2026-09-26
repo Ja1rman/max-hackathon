@@ -1,6 +1,6 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.4.0
+version: 1.5.0
 sources:
 - server/store.mjs
 - server/auth.mjs
@@ -12,7 +12,7 @@ api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 7
+  user_version: 8
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -20,7 +20,7 @@ engine:
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
     DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
     ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
-    (старый бюджет был общим на банкет). Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -193,18 +193,24 @@ tables:
       - user_id
       - kind
     purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
-  organizers:
+  restaurant_members:
     columns:
-      id: TEXT PRIMARY KEY
-      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
-      name: TEXT NOT NULL
-      phone: TEXT NOT NULL (международный формат без плюса)
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      role: TEXT NOT NULL CHECK(role IN ('admin','organizer'))
       created_at: TEXT NOT NULL (ISO-8601 UTC)
-    unique:
-    - - scope
-      - phone
-    purpose: Организаторы, добавленные администратором. Live-пользователь с подтверждённым
-      номером из списка получает роль organizer; владелец уже созданного банкета тоже.
+    primary_key:
+    - restaurant_id
+    - user_id
+    purpose: Доступ пользователя к ресторану. Нет строки — обычный пользователь (гость).
+      Суперадминистраторы из RESTAURANT_ADMIN_IDS администрируют все рестораны без строк.
+  kitchen_download_tokens:
+    columns:
+      token_hash: TEXT PRIMARY KEY (SHA-256)
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      format: TEXT NOT NULL (csv | xlsx)
+      expires_at: INTEGER NOT NULL (Unix milliseconds, 60 секунд)
+    purpose: Одноразовые ссылки на выгрузку раздела «Кухня» для WebApp.downloadFile.
   shared_items:
     columns:
       event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
@@ -276,8 +282,9 @@ authorization:
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
   kitchen: 'GET /api/kitchen только restaurant: банкеты scope с date >= вчера.'
-  organizers: 'GET/POST /api/organizers, DELETE /api/organizers/{id}: только restaurant.'
-  roles: 'live: restaurant по RESTAURANT_ADMIN_IDS; organizer по подтверждённому телефону из organizers или при наличии своих банкетов (либо OPEN_ORGANIZER_SIGNUP=true); иначе guest.'
+  users: 'GET /api/users и PUT /api/restaurants/{id}/members/{userId}: администратор ресторана, только для своих ресторанов; суперадминистратора и себя изменить нельзя.'
+  restaurants: 'POST /api/restaurants — суперадминистратор; PATCH — администратор ресторана.'
+  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: restaurant, если admin где-либо; organizer, если organizer; иначе guest. Банкетом управляют владелец и admin его ресторана.'
   manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
   create_event: organizer или restaurant.
