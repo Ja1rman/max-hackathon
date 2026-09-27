@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture } from './helpers.mjs';
+import { fixture, futureMoscow } from './helpers.mjs';
 import { PETR_MENU, PETR_PACKAGES } from '../server/petr-menu.mjs';
-
-const future = days => new Date(Date.now() + days * 86400000).toISOString();
 
 test('a service administrator can delegate the global role by MAX ID, restaurant admins cannot', async t => {
   const f = await fixture(t, { openOrganizerSignup: false });
@@ -41,17 +39,17 @@ test('fixed banquet package needs no guest order; exports selected events with p
   const root = await f.login(900);
   const petr = (await f.request('/api/restaurants', { token: root.token })).data.find(restaurant => restaurant.name === 'Петръ');
   const offer = petr.packages[0];
-  const hot = offer.items.find(item => item.category === 'Горячее на выбор').name.split('/')[1].trim();
-  const event = await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Пакетный вечер', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: hot, date: future(14), deadline: future(10), expectedGuests: 2 } });
+  const hot = offer.items.filter(item => item.choiceGroup)[1];
+  const event = await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Пакетный вечер', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: hot.dishId, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 2 } });
   assert.equal(event.status, 201);
   assert.equal(event.data.total, offer.price * 2);
-  assert.equal(event.data.package.items.find(item => item.category === 'Горячее').name, hot);
-  assert.equal((await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Ошибка', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: 'Не из пакета', date: future(14), deadline: future(10), expectedGuests: 2 } })).status, 400);
+  assert.equal(event.data.package.items.find(item => item.category === 'Горячее').name, hot.name);
+  assert.equal((await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Ошибка', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: 'Не из пакета', date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 2 } })).status, 400);
   const guest = await f.login(200);
   await f.inviteGuest(root.token, event.data, guest.token, 200, '+79990000200');
   const detail = (await f.request(`/api/events/${event.data.id}`, { token: guest.token })).data;
   assert.equal(detail.canSelect, false);
-  assert.equal(detail.event.package.items.find(item => item.category === 'Горячее').name, hot);
+  assert.equal(detail.event.package.items.find(item => item.category === 'Горячее').name, hot.name);
   assert.equal((await f.request(`/api/events/${event.data.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: petr.menu[0].id, quantity: 1 }] } })).status, 409);
   const layout = { tables: [{ id: 't1', shape: 'round', label: 'Стол 1', x: 0, y: 0, w: 120, h: 120, rotation: 0, seats: 2 }] };
   assert.equal((await f.request(`/api/events/${event.data.id}/seating`, { token: root.token, method: 'PUT', body: { mode: 'choice', layout } })).status, 200);

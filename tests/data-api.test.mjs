@@ -16,7 +16,7 @@ test('DATA-API.yaml declares the required fields for every mandatory check', () 
     ids.add(check.id);
     assert.ok(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(check.method), check.id);
     assert.match(check.path, /^\//, check.id);
-    assert.ok(['anonymous', 'organizer', 'guest', 'restaurant'].includes(check.role), check.id);
+    assert.ok(['anonymous', 'organizer', 'guest', 'restaurant', 'admin'].includes(check.role), check.id);
     assert.ok(Array.isArray(check.expected_status) && check.expected_status.length, check.id);
     assert.ok(check.expected_response?.content_type, check.id);
   }

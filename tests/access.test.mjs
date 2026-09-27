@@ -6,92 +6,108 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../server/store.mjs';
-import { fixture, signedContact } from './helpers.mjs';
+import { fixture, futureMoscow, signedContact } from './helpers.mjs';
 
-const future = days => new Date(Date.now() + days * 86400000).toISOString();
-const banquet = restaurantId => ({ title: 'Корпоратив', restaurantId, date: future(14), deadline: future(10), expectedGuests: 5 });
+const banquet = restaurantId => ({ title: 'Корпоратив', restaurantId, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 5 });
 
-test('access is granted per restaurant: admin, organizer or nothing', async t => {
+test('banquet organizers have full rights only for assigned events; access list hides unrelated users', async t => {
   const f = await fixture(t, { openOrganizerSignup: false });
-  const root = await f.login(900, 'Суперадмин');
-  const olga = await f.login(300, 'Ольга');
-  const petr = await f.login(400, 'Пётр');
-  assert.equal(olga.user.role, 'guest');
-  assert.deepEqual(olga.user.access, []);
-  assert.equal(root.user.superAdmin, true);
-  const [first] = (await f.request('/api/restaurants', { token: root.token })).data;
-  assert.equal((await f.request('/api/restaurants', { token: olga.token, method: 'POST', body: { name: 'Чужой' } })).status, 403);
-  const second = await f.request('/api/restaurants', { token: root.token, method: 'POST', body: { name: 'Второй зал', address: 'Казань' } });
-  assert.equal(second.status, 201);
-  assert.equal(second.data.access, 'admin');
-  assert.deepEqual((await f.request('/api/restaurants', { token: olga.token })).data, []);
-  assert.equal((await f.request('/api/events', { token: olga.token, method: 'POST', body: banquet(first.id) })).status, 403);
-
-  const users = await f.request('/api/users', { token: root.token });
-  assert.deepEqual(users.data.map(user => user.name).sort(), ['Ольга Тестовая', 'Пётр Тестовая', 'Суперадмин Тестовая']);
-  assert.equal(users.data.find(user => user.isYou).superAdmin, true);
-  assert.equal((await f.request('/api/users?q=Ольга', { token: root.token })).data.length, 1);
-  assert.equal((await f.request('/api/users', { token: olga.token })).status, 403);
-
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/${olga.user.id}`, { token: root.token, method: 'PUT', body: { role: 'organizer' } })).status, 200);
-  assert.equal((await f.request(`/api/restaurants/${second.data.id}/members/${petr.user.id}`, { token: root.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
-  const me = (await f.request('/api/me', { token: olga.token })).data;
-  assert.equal(me.role, 'organizer');
-  assert.deepEqual(me.access.map(entry => [entry.restaurantName, entry.role]), [[first.name, 'organizer']]);
-  assert.equal((await f.request('/api/events', { token: olga.token, method: 'POST', body: banquet(second.data.id) })).status, 403, 'organizer only where granted');
-  const event = await f.request('/api/events', { token: olga.token, method: 'POST', body: banquet(first.id) });
-  assert.equal(event.status, 201);
-
-  // Пётр administers only the second restaurant: no access to the first one's banquets, menu or members.
-  assert.equal((await f.request('/api/me', { token: petr.token })).data.role, 'restaurant');
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: petr.token })).status, 404);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: petr.token, method: 'POST', body: { name: 'Суп', category: 'Супы', price: 1000, available: true, vegetarian: true, allergens: [], nutrition: { kcal: 1, protein: 0, fat: 0, carbs: 0 } } })).status, 403);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/${olga.user.id}`, { token: petr.token, method: 'PUT', body: { role: 'none' } })).status, 403);
-  assert.deepEqual(Object.keys((await f.request('/api/users', { token: petr.token })).data[0].roles), [second.data.id]);
-  assert.equal((await f.request(`/api/restaurants/${second.data.id}`, { token: petr.token, method: 'PATCH', body: { name: 'Второй зал у реки' } })).data.name, 'Второй зал у реки');
-  assert.equal((await f.request(`/api/restaurants/${second.data.id}/members/${petr.user.id}`, { token: petr.token, method: 'PUT', body: { role: 'none' } })).status, 409, 'no self-demotion');
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/${root.user.id}`, { token: root.token, method: 'PUT', body: { role: 'none' } })).status, 409, 'superadmin access is implicit');
-
-  const kitchen = await f.request('/api/kitchen', { token: root.token });
-  assert.equal(kitchen.data.length, 1);
-  assert.deepEqual((await f.request('/api/kitchen', { token: petr.token })).data, [], 'kitchen shows only administered restaurants');
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/${olga.user.id}`, { token: root.token, method: 'PUT', body: { role: 'none' } })).status, 200);
-  assert.equal((await f.request('/api/me', { token: olga.token })).data.role, 'guest');
-  assert.equal((await f.request(`/api/events/${event.data.id}`, { token: olga.token })).status, 200, 'the owner still sees their banquet');
+  const root = await f.login(900, 'Администратор');
+  const owner = await f.login(300, 'Ольга');
+  const delegate = await f.login(400, 'Пётр');
+  const outsider = await f.login(500, 'Чужой');
+  const restaurants = (await f.request('/api/restaurants', { token: owner.token })).data;
+  const first = restaurants[0];
+  assert.ok(restaurants.length >= 2);
+  const guestRestaurants = (await f.request('/api/restaurants', { token: outsider.token })).data;
+  assert.deepEqual(guestRestaurants.map(restaurant => restaurant.id), restaurants.map(restaurant => restaurant.id));
+  assert.ok(guestRestaurants.every(restaurant => restaurant.access === null));
+  assert.equal(first.access, null);
+  assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: owner.token, method: 'POST', body: {} })).status, 403);
+  assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: outsider.token, method: 'POST', body: {} })).status, 403);
+  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: banquet(first.id) });
+  assert.equal(created.status, 201);
+  const event = created.data;
+  assert.equal(event.canManage, true);
+  assert.equal((await f.request('/api/events', { token: delegate.token })).data.length, 0);
+  const before = (await f.request('/api/users', { token: root.token })).data;
+  assert.ok(before.some(user => user.id === owner.user.id));
+  assert.ok(!before.some(user => user.id === outsider.user.id));
+  assert.ok(!before.some(user => user.id === delegate.user.id));
+  assert.equal((await f.request(`/api/events/${event.id}/organizers/phone:+79990000400`, { token: owner.token, method: 'PUT', body: { enabled: true } })).status, 200);
+  const bound = await f.request('/api/me/phone', { token: delegate.token, method: 'PUT', body: signedContact(400, '+79990000400') });
+  assert.equal(bound.status, 200);
+  const delegated = (await f.request(`/api/events/${event.id}`, { token: delegate.token })).data;
+  assert.equal(delegated.event.canManage, true);
+  assert.equal(delegated.canSelect, true);
+  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: delegate.token, method: 'PUT', body: { items: [{ menuItemId: delegated.menu[0].id, quantity: 1 }] } })).status, 200);
+  assert.equal((await f.request('/api/kitchen', { token: delegate.token })).status, 403);
+  assert.equal((await f.request(`/api/events/${event.id}/organizers/max:500`, { token: delegate.token, method: 'PUT', body: { enabled: true } })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}/organizers`, { token: owner.token })).data.length, 3);
+  assert.equal((await f.request('/api/users', { token: delegate.token })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}/organizers/max:500`, { token: owner.token, method: 'DELETE' })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}`, { token: outsider.token })).status, 404);
 });
 
-test('global administrator delegates restaurant roles by MAX ID; a signed invite link admits an unknown guest', async t => {
+test('service administrator grants restaurant admins by MAX ID while guests can join by verified phone', async t => {
   const f = await fixture(t, { openOrganizerSignup: false });
   const root = await f.login(900);
   const first = (await f.request('/api/restaurants', { token: root.token })).data[0];
-  const second = (await f.request('/api/restaurants', { token: root.token, method: 'POST', body: { name: 'Другой ресторан' } })).data;
-  assert.equal(root.user.role, 'admin');
-  assert.ok(root.user.access.length >= 1);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/200`, { token: root.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members`, { token: root.token })).data[0].maxId, '200');
+  assert.equal((await f.request(`/api/restaurants/${first.id}/members/max:200`, { token: root.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
   const scoped = await f.login(200);
   assert.equal(scoped.user.role, 'restaurant');
-  assert.deepEqual(scoped.user.access.map(entry => entry.restaurantId), [first.id]);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/300`, { token: scoped.token, method: 'PUT', body: { role: 'admin' } })).status, 403);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/200`, { token: scoped.token, method: 'PUT', body: { role: 'organizer' } })).status, 409);
-  assert.equal((await f.request(`/api/restaurants/${second.id}/members/300`, { token: scoped.token, method: 'PUT', body: { role: 'organizer' } })).status, 403);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/300`, { token: scoped.token, method: 'PUT', body: { role: 'organizer' } })).status, 200);
-  const organizer = await f.login(300);
-  const event = await f.event(organizer.token);
+  assert.equal((await f.request(`/api/restaurants/${first.id}/members/max:300`, { token: scoped.token, method: 'PUT', body: { role: 'admin' } })).status, 403);
+  const owner = await f.login(300);
+  const event = await f.event(owner.token);
+  assert.equal((await f.request(`/api/events/${event.id}`, { token: scoped.token })).status, 200);
   const guest = await f.login(400);
   assert.equal((await f.request(`/api/invites/${event.inviteCode}/join`, { token: guest.token, method: 'POST' })).status, 403);
   assert.equal((await f.request('/api/me/phone', { token: guest.token, method: 'PUT', body: signedContact(400, '+79990000400') })).status, 200);
   assert.equal((await f.request(`/api/invites/${event.inviteCode}/join`, { token: guest.token, method: 'POST' })).status, 200);
-  const own = await f.request(`/api/events/${event.id}`, { token: guest.token });
-  assert.equal(own.data.canSelect, true);
-  assert.equal(own.data.invitedGuests, undefined);
-  assert.equal((await f.request(`/api/events/${event.id}`, { token: scoped.token })).status, 200);
-  assert.equal((await f.request(`/api/restaurants/${first.id}/members/300`, { token: scoped.token, method: 'DELETE' })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.id}/approve`, { token: organizer.token, method: 'POST', body: {} })).status, 403);
-  const formerOwner = await f.request(`/api/events/${event.id}`, { token: organizer.token });
-  assert.equal(formerOwner.status, 200);
-  assert.equal(formerOwner.data.canSelect, false);
-  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: organizer.token, method: 'PUT', body: { items: [] } })).status, 403);
+  assert.equal((await f.request(`/api/events/${event.id}`, { token: guest.token })).data.canSelect, true);
+});
+
+test('only a restaurant administrator may delete an approved banquet', async t => {
+  const f = await fixture(t);
+  const serviceAdmin = await f.login(900);
+  const organizer = await f.login(300);
+  const restaurantAdmin = await f.login(200);
+  const restaurant = (await f.request('/api/restaurants', { token: serviceAdmin.token })).data[0];
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/members/max:200`, { token: serviceAdmin.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
+  const created = await f.request('/api/events', { token: organizer.token, method: 'POST', body: banquet(restaurant.id) });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.canDelete, true);
+  f.store.db.prepare("UPDATE events SET status='approved', approved_at=? WHERE id=?").run(new Date().toISOString(), created.data.id);
+  const organizerEvent = (await f.request(`/api/events/${created.data.id}`, { token: organizer.token })).data.event;
+  const adminEvent = (await f.request(`/api/events/${created.data.id}`, { token: restaurantAdmin.token })).data.event;
+  assert.equal(organizerEvent.canManage, true);
+  assert.equal(organizerEvent.canDelete, false);
+  assert.equal(adminEvent.canDelete, true);
+  const denied = await f.request(`/api/events/${created.data.id}`, { token: organizer.token, method: 'DELETE' });
+  assert.equal(denied.status, 403);
+  assert.match(denied.data.error, /После утверждения.*администратор ресторана/);
+  assert.equal((await f.request(`/api/events/${created.data.id}`, { token: restaurantAdmin.token, method: 'DELETE' })).status, 200);
+});
+
+test('catalog selector can keep, remove and restore dishes atomically', async t => {
+  const f = await fixture(t);
+  const owner = await f.login(100);
+  const event = await f.event(owner.token);
+  const itemIds = event.menu.map(item => item.id);
+  const path = `/api/events/${event.id}/menu/catalog`;
+  assert.equal((await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds } })).status, 200);
+  const reduced = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds: itemIds.slice(1) } });
+  assert.equal(reduced.status, 200);
+  assert.equal(reduced.data.removed, 1);
+  assert.ok(!(await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.some(item => item.id === itemIds[0]));
+  const restored = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.added, 1);
+  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: owner.token, method: 'PUT', body: { items: [{ menuItemId: itemIds[0], quantity: 1 }] } })).status, 200);
+  const blocked = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds: itemIds.slice(1) } });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.error, /уже выбрали гости/);
+  assert.ok((await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.some(item => item.id === itemIds[0]));
 });
 
 test('kitchen board exports CSV and a valid XLSX workbook, also through a one-use link', async t => {
@@ -144,9 +160,9 @@ test('v8 migration turns the old organizer list and banquet owners into restaura
   store.close();
   const migrated = new Store(config);
   t.after(() => migrated.close());
-  assert.deepEqual(migrated.db.prepare('SELECT user_id,role FROM restaurant_members WHERE restaurant_id=? ORDER BY user_id').all(restaurant).map(row => ({ ...row })), [{ user_id: 'max_1', role: 'organizer' }, { user_id: 'max_2', role: 'organizer' }]);
+  assert.deepEqual(migrated.db.prepare('SELECT user_id FROM event_organizers WHERE event_id=? ORDER BY user_id').all('e1').map(row => row.user_id), ['max_1', 'max_2']);
   assert.equal(migrated.db.prepare("SELECT 1 FROM sqlite_master WHERE name='organizers'").get(), undefined);
-  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 10);
+  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 14);
 });
 
 test('a live organizer orders and picks a seat at their own banquet without being on the guest list', async t => {

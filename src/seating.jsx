@@ -1,11 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Armchair, Circle, Crosshair, Minus, Plus, RectangleHorizontal, RotateCw, Shuffle, Trash2, UserMinus, Wand2, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Armchair, Circle, Crosshair, Minus, Plus, RectangleHorizontal, RotateCw, Shuffle, Trash2, UserMinus, X } from "lucide-react";
 import {
   RECT_SIDES,
-  SEATING_TEMPLATES,
   SEAT_RADIUS,
   fitTable,
-  generateLayout,
   layoutBounds,
   layoutSeats,
   newTableId,
@@ -14,7 +12,6 @@ import {
   tableSeats,
   tableTitle,
 } from "../shared/seating.mjs";
-import { ask } from "./confirm.jsx";
 
 export const SEATING_MODE_NAMES = {
   off: "Без рассадки",
@@ -159,12 +156,41 @@ function padBounds(bounds) {
   return { x: bounds.x, y: bounds.y, w: Math.max(bounds.w + 160, 560), h: Math.max(bounds.h + 100, 340) };
 }
 
+/** Restaurant editor for the actual, reusable arrangement of tables and chairs. */
+export function HallLayoutDesigner({ layout, onChange, capacity }) {
+  const [selected, setSelected] = useState(null);
+  const table = layout.tables.find(entry => entry.id === selected);
+  const seats = layoutSeats(layout).length;
+  const change = tables => onChange({ tables });
+  const update = (patch, refit = false) => change(layout.tables.map(entry => entry.id === selected ? (refit ? fitTable({ ...entry, ...patch }) : { ...entry, ...patch }) : entry));
+  const add = shape => {
+    const nextSeats = Math.min(shape === 'round' ? 8 : 6, capacity - seats);
+    if (nextSeats < 1) return;
+    const bounds = layoutBounds(layout, 0);
+    const next = fitTable({ id: newTableId(layout.tables), label: nextLabel(layout.tables), shape, seats: nextSeats, x: layout.tables.length ? bounds.x + bounds.w + 30 : 60, y: layout.tables.length ? bounds.y : 60, w: 100, h: 100, rotation: 0, ...(shape === 'rect' ? { sides: ['top', 'bottom'] } : {}) });
+    change([...layout.tables, next]);
+    setSelected(next.id);
+  };
+  return <div className="hall-layout-designer">
+    <div className="hall-layout-tools"><strong>{layout.tables.length} столов · {seats} стульев из {capacity}</strong><button type="button" disabled={seats >= capacity} onClick={() => add('round')}><Circle size={15} /> Круглый</button><button type="button" disabled={seats >= capacity} onClick={() => add('rect')}><RectangleHorizontal size={15} /> Прямоугольный</button></div>
+    {layout.tables.length ? <SeatingMap layout={layout} editable selectedTable={selected} onSelectTable={setSelected} onMoveTable={(id, x, y) => change(layout.tables.map(entry => entry.id === id ? { ...entry, x, y } : entry))} /> : <p className="muted">Добавьте столы, затем укажите число стульев и расположите их на схеме.</p>}
+    {table && <div className="hall-table-editor">
+      <strong>{tableTitle(table)}</strong>
+      <label>Название стола<input maxLength={24} value={table.label} onChange={event => update({ label: event.target.value })} /></label>
+      <label>Стульев<input type="number" min="1" max={Math.min(40, capacity - seats + table.seats)} value={table.seats} onChange={event => { const count = Number(event.target.value); if (Number.isInteger(count) && count >= 1 && count <= Math.min(40, capacity - seats + table.seats)) update({ seats: count }, true); }} /></label>
+      <div className="hall-layout-tools"><button type="button" onClick={() => update({ x: table.x - 20 })}><ArrowLeft size={15} /></button><button type="button" onClick={() => update({ y: table.y - 20 })}><ArrowUp size={15} /></button><button type="button" onClick={() => update({ y: table.y + 20 })}><ArrowDown size={15} /></button><button type="button" onClick={() => update({ x: table.x + 20 })}><ArrowRight size={15} /></button><button type="button" onClick={() => update({ rotation: ((table.rotation || 0) + 90) % 360 })}><RotateCw size={15} /> Повернуть</button></div>
+      {table.shape === 'rect' && <fieldset className="sides"><legend>Стулья по сторонам</legend>{RECT_SIDES.map(side => <label key={side} className="check"><input type="checkbox" checked={table.sides.includes(side)} disabled={table.sides.length === 1 && table.sides.includes(side)} onChange={event => update({ sides: event.target.checked ? [...table.sides, side] : table.sides.filter(entry => entry !== side) }, true)} /> {SIDE_NAMES[side]}</label>)}</fieldset>}
+      <button type="button" className="text-button" onClick={() => { change(layout.tables.filter(entry => entry.id !== selected)); setSelected(null); }}><Trash2 size={15} /> Удалить стол</button>
+    </div>}
+  </div>;
+}
+
 /** Guest view: pick a chair (choice mode) or see the assigned one (fixed mode). */
 export function SeatPicker({ detail, busy, canSelect, choose }) {
   const seating = detail.seating;
   const occupied = useMemo(() => new Set(seating.occupied), [seating.occupied]);
   const names = useMemo(() => new Map(Object.entries(seating.names || {})), [seating.names]);
-  const locked = detail.event.status === "approved" || new Date(detail.event.deadline).getTime() < Date.now() || !canSelect;
+  const locked = detail.event.status === "approved" || new Date(detail.event.date).getTime() < Date.now() || !canSelect;
   const choice = seating.mode === "choice";
   const pickable = choice && !locked;
   return (
@@ -217,14 +243,18 @@ export function SeatPicker({ detail, busy, canSelect, choose }) {
 export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   const seating = detail.seating;
   const active = detail.event.status === "collecting";
+  const editable = active && seating.canCustomize !== false;
   const serverKey = JSON.stringify([seating.mode, seating.layout]);
   const [mode, setMode] = useState(seating.mode);
   const [layout, setLayout] = useState(seating.layout);
   const [dirty, setDirty] = useState(false);
   const [selected, setSelected] = useState(null);
   const [placing, setPlacing] = useState(false);
-  const [template, setTemplate] = useState("rounds");
-  const [guests, setGuests] = useState(Math.max(detail.event.expectedGuests || 1, detail.invitedGuests?.length || 0));
+  const presets = seating.tablePresets || [];
+  const [presetToAdd, setPresetToAdd] = useState('');
+  const selectedPreset = presets.find(preset => `${preset.shape}:${preset.seats}` === presetToAdd)
+    || presets.find(preset => preset.shape === 'round' && preset.seats === 8)
+    || presets[0];
   useEffect(() => {
     // Polling refreshes the detail; keep unsaved edits intact.
     if (!dirty) { setMode(seating.mode); setLayout(seating.layout); }
@@ -236,23 +266,22 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   const table = layout.tables.find(entry => entry.id === selected);
   const change = tables => { setLayout({ tables }); setDirty(true); };
   const updateTable = (id, patch, refit = false) => change(layout.tables.map(entry => entry.id === id ? (refit ? fitTable({ ...entry, ...patch }) : { ...entry, ...patch }) : entry));
-  const addTable = shape => {
+  const addTable = preset => {
+    if (!preset || seats.length + preset.seats > seating.hallCapacity) return;
     const bounds = layoutBounds(layout, 0);
-    const base = { id: newTableId(layout.tables), shape, label: nextLabel(layout.tables), x: layout.tables.length ? bounds.x + bounds.w + 40 : 60, y: layout.tables.length ? bounds.y : 60, w: 0, h: 0, rotation: 0, seats: shape === "round" ? 8 : 6, ...(shape === "rect" ? { sides: ["top", "bottom"] } : {}) };
+    const base = { id: newTableId(layout.tables), shape: preset.shape, label: nextLabel(layout.tables), x: layout.tables.length ? bounds.x + bounds.w + 40 : 60, y: layout.tables.length ? bounds.y : 60, w: 0, h: 0, rotation: 0, seats: preset.seats, ...(preset.shape === "rect" ? { sides: ["top", "bottom"] } : {}) };
     const created = fitTable(base);
     change([...layout.tables, created]);
     setSelected(created.id);
-  };
-  const applyTemplate = async () => {
-    if (layout.tables.length && !(await ask("Заменить текущую схему шаблоном?", { confirmLabel: "Заменить" }))) return;
-    change(generateLayout(template, guests).tables);
-    setSelected(null);
   };
   const unseated = people.filter(person => !person.seatId).length;
   const saved = !dirty;
   const nudge = (dx, dy) => updateTable(table.id, { x: table.x + dx, y: table.y + dy });
   const select = id => { setSelected(id); if (!id) setPlacing(false); };
-  const toolbar = table && active ? (
+  const sizesForTable = table ? presets.filter(preset => preset.shape === table.shape).map(preset => preset.seats).sort((a, b) => a - b) : [];
+  const smaller = sizesForTable.filter(size => size < (table?.seats || 0)).at(-1);
+  const larger = sizesForTable.find(size => size > (table?.seats || 0) && seats.length - table.seats + size <= seating.hallCapacity);
+  const toolbar = table && editable ? (
     <div className="map-toolbar" onPointerDown={event => event.stopPropagation()}>
       <strong>{tableTitle(table)}</strong>
       <div className="map-toolbar-row">
@@ -263,9 +292,9 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
         <button type="button" className={placing ? "active" : ""} aria-pressed={placing} onClick={() => setPlacing(value => !value)}><Crosshair size={16} /> Сюда</button>
       </div>
       <div className="map-toolbar-row">
-        <button type="button" aria-label="Меньше мест" disabled={table.seats <= 0} onClick={() => updateTable(table.id, { seats: table.seats - 1 }, true)}><Minus size={16} /></button>
+        <button type="button" aria-label="Меньше мест" disabled={!smaller} onClick={() => updateTable(table.id, { seats: smaller }, true)}><Minus size={16} /></button>
         <span>{table.seats} мест</span>
-        <button type="button" aria-label="Больше мест" disabled={table.seats >= 40} onClick={() => updateTable(table.id, { seats: table.seats + 1 }, true)}><Plus size={16} /></button>
+        <button type="button" aria-label="Больше мест" disabled={!larger} onClick={() => updateTable(table.id, { seats: larger }, true)}><Plus size={16} /></button>
         <button type="button" aria-label="Повернуть" onClick={() => updateTable(table.id, { rotation: ((table.rotation || 0) + 90) % 360 })}><RotateCw size={16} /></button>
         <button type="button" aria-label="Удалить стол" onClick={() => { change(layout.tables.filter(entry => entry.id !== table.id)); select(null); }}><Trash2 size={16} /></button>
         <button type="button" aria-label="Снять выделение" onClick={() => select(null)}><X size={16} /></button>
@@ -279,37 +308,23 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
         <div className="section-head">
           <div>
             <h2>Рассадка</h2>
-            <p className="muted">Можно собирать только блюда, а можно добавить схему зала и места.</p>
+            <p className="muted">{seating.canCustomize === false ? 'Ресторан закрепил расположение столов и стульев. Выберите, кто назначает места, или отключите рассадку.' : 'Расположите столы из набора ресторана и выберите, кто назначает места.'}</p>
           </div>
         </div>
         <div className="mode-switch" role="radiogroup" aria-label="Режим рассадки">
           {Object.entries(SEATING_MODE_NAMES).map(([key, label]) => (
-            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!active} onClick={() => { setMode(key); setDirty(true); }}>
+            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!active || (key !== 'off' && seating.allowedModes && !seating.allowedModes.includes(key))} onClick={() => { setMode(key); setDirty(true); }}>
               {label}
             </button>
           ))}
         </div>
-        {mode !== "off" && active && (
-          <div className="template-row">
-            <label>
-              Шаблон
-              <select value={template} onChange={event => setTemplate(event.target.value)}>
-                {SEATING_TEMPLATES.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
-              </select>
-            </label>
-            <label>
-              Гостей
-              <input type="number" min="1" max="1000" value={guests} onChange={event => setGuests(Number(event.target.value))} />
-            </label>
-            <button type="button" className="btn secondary" onClick={applyTemplate}><Wand2 size={16} /> Сгенерировать</button>
-          </div>
-        )}
-        {mode !== "off" && active && <p className="muted template-hint">{SEATING_TEMPLATES.find(entry => entry.id === template)?.hint}</p>}
+        {mode === 'off' && seating.mode !== 'off' && <p className="muted">При сохранении рассадки «Без рассадки» ранее выбранные места освободятся.</p>}
+        {mode !== "off" && editable && <p className="muted">Доступны только формы и размеры столов, которые выбрал ресторан. Всего стульев не больше {seating.hallCapacity}.</p>}
         {(dirty || mode !== seating.mode) && active && (
           <div className="seating-save">
             <span>Есть несохранённые изменения</span>
             <button type="button" className="btn secondary" disabled={busy} onClick={() => { setMode(seating.mode); setLayout(seating.layout); setDirty(false); }}>Отменить</button>
-            <button type="button" className="btn" disabled={busy} onClick={async () => { const result = await save({ mode, layout }); if (result !== null) setDirty(false); }}>Сохранить рассадку</button>
+            <button type="button" className="btn" disabled={busy} onClick={async () => { const result = await save(editable ? { mode, layout } : { mode }); if (result !== null) setDirty(false); }}>Сохранить рассадку</button>
           </div>
         )}
       </section>
@@ -318,13 +333,10 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
           <div className="section-head">
             <div>
               <h2>Схема зала</h2>
-              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}. Нажмите на стол, чтобы выбрать его: затем двигайте пальцем, стрелками или кнопкой «Сюда».</p>
+              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}.{editable ? ' Нажмите на стол, чтобы выбрать его: затем двигайте пальцем, стрелками или кнопкой «Сюда».' : ' Готовая схема ресторана доступна для просмотра.'}</p>
             </div>
-            {active && (
-              <div className="admin-actions seating-tools">
-                <button type="button" onClick={() => addTable("round")}><Circle size={15} /> Круглый</button>
-                <button type="button" onClick={() => addTable("rect")}><RectangleHorizontal size={15} /> Прямоугольный</button>
-              </div>
+            {editable && (
+              <div className="admin-actions seating-tools"><select aria-label="Размер нового стола" value={selectedPreset ? `${selectedPreset.shape}:${selectedPreset.seats}` : ''} onChange={event => setPresetToAdd(event.target.value)}>{presets.map(preset => <option key={`${preset.shape}:${preset.seats}`} value={`${preset.shape}:${preset.seats}`} disabled={seats.length + preset.seats > seating.hallCapacity}>{preset.shape === 'round' ? 'Круглый' : 'Прямоугольный'} · {preset.seats} мест</option>)}</select><button type="button" disabled={!selectedPreset || seats.length + selectedPreset.seats > seating.hallCapacity} onClick={() => addTable(selectedPreset)}><Plus size={15} /> Добавить стол</button></div>
             )}
           </div>
           {layout.tables.length ? (
@@ -332,11 +344,11 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
               layout={layout}
               occupied={occupied}
               names={names}
-              editable={active}
+              editable={editable}
               selectedTable={selected}
-              onSelectTable={select}
-              onMoveTable={(id, x, y) => updateTable(id, { x, y })}
-              onEmptyTap={active ? point => {
+              onSelectTable={editable ? select : undefined}
+              onMoveTable={editable ? (id, x, y) => updateTable(id, { x, y }) : undefined}
+              onEmptyTap={editable ? point => {
                 if (placing && table) {
                   const snap = value => Math.round(value / 10) * 10;
                   updateTable(table.id, { x: snap(point.x - table.w / 2), y: snap(point.y - table.h / 2) });
@@ -346,29 +358,15 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
               toolbar={toolbar}
             />
           ) : (
-            <p className="muted">Выберите шаблон или добавьте столы вручную.</p>
+            <p className="muted">Добавьте столы из разрешённого рестораном набора и расставьте их на схеме.</p>
           )}
-          {table && active && (
+          {table && editable && (
             <div className="table-editor">
               <label>
                 Название
                 <input maxLength={24} value={table.label} onChange={event => updateTable(table.id, { label: event.target.value })} />
               </label>
-              <label>
-                Мест
-                <div className="stepper">
-                  <button type="button" aria-label="Меньше мест" disabled={table.seats <= 0} onClick={() => updateTable(table.id, { seats: table.seats - 1 }, true)}><Minus size={14} /></button>
-                  <span>{table.seats}</span>
-                  <button type="button" aria-label="Больше мест" disabled={table.seats >= 40} onClick={() => updateTable(table.id, { seats: table.seats + 1 }, true)}><Plus size={14} /></button>
-                </div>
-              </label>
-              <label>
-                Форма
-                <select value={table.shape} onChange={event => updateTable(table.id, { shape: event.target.value, sides: event.target.value === "rect" ? ["top", "bottom"] : undefined }, true)}>
-                  <option value="round">Круглый</option>
-                  <option value="rect">Прямоугольный</option>
-                </select>
-              </label>
+              <label>Тип и размер<select value={`${table.shape}:${table.seats}`} onChange={event => { const preset = presets.find(entry => `${entry.shape}:${entry.seats}` === event.target.value); if (preset) updateTable(table.id, { shape: preset.shape, seats: preset.seats, sides: preset.shape === 'rect' ? table.shape === 'rect' ? table.sides : ['top', 'bottom'] : undefined }, true); }}>{presets.map(preset => <option key={`${preset.shape}:${preset.seats}`} value={`${preset.shape}:${preset.seats}`} disabled={seats.length - table.seats + preset.seats > seating.hallCapacity}>{preset.shape === 'round' ? 'Круглый' : 'Прямоугольный'} · {preset.seats} мест</option>)}</select></label>
               {table.shape === "rect" && (
                 <fieldset className="sides">
                   <legend>Стулья</legend>

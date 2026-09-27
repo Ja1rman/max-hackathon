@@ -2,14 +2,14 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.8.0
+  version: 1.10.0
   summary: Банкет, где каждый гость выбирает блюда сам — Mini App для MAX.
   description: |
     Базовый адрес: `https://mail.lonelycraft.ru/banquet/api/v1`. Все пути ниже указаны относительно него.
     Документация в браузере: `https://mail.lonelycraft.ru/banquet/swagger/`.
 
     **Как начать.** Получите токен тестовой учётной записи через `POST /auth/demo`
-    (`{"role":"organizer"}`; для гостя и администратора того же демо-пространства передайте
+    (`{"role":"organizer"}`; для других ролей того же демо-пространства передайте
     полученный `sandbox`), затем нажмите «Authorize» и вставьте токен. Все защищённые методы
     принимают заголовок `Authorization: Bearer <token>`. Пошаговый сценарий проверки описан
     в `DATA-API.yaml`, тестовые данные — в `fixtures/api-checks.json`.
@@ -19,10 +19,12 @@ info:
     `POST /auth/*`: не больше 180 запросов за 10 минут с одного IP. Неизвестные поля JSON
     игнорируются и не назначают роли, цены или пространство данных.
 
-    **Роли.** `organizer` — создаёт банкеты и управляет ими; `guest` — присоединяется по
-    приглашению и выбирает блюда; `restaurant` — администратор ресторана (меню,
-    кухня, доступы). В живом режиме вход выполняется через подпись MAX (`POST /auth/max`),
-    в демо — через `POST /auth/demo` в изолированном пространстве.
+    **Роли.** Любой вошедший пользователь может создать банкет и становится его организатором
+    (`organizer`); права организатора относятся только к его банкетам. `guest` — участник по
+    приглашению. `restaurant` — администратор ресторана: меню, залы, пакеты, кухня.
+    `admin` — администратор сервиса: все рестораны и назначение их администраторов. В живом
+    режиме вход выполняется через подпись MAX (`POST /auth/max`), в демо — через
+    `POST /auth/demo` в изолированном пространстве со всеми четырьмя ролями.
   contact:
     name: Команда «За столом»
     url: https://github.com/m-melgizin/max-hackathon
@@ -34,8 +36,6 @@ servers:
   description: Тот же сервер, что и эта документация (Swagger)
 - url: https://mail.lonelycraft.ru/banquet/api/v1
   description: Production
-- url: http://localhost:3000/api/v1
-  description: Локальный запуск (npm start)
 security:
 - SessionBearer: []
 tags:
@@ -44,17 +44,19 @@ tags:
 - name: Вход и профиль
   description: Тестовые учётные записи (POST /auth/demo), вход через MAX, профиль, телефон, уведомления, загрузка фото.
 - name: Мероприятие (организатор)
-  description: Создание и настройка банкета, список гостей, меню и общий стол, утверждение, выгрузка заказа.
+  description: Создание, настройка и удаление банкета, организаторы банкета, список гостей, меню и общий стол, утверждение, выгрузка заказа.
 - name: Гость
   description: Приглашение, присоединение, выбор блюд и места.
 - name: Рассадка
   description: Схема зала, режимы рассадки, ручное и автоматическое распределение мест.
 - name: Ресторан и меню
-  description: Рестораны, каталог блюд (стоимость, состав, КБЖУ, аллергены), пакетные предложения.
+  description: Рестораны, каталог блюд (стоимость, состав, КБЖУ, аллергены), пакетные предложения, избранное.
+- name: Залы и бронирование
+  description: Залы ресторана, часы работы, свободные интервалы и календарь бронирования.
 - name: Кухня и выгрузки
   description: Сводка для кухни по банкетам и выгрузка в Excel/CSV.
 - name: Доступы
-  description: Пользователи, роли в ресторанах, глобальные администраторы.
+  description: Пользователи, администраторы ресторанов и сервиса.
 - name: MAX
   description: Вебхук бота MAX (вызывается платформой MAX, не клиентом).
 paths:
@@ -100,7 +102,7 @@ paths:
       summary: Обмен подписанных данных MAX на сессию
       description: HMAC-SHA256 по алгоритму MAX; auth_date не старше часа и не более
         30 секунд в будущем. Глобальные администраторы определяются по RESTAURANT_ADMIN_IDS
-        и таблице global_admins; остальные получают доступ из restaurant_members.
+        и таблице global_admins; администраторы ресторанов — из restaurant_members, организаторы — из прав конкретных банкетов.
         Live-сессия 7 суток; не более 10 активных сессий на пользователя.
       responses:
         '200':
@@ -308,18 +310,22 @@ paths:
       tags:
       - Вход и профиль
       operationId: setNotifications
-      summary: Включить или выключить уведомления в MAX
-      description: Доставка возможна только после начала личного диалога с ботом. По умолчанию выключено; bot_stopped отключает фактическую отправку.
+      summary: Включить уведомления в MAX и выбрать категории событий
+      description: Доставка возможна только после начала личного диалога с ботом. Общее разрешение по умолчанию выключено; все категории изначально включены. bot_stopped отключает фактическую отправку.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [enabled]
               properties:
                 enabled:
                   type: boolean
+                categories:
+                  "$ref": "#/components/schemas/NotificationPreferences"
+              anyOf:
+              - required: [enabled]
+              - required: [categories]
       responses:
         '200':
           description: Обновлённый профиль
@@ -339,7 +345,7 @@ paths:
       - Вход и профиль
       operationId: uploadPhoto
       summary: Загрузить фото для блюда или напитка
-      description: Организатор или администратор ресторана. Бинарное тело до 3 МиБ, проверяется сигнатура формата. Возвращённый photoUrl передаётся при создании или правке блюда или банкета.
+      description: Авторизованный пользователь. Бинарное тело до 3 МиБ, проверяется сигнатура формата. Возвращённый photoUrl передаётся при создании или правке блюда или банкета.
       requestBody:
         required: true
         content:
@@ -456,6 +462,29 @@ paths:
           "$ref": "#/components/responses/403"
         '404':
           "$ref": "#/components/responses/404"
+  "/restaurants/{restaurantId}/favorite":
+    put:
+      tags:
+      - Ресторан и меню
+      operationId: addRestaurantFavorite
+      summary: Добавить ресторан в личное избранное
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      responses:
+        '200': { description: Состояние избранного текущего пользователя }
+        '401': { "$ref": "#/components/responses/401" }
+        '404': { "$ref": "#/components/responses/404" }
+    delete:
+      tags:
+      - Ресторан и меню
+      operationId: removeRestaurantFavorite
+      summary: Убрать ресторан из личного избранного
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      responses:
+        '200': { description: Состояние избранного текущего пользователя }
+        '401': { "$ref": "#/components/responses/401" }
+        '404': { "$ref": "#/components/responses/404" }
   "/restaurants/{restaurantId}/members":
     get:
       tags:
@@ -564,9 +593,7 @@ paths:
       operationId: setRestaurantMember
       summary: Выдать пользователю роль в ресторане
       description: userId из GET /users либо числовой MAX ID. Глобальный администратор
-        может назначить администратора или организатора; администратор ресторана
-        назначает только организатора. none убирает доступ. Свою роль изменить
-        нельзя (409).
+        назначает администратора ресторана. Организаторы назначаются на конкретный банкет через PUT /events/{eventId}/organizers/{identity}. none убирает доступ; свою роль изменить нельзя (409).
       parameters:
       - "$ref": "#/components/parameters/restaurantId"
       - name: userId
@@ -584,7 +611,7 @@ paths:
               properties:
                 role:
                   type: string
-                  enum: [admin, organizer, none]
+                  enum: [admin, none]
       responses:
         '200':
           description: Успешно
@@ -618,9 +645,8 @@ paths:
       tags:
       - Доступы
       operationId: listUsers
-      summary: Пользователи, открывавшие приложение, и их роли в ваших ресторанах
-      description: Администратор хотя бы одного ресторана. Роли возвращаются только для
-        ресторанов, которые администрирует запрашивающий. До 200 записей.
+      summary: Только участники доступных банкетов и администраторы доступных ресторанов
+      description: Доступно организатору банкета или администратору ресторана. Пользователи вне их банкетов и ресторанов скрыты. До 200 записей.
       parameters:
       - name: q
         in: query
@@ -750,6 +776,19 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
+    delete:
+      tags:
+      - Мероприятие (организатор)
+      operationId: deleteEvent
+      summary: Удалить банкет, приглашения, заказы и рассадку
+      description: До утверждения — организатор банкета или администратор ресторана; после утверждения — только администратор ресторана.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      responses:
+        '200': { description: Банкет удалён }
+        '401': { "$ref": "#/components/responses/401" }
+        '403': { "$ref": "#/components/responses/403" }
+        '404': { "$ref": "#/components/responses/404" }
   "/events/{eventId}/guests":
     post:
       tags:
@@ -1206,6 +1245,37 @@ paths:
               "$ref": "#/components/schemas/MenuImport"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+  "/events/{eventId}/menu/catalog":
+    put:
+      tags:
+      - Мероприятие (организатор)
+      operationId: saveEventCatalogSelection
+      summary: Выбрать блюда каталога для меню банкета
+      description: Сохраняет выбранный набор атомарно. Уже заказанные гостями и поставленные на общий стол блюда удалить нельзя. Собственные позиции банкета не затрагиваются.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CatalogSelection" }
+      responses:
+        '200':
+          description: Выбор сохранён
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added, removed, count]
+                properties:
+                  added: { type: integer, minimum: 0 }
+                  removed: { type: integer, minimum: 0 }
+                  count: { type: integer, minimum: 0 }
+        '400': { "$ref": "#/components/responses/400" }
+        '401': { "$ref": "#/components/responses/401" }
+        '403': { "$ref": "#/components/responses/403" }
+        '404': { "$ref": "#/components/responses/404" }
+        '409': { "$ref": "#/components/responses/409" }
   "/events/{eventId}/seating":
     put:
       tags:
@@ -1537,6 +1607,147 @@ paths:
           "$ref": "#/components/responses/404"
         '500':
           "$ref": "#/components/responses/500"
+  "/restaurants/{restaurantId}/halls":
+    post:
+      tags:
+      - Залы и бронирование
+      operationId: createHall
+      summary: Добавить зал и окна бронирования
+      parameters: [{ "$ref": "#/components/parameters/restaurantId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/HallInput" }
+      responses:
+        '201': { description: Зал создан }
+        '403': { "$ref": "#/components/responses/403" }
+        '409': { "$ref": "#/components/responses/409" }
+  "/restaurants/{restaurantId}/halls/{hallId}":
+    parameters:
+    - { "$ref": "#/components/parameters/restaurantId" }
+    - { name: hallId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags:
+      - Залы и бронирование
+      operationId: updateHall
+      summary: Изменить зал и окна бронирования
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/HallInput" }
+      responses:
+        '200': { description: Зал обновлён }
+        '409': { "$ref": "#/components/responses/409" }
+    delete:
+      tags:
+      - Залы и бронирование
+      operationId: deleteHall
+      summary: Удалить зал без банкетов
+      responses:
+        '200': { description: Зал удалён }
+        '409': { "$ref": "#/components/responses/409" }
+  "/restaurants/{restaurantId}/availability":
+    get:
+      tags:
+      - Залы и бронирование
+      operationId: hallAvailability
+      summary: Окна и занятые интервалы залов на дату
+      parameters:
+      - { "$ref": "#/components/parameters/restaurantId" }
+      - { name: date, in: query, required: true, schema: { type: string, format: date } }
+      - { name: hallId, in: query, required: false, schema: { type: string } }
+      responses:
+        '200': { description: 'Список залов с windows и booked; чужие брони содержат только start и end, свои также eventId' }
+  "/restaurants/{restaurantId}/availability/month":
+    get:
+      tags:
+      - Залы и бронирование
+      operationId: hallAvailabilityMonth
+      summary: Свободные слоты начала банкета на месяц с шагом 30 минут
+      parameters:
+      - { "$ref": "#/components/parameters/restaurantId" }
+      - { name: month, in: query, required: true, schema: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' } }
+      - { name: hallId, in: query, required: true, schema: { type: string } }
+      - { name: durationHours, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 12 } }
+      - { name: excludeEventId, in: query, required: false, schema: { type: string }, description: Исключить свою бронь при редактировании; доступно только управляющему банкетом }
+      responses:
+        '200': { description: "Объект month, hallId, durationHours, days; каждый день содержит date и массив доступных часов HH:mm по Москве" }
+        '403': { "$ref": "#/components/responses/403" }
+  "/restaurants/{restaurantId}/package-dishes":
+    post:
+      tags:
+      - Ресторан и меню
+      operationId: createPackageDish
+      summary: Создать блюдо только для пакетных предложений
+      parameters: [{ "$ref": "#/components/parameters/restaurantId" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PackageDishInput" }
+      responses:
+        '201': { description: Блюдо создано }
+        '403': { "$ref": "#/components/responses/403" }
+  "/restaurants/{restaurantId}/package-dishes/{dishId}":
+    parameters:
+    - { "$ref": "#/components/parameters/restaurantId" }
+    - { name: dishId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags:
+      - Ресторан и меню
+      operationId: updatePackageDish
+      summary: Изменить блюдо пакетного предложения
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/PackageDishInput" }
+      responses:
+        '200': { description: Блюдо обновлено }
+    delete:
+      tags:
+      - Ресторан и меню
+      operationId: deletePackageDish
+      summary: Удалить неиспользуемое блюдо пакета
+      responses:
+        '200': { description: Блюдо удалено }
+        '409': { "$ref": "#/components/responses/409" }
+  "/events/{eventId}/organizers":
+    get:
+      tags:
+      - Мероприятие (организатор)
+      operationId: eventOrganizers
+      summary: Организаторы конкретного банкета
+      parameters: [{ "$ref": "#/components/parameters/eventId" }]
+      responses:
+        '200': { description: Список создателя и назначенных организаторов }
+  "/events/{eventId}/organizers/{identity}":
+    parameters:
+    - { "$ref": "#/components/parameters/eventId" }
+    - { name: identity, in: path, required: true, schema: { type: string }, description: "ID пользователя, max:ID или phone:номер" }
+    put:
+      tags:
+      - Мероприятие (организатор)
+      operationId: setEventOrganizer
+      summary: Назначить или снять организатора банкета
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } }
+      responses:
+        '200': { description: Права обновлены }
+        '403': { "$ref": "#/components/responses/403" }
+    delete:
+      tags:
+      - Мероприятие (организатор)
+      operationId: deleteEventOrganizer
+      summary: Снять организатора банкета
+      responses:
+        '200': { description: Права сняты }
+        '409': { "$ref": "#/components/responses/409" }
 components:
   securitySchemes:
     SessionBearer:
@@ -1654,6 +1865,8 @@ components:
           description: Только собственный подтверждённый номер в международном формате без плюса.
         notificationsEnabled:
           type: boolean
+        notificationPreferences:
+          "$ref": "#/components/schemas/NotificationPreferences"
         access:
           type: array
           items:
@@ -1661,7 +1874,7 @@ components:
             properties:
               restaurantId: { type: string }
               restaurantName: { type: string }
-              role: { type: string, enum: [admin, organizer] }
+              role: { type: string, enum: [admin] }
         superAdmin:
           type: boolean
         botConnected:
@@ -1676,6 +1889,17 @@ components:
       - phoneVerified
       - phone
       - notificationsEnabled
+      - notificationPreferences
+    NotificationPreferences:
+      type: object
+      additionalProperties: false
+      properties:
+        guestJoined: { type: boolean, description: Вход гостя в мой банкет. }
+        guestSelection: { type: boolean, description: Выбор блюд гостем моего банкета. }
+        eventChanges: { type: boolean, description: 'Изменения даты, параметров или меню банкета.' }
+        reminders: { type: boolean, description: Напоминания о сроке выбора блюд. }
+        orderApproved: { type: boolean, description: Утверждение заказа для гостя. }
+        kitchenOrders: { type: boolean, description: Утверждённый заказ для кухни ресторана. }
     Session:
       type: object
       properties:
@@ -1742,6 +1966,7 @@ components:
         role:
           type: string
           enum:
+          - admin
           - organizer
           - guest
           - restaurant
@@ -1969,14 +2194,23 @@ components:
           type: string
         sampleMenu:
           type: boolean
+        favorite:
+          type: boolean
+          description: Ресторан в избранном текущего пользователя.
         access:
-          type: string
-          enum: [admin, organizer]
-          description: Роль текущего пользователя в ресторане; в списке только доступные рестораны.
+          type: [string, 'null']
+          enum: [admin, null]
+          description: Административный доступ к ресторану; null у гостя или организатора без роли. Каталог всех ресторанов доступен каждому вошедшему только для чтения.
         menu:
           type: array
           items:
             "$ref": "#/components/schemas/MenuItem"
+        packageDishes:
+          type: array
+          items: { type: object, description: Блюдо только для пакетного предложения с КБЖУ и фото }
+        halls:
+          type: array
+          items: { "$ref": "#/components/schemas/Hall" }
         packages:
           type: array
           items:
@@ -1989,6 +2223,75 @@ components:
       - sampleMenu
       - menu
       - packages
+      - packageDishes
+      - halls
+    Hall:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        capacity: { type: integer }
+        windows: { type: array, items: { type: object } }
+        seatingConfig:
+          "$ref": "#/components/schemas/SeatingConfig"
+        allowedSeating: { type: array, deprecated: true, items: { type: string, enum: [choice, fixed] } }
+        defaultSeatingTemplate: { type: string, enum: [rounds, u, presidium, t, long] }
+        allowFreeSeating: { type: boolean, readOnly: true, description: Может ли организатор расставлять столы из набора ресторана. }
+      required: [id, name, capacity, windows, seatingConfig, allowedSeating, defaultSeatingTemplate, allowFreeSeating]
+    SeatingConfig:
+      type: object
+      description: 'fixed закрепляет расположение столов и стульев за рестораном; организатор выбирает режим рассадки, не меняя карту. flexible позволяет организатору расставлять столы только из tablePresets. Конфигурация копируется в банкет при его создании.'
+      required: [type, fixedLayout, tablePresets]
+      properties:
+        type: { type: string, enum: [fixed, flexible] }
+        fixedLayout:
+          "$ref": "#/components/schemas/SeatingLayout"
+        tablePresets:
+          type: array
+          minItems: 1
+          maxItems: 40
+          uniqueItems: true
+          items:
+            type: object
+            required: [shape, seats]
+            properties:
+              shape: { type: string, enum: [round, rect] }
+              seats: { type: integer, minimum: 1, maximum: 40 }
+    HallInput:
+      type: object
+      required: [name, capacity, windows]
+      properties:
+        name: { type: string, maxLength: 100 }
+        capacity: { type: integer, minimum: 1, maximum: 1000 }
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 28
+          items:
+            type: object
+            required: [weekday, start, end]
+            properties:
+              weekday: { type: integer, minimum: 0, maximum: 6, description: Воскресенье = 0 }
+              start: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+              end: { type: string, pattern: '^(([01]\d|2[0-3]):[0-5]\d|24:00)$', description: '24:00 означает конец суток. Семь окон 00:00–24:00 задают круглосуточный режим.' }
+        seatingConfig:
+          "$ref": "#/components/schemas/SeatingConfig"
+        allowedSeating: { type: array, deprecated: true, uniqueItems: true, items: { type: string, enum: [choice, fixed] }, description: 'Устаревший параметр для совместимости. Используйте seatingConfig.' }
+        defaultSeatingTemplate: { type: string, deprecated: true, enum: [rounds, u, presidium, t, long], default: rounds, description: 'Устаревший шаблон для совместимости. Используйте seatingConfig.' }
+    PackageDishInput:
+      type: object
+      required: [name, category, nutrition]
+      properties:
+        name: { type: string, maxLength: 120 }
+        category: { type: string, maxLength: 80 }
+        description: { type: string, maxLength: 500 }
+        weight: { type: string, maxLength: 40 }
+        photoUrl: { type: string, description: Путь из POST /media }
+        nutrition: { "$ref": "#/components/schemas/Nutrition" }
+        allergens: { type: array, items: { type: string } }
+        labels: { type: array, items: { type: string, enum: ['Халяль', 'Много белка', 'Мало калорий'] } }
+        vegetarian: { type: boolean }
+        available: { type: boolean }
     PackageInput:
       type: object
       required: [name, price, items]
@@ -2002,11 +2305,11 @@ components:
           maxItems: 100
           items:
             type: object
-            required: [name, category, grams]
+            required: [dishId, grams]
             properties:
-              name: { type: string, minLength: 1, maxLength: 120 }
-              category: { type: string, minLength: 1, maxLength: 80 }
+              dishId: { type: string, description: ID блюда только для пакета }
               grams: { type: integer, minimum: 1, maximum: 10000 }
+              choiceGroup: { type: string, maxLength: 80, description: Одинаковая непустая группа для альтернатив горячего }
     Package:
       allOf:
       - "$ref": "#/components/schemas/PackageInput"
@@ -2052,6 +2355,9 @@ components:
           type: boolean
         seatingMode:
           "$ref": "#/components/schemas/SeatingMode"
+        hallId: { type: string }
+        hallName: { type: string }
+        durationHours: { type: integer, minimum: 1, maximum: 12 }
         selectionMode: { type: string, enum: [individual, package] }
         package:
           anyOf:
@@ -2106,6 +2412,9 @@ components:
           type: boolean
         seatingMode:
           "$ref": "#/components/schemas/SeatingMode"
+        hallId: { type: string }
+        hallName: { type: string }
+        durationHours: { type: integer, minimum: 1, maximum: 12 }
         selectionMode: { type: string, enum: [individual, package] }
         package:
           anyOf:
@@ -2134,7 +2443,10 @@ components:
           type: boolean
         canManage:
           type: boolean
-          description: Администратор ресторана или владелец с действующим доступом к ресторану.
+          description: Администратор ресторана или организатор этого банкета.
+        canDelete:
+          type: boolean
+          description: После утверждения true только для администратора ресторана.
         revision:
           type: integer
           minimum: 0
@@ -2151,16 +2463,16 @@ components:
         budget:
           type: integer
           minimum: 0
-          description: Только владелец и администратор. Плановый бюджет банкета = (foodBudget
+          description: Организатор банкета или администратор ресторана. Плановый бюджет банкета = (foodBudget
             + drinkBudget) × expectedGuests, копейки.
         sharedTotal:
           type: integer
           minimum: 0
-          description: Только владелец и администратор. Стоимость общего стола, копейки;
+          description: Организатор банкета или администратор ресторана. Стоимость общего стола, копейки;
             входит в total.
         ownerName:
           type: string
-          description: Только владелец и администратор. Имя организатора.
+          description: Организатор банкета или администратор ресторана. Имя создателя.
         inviteCode:
           type: string
           pattern: "^[A-Za-z0-9_-]{24}$"
@@ -2189,7 +2501,6 @@ components:
         роли. total/responded/joined доступны также присоединившемуся гостю.
     EventCreate:
       type: object
-      example: {"restaurantId": "restaurant_...", "title": "Корпоратив", "date": "2027-12-20T15:00:00.000Z", "deadline": "2027-12-15T15:00:00.000Z", "expectedGuests": 10, "foodBudget": 300000, "drinkBudget": 60000}
       properties:
         restaurantId:
           type: string
@@ -2204,7 +2515,15 @@ components:
           description: Путь из POST /media; необязательно.
         selectionMode: { type: string, enum: [individual, package], default: individual }
         packageId: { type: string, description: Обязателен при selectionMode=package }
-        packageChoice: { type: string, description: Выбор горячего для пакета с альтернативами }
+        packageChoice: { type: string, description: dishId выбранного горячего для пакета с альтернативами }
+        hallId: { type: string, description: Зал этого ресторана; по умолчанию первый зал }
+        durationHours: { type: integer, minimum: 1, maximum: 12, default: 4 }
+        seating:
+          type: object
+          properties:
+            mode: { type: string, enum: [off, choice, fixed] }
+            template: { type: string, enum: [rounds, u, presidium, t, long, empty] }
+          description: Без объекта используется стандартная схема зала и fixed, если он разрешён. Организатор может переопределить схему, только когда зал разрешает choice.
         date:
           type: string
           format: date-time
@@ -2243,6 +2562,9 @@ components:
         expectedRevision: { type: integer, minimum: 0 }
         title: { type: string, minLength: 1, maxLength: 120 }
         photoUrl: { type: string, description: Путь из POST /media; пустая строка убирает фото. }
+        hallId: { type: string }
+        hallName: { type: string }
+        durationHours: { type: integer, minimum: 1, maximum: 12 }
         selectionMode: { type: string, enum: [individual, package] }
         packageId: { type: string }
         packageChoice: { type: string }
@@ -2697,6 +3019,23 @@ components:
           description: Имена гостей на занятых местах, seatId → имя; видны всем участникам.
           additionalProperties:
             type: string
+        canCustomize:
+          type: boolean
+          description: Только организатору и администратору; можно ли менять расположение и набор столов. Режим можно менять и при false.
+        allowedModes:
+          type: array
+          description: Только организатору и администратору; варианты рассадки банкета.
+          items: { type: string, enum: [choice, fixed] }
+        layoutPolicy: { type: string, enum: [fixed, flexible], description: Закреплена ли карта рестораном. }
+        tablePresets:
+          type: array
+          description: Разрешённые формы и размеры столов для этого банкета.
+          items:
+            type: object
+            properties:
+              shape: { type: string, enum: [round, rect] }
+              seats: { type: integer }
+        hallCapacity: { type: integer, description: Вместимость зала в стульях. }
         people:
           type: array
           description: Только владелец и ресторан.
@@ -2711,7 +3050,6 @@ components:
       - names
     SeatingPut:
       type: object
-      example: {"mode": "choice", "layout": {"tables": [{"id": "t1", "shape": "round", "label": "1", "x": 60, "y": 60, "w": 120, "h": 120, "rotation": 0, "seats": 6}]}}
       properties:
         mode:
           "$ref": "#/components/schemas/SeatingMode"
@@ -2803,6 +3141,15 @@ components:
           minItems: 1
           maxItems: 500
           items: { type: string }
+    CatalogSelection:
+      type: object
+      required: [itemIds]
+      properties:
+        itemIds:
+          type: array
+          maxItems: 500
+          uniqueItems: true
+          items: { type: string }
     MenuImported:
       type: object
       required: [added]
@@ -2852,7 +3199,7 @@ components:
         userId: { type: string }
         maxId: { type: [string, 'null'] }
         name: { type: string }
-        role: { type: string, enum: [admin, organizer] }
+        role: { type: string, enum: [admin] }
       required: [userId, maxId, name, role]
     ManagedUser:
       type: object
@@ -2865,12 +3212,16 @@ components:
         superAdmin: { type: boolean }
         fixed: { type: boolean, description: Роль нельзя изменить (суперадминистратор или демо-организатор). }
         isYou: { type: boolean }
+        eventRoles:
+          type: object
+          description: eventId → есть ли право организатора на доступный банкет.
+          additionalProperties: { type: boolean }
         roles:
           type: object
-          description: restaurantId → admin | organizer | none для ресторанов запрашивающего.
+          description: restaurantId → admin | none для доступных ресторанов.
           additionalProperties:
             type: string
-            enum: [admin, organizer, none]
+            enum: [admin, none]
     ExportLink:
       type: object
       required:

@@ -34,15 +34,18 @@ import {
   Pencil,
   Search,
   Store,
+  Star,
   UserRound,
 } from "lucide-react";
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
-import { SEATING_TEMPLATES, generateLayout } from '../shared/seating.mjs';
+import { generateLayout, layoutSeats } from '../shared/seating.mjs';
+import { formatRussianDateTime, parseRussianDateTime, moscowDateTimeIso } from '../shared/moscow-date.mjs';
 import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
 const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
-import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
+import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview, SeatingMap, HallLayoutDesigner } from './seating.jsx';
 import { ConfirmHost, ask } from './confirm.jsx';
+import { DEFAULT_NOTIFICATION_PREFERENCES, NOTIFICATION_CATEGORIES } from '../shared/notification-categories.mjs';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -55,6 +58,7 @@ const money = (value = 0) =>
 const dateText = (value, time = false) =>
   value
     ? new Date(value).toLocaleString("ru-RU", {
+        timeZone: 'Europe/Moscow',
         day: "numeric",
         month: "long",
         ...(time ? { hour: "2-digit", minute: "2-digit" } : {}),
@@ -68,24 +72,49 @@ const roleNames = {
 };
 let authToken = sessionStorage.getItem("banquet-token") || "";
 async function api(path, options = {}) {
-  const response = await fetch(`${BASE}/api/v1${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      ...options.headers,
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const data = await response.json();
+  let response;
+  for (let attempt = 0; attempt < ((options.method || 'GET') === 'GET' ? 3 : 1); attempt++) {
+    try {
+      response = await fetch(`${BASE}/api/v1${path}`, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...options.headers },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+      });
+      break;
+    } catch {
+      if (attempt === 2 || (options.method || 'GET') !== 'GET') throw new Error('Нет связи с сервисом. Проверьте интернет и повторите действие.');
+      await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+  }
+  const data = await response.json().catch(() => ({}));
   if (!response.ok)
-    throw new Error(data.error || "Не удалось выполнить запрос");
+    throw new Error(data.error || `Не удалось выполнить запрос (${response.status}).`);
   return data;
+}
+function russianError(value) {
+  const message = typeof value === 'string' ? value : value?.message || '';
+  return /[А-Яа-яЁё]/.test(message) ? message : 'Не удалось выполнить действие. Попробуйте ещё раз.';
+}
+const alwaysOpen = windows => windows?.length === 7 && new Set(windows.map(window => window.weekday)).size === 7 && windows.every(window => window.start === '00:00' && window.end === '24:00');
+function durationOptions(hall, localValue) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localValue || '');
+  if (!hall || !parts) return [];
+  if (alwaysOpen(hall.windows)) return Array.from({ length: 12 }, (_, index) => index + 1);
+  const weekday = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))).getUTCDay();
+  const start = Number(parts[4]) * 60 + Number(parts[5]);
+  const end = Math.max(0, ...hall.windows.filter(window => window.weekday === weekday && Number(window.start.slice(0, 2)) * 60 + Number(window.start.slice(3)) <= start && start < Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))).map(window => Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))));
+  return Array.from({ length: Math.min(12, Math.floor((end - start) / 60)) }, (_, index) => index + 1);
+}
+function bookingDurationOptions(hall, localValue, selected) {
+  const available = durationOptions(hall, localValue);
+  const widestWindow = Math.max(0, ...(hall?.windows || []).map(window => (Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3)) - Number(window.start.slice(0, 2)) * 60 - Number(window.start.slice(3))) / 60));
+  const options = available.length ? available : Array.from({ length: Math.min(12, Math.floor(widestWindow)) }, (_, index) => index + 1);
+  return selected && !options.includes(selected) ? [...options, selected].sort((a, b) => a - b) : options;
 }
 async function uploadImage(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
-  const response = await fetch(`${BASE}/api/v1/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file });
-  const result = await response.json();
+  const response = await fetch(`${BASE}/api/v1/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file }).catch(() => { throw new Error('Нет связи с сервисом. Попробуйте загрузить фото ещё раз.'); });
+  const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
   return result;
 }
@@ -132,6 +161,15 @@ async function saveDownload(response, fallbackName) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+async function downloadResponse(path) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try { return await fetch(`${BASE}/api/v1${path}`, { headers: { Authorization: `Bearer ${authToken}` } }); }
+    catch {
+      if (attempt === 2) throw new Error('Нет связи с сервисом. Повторите выгрузку, когда интернет восстановится.');
+      await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)));
+    }
+  }
+}
 function openExternal(link) {
   if (window.WebApp?.openMaxLink) window.WebApp.openMaxLink(link);
   else if (window.WebApp?.openLink) window.WebApp.openLink(link);
@@ -140,8 +178,68 @@ function openExternal(link) {
 const positions = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "позиция" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "позиции" : "позиций"}`;
 const localDateTime = value => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow', hour12: false }).replace(' ', 'T').slice(0, 16);
 };
+const moscowIso = moscowDateTimeIso;
+const deadlineBefore = eventDate => {
+  const eventTime = Date.parse(moscowIso(eventDate));
+  return localDateTime(new Date(Math.min(eventTime - 60_000, Math.max(Date.now() + 60_000, eventTime - 3600_000))).toISOString());
+};
+function RussianDateTimeInput({ name, value, defaultValue, onChange, ...props }) {
+  const [display, setDisplay] = useState(formatRussianDateTime(value ?? defaultValue));
+  useEffect(() => { if (value) setDisplay(formatRussianDateTime(value)); }, [value]);
+  return <input
+    {...props}
+    type="text"
+    name={name}
+    inputMode="text"
+    autoComplete="off"
+    maxLength={16}
+    placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
+    value={display}
+    onChange={event => {
+      const next = event.target.value;
+      const parsed = parseRussianDateTime(next);
+      event.target.setCustomValidity(next && !parsed ? 'Введите реальную дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ.' : '');
+      setDisplay(next);
+      onChange?.(parsed);
+    }}
+  />;
+}
+function BookingMiniCalendar({ restaurantId, hallId, durationHours, value, onChange, excludeEventId = '' }) {
+  const day = /^\d{4}-\d{2}-\d{2}/.test(value || '') ? value.slice(0, 10) : '';
+  const [month, setMonth] = useState(day.slice(0, 7) || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }).slice(0, 7));
+  const [focusedDay, setFocusedDay] = useState(day);
+  const [calendar, setCalendar] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => { if (day) { setFocusedDay(day); setMonth(day.slice(0, 7)); } }, [day]);
+  useEffect(() => {
+    if (!restaurantId || !hallId || !durationHours) { setCalendar(null); return; }
+    let active = true;
+    setCalendar(null);
+    setError('');
+    const query = new URLSearchParams({ month, hallId, durationHours: String(durationHours) });
+    if (excludeEventId) query.set('excludeEventId', excludeEventId);
+    api(`/restaurants/${restaurantId}/availability/month?${query}`).then(result => { if (active) setCalendar(result); }).catch(() => { if (active) setError('Не удалось загрузить свободное время. Попробуйте ещё раз.'); });
+    return () => { active = false; };
+  }, [restaurantId, hallId, durationHours, month, excludeEventId]);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const offset = (new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay() + 6) % 7;
+  const currentMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }).slice(0, 7);
+  const moveMonth = step => { const date = new Date(Date.UTC(year, monthNumber - 1 + step, 1)); setMonth(date.toISOString().slice(0, 7)); setFocusedDay(''); };
+  const slots = calendar?.days.find(entry => entry.date === focusedDay)?.slots || [];
+  const selectedSlot = value && calendar?.month === value.slice(0, 7) && calendar.days.some(entry => entry.date === value.slice(0, 10) && entry.slots.includes(value.slice(11, 16)));
+  useEffect(() => { if (calendar && value && calendar.month === value.slice(0, 7) && !selectedSlot) onChange(''); }, [calendar, value, selectedSlot]);
+  const slotCount = count => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'свободный слот' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'свободных слота' : 'свободных слотов'}`;
+  return <div className="booking-mini-calendar" aria-label="Свободное время зала">
+    <div className="booking-calendar-head"><div><strong>Свободное время</strong><small>Выберите день и начало банкета на {durationHours} ч.</small></div><div className="booking-calendar-month"><button type="button" aria-label="Предыдущий месяц" disabled={month <= currentMonth} onClick={() => moveMonth(-1)}>‹</button><span>{new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)))}</span><button type="button" aria-label="Следующий месяц" onClick={() => moveMonth(1)}>›</button></div></div>
+    <div className="booking-calendar-days">{['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(label => <span key={label}>{label}</span>)}{Array.from({ length: offset }, (_, index) => <span key={`empty-${index}`} />)}{calendar?.days.map(entry => <button key={entry.date} type="button" className={focusedDay === entry.date ? 'selected' : ''} disabled={!entry.slots.length} aria-label={`${new Date(`${entry.date}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}: ${entry.slots.length ? slotCount(entry.slots.length) : 'нет свободного времени'}`} onClick={() => setFocusedDay(entry.date)}><strong>{Number(entry.date.slice(-2))}</strong>{entry.slots.length > 0 && <i />}</button>)}</div>
+    {!calendar && !error && <p className="muted">{restaurantId && hallId && durationHours ? 'Загружаем свободные слоты…' : 'Выберите зал и длительность, чтобы увидеть свободные слоты.'}</p>}
+    {error && <p className="booking-calendar-error">{error}</p>}
+    {calendar && <div className="booking-calendar-times"><strong>{focusedDay && focusedDay.slice(0, 7) === month ? `Начало · ${new Date(`${focusedDay}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : 'Выберите доступный день'}</strong>{focusedDay && focusedDay.slice(0, 7) === month && (slots.length ? <div className="booking-time-grid">{slots.map(time => <button key={time} type="button" className={value === `${focusedDay}T${time}` ? 'selected' : ''} onClick={() => onChange(`${focusedDay}T${time}`)}>{time}</button>)}</div> : <small>На этот день свободного времени для выбранной длительности нет.</small>)}</div>}
+    <div className={value ? 'booking-calendar-selected' : 'booking-calendar-selected empty'}>{value ? `Выбрано: ${formatRussianDateTime(value)} · время по Москве` : 'Дата банкета не выбрана. Нажмите на день и свободное время.'}</div>
+  </div>;
+}
 function Brand({ small = false }) {
   return (
     <div className={`brand ${small ? "small" : ""}`}>
@@ -185,6 +283,7 @@ function Modal({ title, children, onClose }) {
     const previous = document.activeElement;
     ref.current?.focus();
     const handler = (e) => {
+      if (document.querySelector('.confirm-backdrop')) return;
       if (e.key === "Escape") onClose();
       if (e.key === "Tab") {
         const elements = [
@@ -249,12 +348,16 @@ function App() {
     [board, setBoard] = useState(null),
     [kitchenSelection, setKitchenSelection] = useState([]),
     [catalogRestaurant, setCatalogRestaurant] = useState(null),
+    [restaurantQuery, setRestaurantQuery] = useState(''),
+    [favoriteOnly, setFavoriteOnly] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
     [restaurantForm, setRestaurantForm] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
     [editPackage, setEditPackage] = useState(null),
+    [editPackageDish, setEditPackageDish] = useState(null),
+    [editHall, setEditHall] = useState(null),
     [filter, setFilter] = useState("all"),
     [helpOpen, setHelpOpen] = useState(false);
   const startParam =
@@ -271,12 +374,23 @@ function App() {
   const notify = useCallback((message) => {
     setToast(message);
   }, []);
+  const toggleFavorite = async restaurant => perform(async () => {
+    await api(`/restaurants/${restaurant.id}/favorite`, { method: restaurant.favorite ? 'DELETE' : 'PUT' });
+    await refresh();
+    notify(restaurant.favorite ? 'Ресторан удалён из избранного' : 'Ресторан добавлен в избранное');
+  });
   useEffect(() => {
     if (toast) {
       const id = setTimeout(() => setToast(""), 4500);
       return () => clearTimeout(id);
     }
   }, [toast]);
+  useEffect(() => {
+    if (error) {
+      const id = setTimeout(() => setError(''), 7000);
+      return () => clearTimeout(id);
+    }
+  }, [error]);
   const remember = (data) => {
     authToken = data.token;
     sessionStorage.setItem("banquet-token", data.token);
@@ -371,13 +485,13 @@ function App() {
     if (session) refresh().catch((e) => setError(e.message));
   }, [session, refresh]);
   // MAX keeps the mini app alive in the background: pick up roles granted meanwhile.
-  const sessionKey = session ? JSON.stringify([session.role, session.access, session.phoneVerified, session.notificationsEnabled, session.botConnected]) : "";
+  const sessionKey = session ? JSON.stringify([session.role, session.access, session.phoneVerified, session.notificationsEnabled, session.notificationPreferences, session.botConnected]) : "";
   useEffect(() => {
     if (!sessionKey) return;
     const check = () => {
       if (document.visibilityState === "hidden") return;
       api("/me").then((me) => {
-        const key = JSON.stringify([me.role, me.access, me.phoneVerified, me.notificationsEnabled, me.botConnected]);
+        const key = JSON.stringify([me.role, me.access, me.phoneVerified, me.notificationsEnabled, me.notificationPreferences, me.botConnected]);
         if (key !== sessionKey) setSession(me);
       }).catch(() => {});
     };
@@ -406,6 +520,11 @@ function App() {
     setSession(updated);
     notify(updated.notificationsEnabled ? (updated.botConnected ? 'Уведомления включены' : 'Уведомления включены. Откройте чат с ботом и нажмите «Начать».') : 'Уведомления выключены');
   });
+  const setNotificationCategory = (category, enabled) => perform(async () => {
+    const updated = await api('/me/notifications', { method: 'PUT', body: { categories: { [category]: enabled } } });
+    setSession(updated);
+    notify('Настройки уведомлений сохранены');
+  });
   const openBot = () => config?.botUsername && openExternal(`https://max.ru/${config.botUsername}`);
   const exportKitchen = (format, eventIds) => perform(async () => {
     if (!eventIds?.length) throw new Error('Выберите хотя бы одно мероприятие для выгрузки.');
@@ -415,7 +534,7 @@ function App() {
       notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
       return;
     }
-    await saveDownload(await fetch(`${BASE}/api/v1/kitchen/export?format=${format}&eventIds=${encodeURIComponent(eventIds.join(','))}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
+    await saveDownload(await downloadResponse(`/kitchen/export?format=${format}&eventIds=${encodeURIComponent(eventIds.join(','))}`), `kitchen.${format}`);
     notify('Файл скачан. Проверьте папку «Загрузки» браузера.');
   });
   const loadDetail = useCallback(async (id) => {
@@ -462,7 +581,7 @@ function App() {
     try {
       return await fn();
     } catch (e) {
-      setError(e.message);
+      setError(russianError(e));
       return null;
     } finally {
       setBusy(false);
@@ -490,7 +609,7 @@ function App() {
     setScreen('events');
     setSelected(id);
     setDetail(null);
-    setTab(asGuest || session?.role === "guest" ? "menu" : "guests");
+    setTab(asGuest ? "menu" : "guests");
   };
   useEffect(() => {
     if (startEvent && events.some(event => event.id === startEvent)) {
@@ -568,9 +687,7 @@ function App() {
         notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
         return;
       }
-      const res = await fetch(`${BASE}/api/v1/events/${selected}/export.csv`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
+      const res = await downloadResponse(`/events/${selected}/export.csv`);
       if (!res.ok) throw new Error("Экспорт доступен после утверждения заказа");
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
@@ -620,11 +737,6 @@ function App() {
                 <CheckCheck /> Утвердите заказ
               </span>
             </div>
-            {error && (
-              <div role="alert" className="alert error">
-                {error}
-              </div>
-            )}
             {config?.maxConfigured && (
               <Button
                 onClick={() =>
@@ -649,7 +761,7 @@ function App() {
             )}
             <p className="fineprint">
               {config?.demoEnabled
-                ? "Демонстрация с тестовым рестораном и меню. Ваши изменения сохраняются в отдельном пространстве."
+                ? "Демо банкетного зала «Петръ»: четыре роли, готовые банкеты и тестовые гости. Изменения остаются в отдельном пространстве."
                 : "Для входа откройте мини-приложение в MAX."}
             </p>
           </div>
@@ -679,10 +791,12 @@ function App() {
           Банкеты без бесконечных переписок
           <span>Организатор · Гости · Ресторан</span>
         </div>
+        {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{russianError(error)}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
       </div>
     );
   const role = session.role,
     isAdminRole = role === 'restaurant' || role === 'admin',
+    hasManagedEvents = events.some(event => event.canManage),
     guestFirst = !session.demo && role === 'guest',
     canManage = Boolean(detail?.event.canManage),
     seatingOn = Boolean(detail && detail.seating?.mode !== "off"),
@@ -709,8 +823,7 @@ function App() {
             {isAdminRole ? "Заказы на банкеты" : guestFirst ? 'Мои приглашения' : "Мои банкеты"}
             <span>{events.length}</span>
           </button>
-          {role !== "guest" && (
-            <button
+          <button
               className={screen === "catalog" ? "active" : ""}
               onClick={() => {
                 setScreen("catalog");
@@ -718,16 +831,15 @@ function App() {
               }}
             >
               <Utensils size={19} />
-              {isAdminRole ? "Меню ресторана" : "Меню ресторанов"}
+              Рестораны
             </button>
-          )}
-          {isAdminRole && (
+          {(isAdminRole || hasManagedEvents) && (
             <button
               className={screen === "users" ? "active" : ""}
               onClick={() => go("users")}
             >
               <Users size={19} />
-              Пользователи
+              Доступы
             </button>
           )}
           {isAdminRole && (
@@ -767,7 +879,7 @@ function App() {
           <div className="breadcrumb desktop-only">
             Моё пространство <ChevronRight size={14} />
             <span>
-              {selected ? "Банкет" : screen === "catalog" ? "Меню" : screen === "kitchen" ? "Кухня" : screen === "users" ? "Пользователи" : "Банкеты"}
+              {selected ? "Банкет" : screen === "catalog" ? "Рестораны" : screen === "kitchen" ? "Кухня" : screen === "users" ? "Доступы" : "Банкеты"}
             </span>
           </div>
           <div className="topbar-right">
@@ -780,9 +892,9 @@ function App() {
                   disabled={busy || !sandbox.current}
                   onChange={(e) => demo(e.target.value)}
                 >
-                  {['organizer', 'guest', 'restaurant'].map(k => (
+                  {['admin', 'restaurant', 'organizer', 'guest'].map(k => (
                     <option key={k} value={k}>
-                      {k === 'restaurant' ? 'Ресторан' : roleNames[k]}
+                      {roleNames[k]}
                     </option>
                   ))}
                 </select>
@@ -800,22 +912,7 @@ function App() {
           {session.demo && (
             <div className="demo-note">
               <Sparkles size={15} />
-              <span>Демо-пространство · тестовый ресторан, гости и меню</span>
-            </div>
-          )}
-          {error && (
-            <div
-              className={`alert error ${createOpen || approveOpen || editItem ? "floating-error" : ""}`}
-              role="alert"
-            >
-              <span>{error}</span>
-              <button
-                className="icon-btn"
-                aria-label="Закрыть ошибку"
-                onClick={() => setError("")}
-              >
-                <X size={16} />
-              </button>
+              <span>Демо «Петръ» · четыре роли, два банкета и тестовые гости</span>
             </div>
           )}
           {invite && (
@@ -832,12 +929,13 @@ function App() {
           {screen === "users" && !selected ? (
             <>
               <div className="page-heading">
-                <div className="eyebrow">ДОСТУПЫ К РЕСТОРАНАМ</div>
-                <h1>Пользователи</h1>
-                <p>Человек появляется здесь, когда впервые откроет мини-приложение в MAX. Выберите его роль в каждом из ваших ресторанов: администратор, организатор или обычный гость.</p>
+                <div className="eyebrow">ПРАВА К БАНКЕТАМ И РЕСТОРАНАМ</div>
+                <h1>Доступы</h1>
+                <p>Здесь видны только участники ваших банкетов и администраторы ваших ресторанов. Добавьте человека по телефону или MAX ID.</p>
               </div>
               <UsersAdmin
                 session={session}
+                events={events.filter(event => event.canManage)}
                 busy={busy}
                 load={(q) => api(`/users?q=${encodeURIComponent(q)}`)}
                 setRole={(restaurantId, userId, role) => perform(async () => {
@@ -848,6 +946,12 @@ function App() {
                 setGlobal={(userId, enabled) => perform(async () => {
                   await api(`/admins/${userId}`, { method: 'PUT', body: { enabled } });
                   notify(enabled ? 'Администратор назначен' : 'Роль администратора снята');
+                  return true;
+                })}
+                setOrganizer={(eventId, userId, enabled) => perform(async () => {
+                  await api(`/events/${eventId}/organizers/${encodeURIComponent(userId)}`, { method: 'PUT', body: { enabled } });
+                  await refresh();
+                  notify(enabled ? 'Организатор назначен' : 'Право организатора снято');
                   return true;
                 })}
                 onError={setError}
@@ -869,20 +973,21 @@ function App() {
                 <div className="eyebrow">ПОДОБРАНО СО ВКУСОМ</div>
                 <h1>{catalogRestaurant ? restaurants.find(r => r.id === catalogRestaurant)?.name || 'Меню' : 'Рестораны'}</h1>
                 <p>
-                  {catalogRestaurant ? 'Меню и пакетные предложения ресторана. Изменения доступны для новых банкетов.' : 'Выберите ресторан, чтобы посмотреть и настроить его меню.'}
+                  {catalogRestaurant ? 'Меню, пакетные предложения и залы ресторана. Редактирование доступно его администратору.' : 'Все рестораны доступны для просмотра. Выберите ресторан, чтобы посмотреть меню и условия бронирования.'}
                 </p>
                 {catalogRestaurant && <button className="back-link" type="button" onClick={() => setCatalogRestaurant(null)}><ArrowLeft size={16} /> Все рестораны</button>}
                 {session.superAdmin && !catalogRestaurant && (
                   <Button variant="secondary" onClick={() => setRestaurantForm({})}><Store size={16} /> Добавить ресторан</Button>
                 )}
               </div>
-              {!restaurants.length && <Empty title="Нет доступных ресторанов">Попросите администратора ресторана выдать вам доступ.</Empty>}
-              {!catalogRestaurant && <div className="restaurant-choice-grid">{restaurants.map(r => <button className="restaurant-choice panel" type="button" key={r.id} onClick={() => setCatalogRestaurant(r.id)}>
+              {!restaurants.length && <Empty title="Пока нет ресторанов">Администратор может добавить ресторан.</Empty>}
+              {!catalogRestaurant && <div className="restaurant-search"><label className="search-field"><Search size={16} /><input type="search" placeholder="Найти ресторан" aria-label="Поиск ресторана" value={restaurantQuery} onChange={event => setRestaurantQuery(event.target.value)} /></label><button type="button" className={favoriteOnly ? 'favorite-filter active' : 'favorite-filter'} onClick={() => setFavoriteOnly(value => !value)}><Star size={16} fill={favoriteOnly ? 'currentColor' : 'none'} /> Избранные</button></div>}
+              {!catalogRestaurant && <div className="restaurant-choice-grid">{restaurants.filter(r => (!favoriteOnly || r.favorite) && `${r.name} ${r.address} ${r.description}`.toLocaleLowerCase('ru').includes(restaurantQuery.trim().toLocaleLowerCase('ru'))).sort((a,b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name, 'ru')).map(r => <div className="restaurant-choice panel" key={r.id}><button className="restaurant-choice-open" type="button" onClick={() => setCatalogRestaurant(r.id)}>
                 <span className="restaurant-choice-icon"><Store size={25} /></span>
                 <strong>{r.name}</strong>
                 <small>{r.address || r.description}</small>
                 <span>{r.menu?.length || 0} позиций · {r.packages?.length || 0} пакетов <ArrowUpRight size={16} /></span>
-              </button>)}</div>}
+              </button><button type="button" className={r.favorite ? 'favorite-button active' : 'favorite-button'} aria-label={r.favorite ? `Убрать ${r.name} из избранного` : `Добавить ${r.name} в избранное`} onClick={() => toggleFavorite(r)}><Star size={20} fill={r.favorite ? 'currentColor' : 'none'} /></button></div>)}</div>}
               {restaurants.filter(r => r.id === catalogRestaurant).map((r) => (
                 <section key={r.id}>
                   <div className="section-head">
@@ -911,6 +1016,10 @@ function App() {
                       </div>
                     )}
                   </div>
+                  <div className="section-head package-section-head"><div><h2>Залы и бронирование</h2><p className="muted">Каждый зал бронируется отдельно. Ресторан задаёт готовую схему со стульями или размеры столов для расстановки организатором.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditHall({ restaurantId: r.id, name: '', capacity: 100, windows: [{ weekday: 1, start: '09:00', end: '23:00' }], seatingConfig: { type: 'fixed', fixedLayout: generateLayout('rounds', 20), tablePresets: [{ shape: 'round', seats: 6 }, { shape: 'round', seats: 8 }, { shape: 'rect', seats: 6 }, { shape: 'rect', seats: 10 }] } })}><Plus size={16} /> Добавить зал</Button>}</div>
+                  <div className="package-grid">{r.halls?.map(hall => <div className="panel package-card" key={hall.id}><strong>{hall.name}</strong><span>До {hall.capacity} гостей</span><small>{hall.windows.length} окон в неделю · {hall.seatingConfig?.type === 'fixed' ? `готовая схема: ${layoutSeats(hall.seatingConfig.fixedLayout).length} мест, режим рассадки выбирает организатор` : `организатор расставляет столы из ${hall.seatingConfig?.tablePresets.length || 0} размеров`}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditHall({ ...hall, restaurantId: r.id })}>Настроить зал</button>}</div>)}</div>
+                  <div className="section-head package-section-head"><div><h2>Блюда только для пакетов</h2><p className="muted">Укажите состав, фото и КБЖУ. Эти блюда не появляются в обычном меню гостей.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackageDish({ restaurantId: r.id, name: '', category: 'Холодные закуски', nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, available: true })}><Plus size={16} /> Добавить блюдо пакета</Button>}</div>
+                  <div className="package-grid">{r.packageDishes?.map(dish => <div className="panel package-card" key={dish.id}><strong>{dish.name}</strong><small>Только для пакетного предложения · {dish.category}</small>{dish.photoUrl && <img className="package-dish-photo" src={`${BASE}${dish.photoUrl}`} alt={dish.name} />}<p>{dish.description}</p><small>К {dish.nutrition.kcal} · Б {dish.nutrition.protein} · Ж {dish.nutrition.fat} · У {dish.nutrition.carbs}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditPackageDish({ ...dish, restaurantId: r.id })}>Редактировать</button>}</div>)}</div>
                   {[...new Set((r.menu || []).map(item => item.category))].map((category, index) => <details className="menu-category" key={category} open={index === 0}><summary>{category} <span>{r.menu.filter(item => item.category === category).length}</span></summary><div className="menu-grid catalog">
                     {r.menu?.filter(item => item.category === category).map((item) => (
                       <DishCard
@@ -924,6 +1033,7 @@ function App() {
                     ))}
                   </div></details>)}
                   {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
+                  {r.name.includes('Петръ') && <p className="photo-credits"><a href={`${BASE}/petr-photos/credits.html`} target="_blank" rel="noopener noreferrer">Источники фотографий блюд</a></p>}
                   <div className="section-head package-section-head"><div><h2>Пакетные предложения</h2><p className="muted">Фиксированная цена на гостя. Состав сохраняется в банкет при выборе пакета.</p></div>
                     {r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackage({ restaurantId: r.id, name: '', price: 0, items: [] })}><Plus size={16} /> Добавить пакет</Button>}
                   </div>
@@ -963,7 +1073,7 @@ function App() {
                         {detail.event.restaurantName}
                       </p>
                     </div>
-                    {detail.event.isOwner && (
+                    {canManage && (
                       <Button variant="secondary" onClick={share}>
                         <Link2 size={17} />
                         Пригласить гостей
@@ -1101,7 +1211,7 @@ function App() {
                     <SeatPicker
                       detail={detail}
                       busy={busy}
-                      canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
+                      canSelect={detail.seating?.mode === 'choice' && detail.event.status === 'collecting' && (session.demo || session.phoneVerified)}
                       choose={(seatId) =>
                         perform(async () => {
                           await api(`/events/${selected}/seat`, { method: "PUT", body: { seatId } });
@@ -1159,7 +1269,7 @@ function App() {
                               {money(detail.event.total - detail.event.budget)}
                             </p>
                           )}
-                        {detail.event.isOwner &&
+                        {canManage &&
                           detail.event.status !== "approved" && (
                             <Button
                               disabled={busy || (detail.event.selectionMode !== 'package' && !detail.event.responded)}
@@ -1194,8 +1304,9 @@ function App() {
                       busy={busy}
                       setForGuests={(item, forGuests) => updateAdmin(() => api(`/events/${selected}/menu/${item.id}`, { method: 'PATCH', body: { forGuests } }), forGuests ? 'Позиция доступна гостям' : 'Позиция скрыта от гостей')}
                       saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Общий стол сохранён')}
-                      importItems={itemIds => updateAdmin(() => api(`/events/${selected}/menu/import`, { method: 'POST', body: { itemIds } }), 'Позиции добавлены в меню банкета')}
+                      saveCatalogMenu={itemIds => updateAdmin(() => api(`/events/${selected}/menu/catalog`, { method: 'PUT', body: { itemIds } }), 'Меню банкета обновлено')}
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
+                      removeEvent={detail.event.canDelete ? () => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); }) : null}
                       uploadPhoto={file => perform(() => uploadImage(file))}
                       addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
@@ -1294,7 +1405,7 @@ function App() {
                         : "Гости выбирают любимое. Вы держите всё под контролем."}
                   </p>
                 </div>
-                {role !== "guest" && !guestFirst && (
+                {(
                   <Button onClick={() => setCreateOpen(true)}>
                     <Plus size={18} />
                     Создать банкет
@@ -1308,7 +1419,7 @@ function App() {
                     <p>{session.phoneVerified ? 'Новые банкеты на ваш номер появятся автоматически при следующем входе. Если вам прислали ссылку, откройте её в MAX.' : 'Подтвердите номер через MAX один раз. После этого новые приглашения будут появляться автоматически.'}</p>
                   </div>
                   {!session.phoneVerified && <Button disabled={busy} onClick={() => perform(findMyInvites)}>Подтвердить номер MAX</Button>}
-                  <small className="guest-discovery-hint">Вы организатор? Попросите администратора ресторана выдать вам роль «Организатор» в разделе «Пользователи». Кнопка «Создать банкет» появится здесь сама, перезапускать приложение не нужно.</small>
+                  <small className="guest-discovery-hint">Вы можете создать собственный банкет в одном из ресторанов кнопкой «Создать банкет».</small>
                 </div>
               )}
               <div className="stats-row">
@@ -1428,7 +1539,7 @@ function App() {
                     </div>
                   </button>
                 ))}
-                {role !== "guest" && !guestFirst && filter === "all" && (
+                {filter === "all" && (
                   <button
                     className="new-event-card"
                     onClick={() => setCreateOpen(true)}
@@ -1484,19 +1595,17 @@ function App() {
             <CalendarDays size={19} />
             Банкеты
           </button>
-          {role !== "guest" && (
-            <button className={screen === "catalog" && !profileOpen ? "active" : ""} onClick={() => go("catalog")}>
+          <button className={screen === "catalog" && !profileOpen ? "active" : ""} onClick={() => go("catalog")}>
               <Utensils size={19} />
-              Меню
+              Рестораны
             </button>
-          )}
           {isAdminRole && (
             <button className={screen === "kitchen" && !profileOpen ? "active" : ""} onClick={() => go("kitchen")}>
               <ChefHat size={19} />
               Кухня
             </button>
           )}
-          {isAdminRole && (
+          {(isAdminRole || hasManagedEvents) && (
             <button className={screen === "users" && !profileOpen ? "active" : ""} onClick={() => go("users")}>
               <Users size={19} />
               Доступы
@@ -1511,18 +1620,17 @@ function App() {
           {toast}
         </div>
       )}
+      {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{russianError(error)}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
       {createOpen && (
         <CreateEvent
           restaurants={restaurants}
           busy={busy}
+          toggleFavorite={toggleFavorite}
           uploadPhoto={file => perform(() => uploadImage(file))}
           onClose={() => setCreateOpen(false)}
-          submit={({ seating, ...body }) =>
+          submit={(body) =>
             perform(async () => {
               const e = await api("/events", { method: "POST", body });
-              if (seating.mode !== "off") {
-                await api(`/events/${e.id}/seating`, { method: "PUT", body: { mode: seating.mode, layout: generateLayout(seating.template, body.expectedGuests) } });
-              }
               await refresh();
               setCreateOpen(false);
               openEvent(e.id || e.event?.id);
@@ -1599,7 +1707,21 @@ function App() {
           }
         />
       )}
-      {editPackage && <EditPackage offer={editPackage} busy={busy} onClose={() => setEditPackage(null)} submit={values => perform(async () => {
+      {editHall && <HallEditor hall={editHall} busy={busy} onClose={() => setEditHall(null)} submit={values => perform(async () => {
+        await api(`/restaurants/${editHall.restaurantId}/halls${editHall.id ? '/' + editHall.id : ''}`, { method: editHall.id ? 'PATCH' : 'POST', body: values });
+        await refresh(); setEditHall(null); notify('Настройки зала сохранены');
+      })} remove={editHall.id ? () => perform(async () => {
+        await api(`/restaurants/${editHall.restaurantId}/halls/${editHall.id}`, { method: 'DELETE' });
+        await refresh(); setEditHall(null); notify('Зал удалён');
+      }) : null} />}
+      {editPackageDish && <PackageDishEditor dish={editPackageDish} busy={busy} uploadPhoto={file => perform(() => uploadImage(file))} onClose={() => setEditPackageDish(null)} submit={values => perform(async () => {
+        await api(`/restaurants/${editPackageDish.restaurantId}/package-dishes${editPackageDish.id ? '/' + editPackageDish.id : ''}`, { method: editPackageDish.id ? 'PATCH' : 'POST', body: values });
+        await refresh(); setEditPackageDish(null); notify('Блюдо пакета сохранено');
+      })} remove={editPackageDish.id ? () => perform(async () => {
+        await api(`/restaurants/${editPackageDish.restaurantId}/package-dishes/${editPackageDish.id}`, { method: 'DELETE' });
+        await refresh(); setEditPackageDish(null); notify('Блюдо пакета удалено');
+      }) : null} />}
+      {editPackage && <EditPackage offer={editPackage} dishes={restaurants.find(r => r.id === editPackage.restaurantId)?.packageDishes || []} busy={busy} onError={setError} onClose={() => setEditPackage(null)} submit={values => perform(async () => {
         await api(`/restaurants/${editPackage.restaurantId}/packages${editPackage.id ? '/' + editPackage.id : ''}`, { method: editPackage.id ? 'PATCH' : 'POST', body: values });
         await refresh(); setEditPackage(null); notify('Пакет сохранён');
       })} remove={editPackage.id ? () => perform(async () => {
@@ -1619,10 +1741,11 @@ function App() {
             <div className="profile-section">
               <h3>Доступ к ресторанам</h3>
               {session.access.map((entry) => (
-                <p key={entry.restaurantId}>{entry.restaurantName} — {entry.role === "admin" ? (session.superAdmin && !session.demo ? "администратор" : "администратор ресторана") : "организатор"}</p>
+                <p key={entry.restaurantId}>{entry.restaurantName} — {session.superAdmin && !session.demo ? 'администратор' : 'администратор ресторана'}</p>
               ))}
             </div>
           )}
+          {events.some(event => event.canManage && !session.access?.some(entry => entry.restaurantId === event.restaurantId)) && <div className="profile-section"><h3>Права организатора</h3>{events.filter(event => event.canManage && !session.access?.some(entry => entry.restaurantId === event.restaurantId)).map(event => <p key={event.id}>{event.restaurantName} · {event.title} — организатор банкета</p>)}</div>}
           {session.demo ? (
             <p className="muted">В демо подтверждение номера и уведомления MAX недоступны.</p>
           ) : (
@@ -1636,8 +1759,15 @@ function App() {
                 <h3>Уведомления в MAX</h3>
                 <label className="switch-row">
                   <input type="checkbox" checked={session.notificationsEnabled} disabled={busy} onChange={toggleNotifications} />
-                  <span>Присылать напоминания и новости о банкетах</span>
+                  <span>Включить уведомления в MAX</span>
                 </label>
+                <div className="notification-preferences" role="group" aria-label="Категории уведомлений">
+                  {NOTIFICATION_CATEGORIES.map(category => <label className="notification-category" key={category.key}>
+                    <input type="checkbox" checked={(session.notificationPreferences || DEFAULT_NOTIFICATION_PREFERENCES)[category.key]} disabled={busy} onChange={event => setNotificationCategory(category.key, event.target.checked)} />
+                    <span><strong>{category.label}</strong><small>{category.description}</small></span>
+                  </label>)}
+                </div>
+                {!session.notificationsEnabled && <p>Выберите нужные категории, затем включите уведомления.</p>}
                 {session.notificationsEnabled && (
                   <p className={session.botConnected ? "green" : "budget-warning"}>
                     {session.botConnected ? "Чат с ботом открыт — сообщения будут приходить." : "Чтобы бот мог писать, откройте с ним чат и нажмите «Начать»."}
@@ -1824,7 +1954,7 @@ function PackageView({ offer, guests }) {
   const categories = [...new Set(offer.items.map(item => item.category))];
   return <section className="panel package-view"><div className="section-head"><div><h2>{offer.name}</h2><p className="muted">Фиксированный пакет · {money(offer.price)} на гостя · {guests} гостей</p></div></div>
     <p className="package-notice">Организатор выбрал единый пакет для банкета. Вам не нужно выбирать блюда; ниже можно посмотреть его состав.</p>
-    {categories.map(category => <div className="package-category" key={category}><h3>{category}</h3>{offer.items.filter(item => item.category === category).map((item, index) => <div className="package-item" key={`${category}-${index}`}><span>{item.name}</span><strong>{item.grams} г</strong></div>)}</div>)}
+    {categories.map(category => <div className="package-category" key={category}><h3>{category}</h3>{offer.items.filter(item => item.category === category).map((item, index) => <div className="package-item package-item-rich" key={`${category}-${index}`}>{item.photoUrl && <img src={`${BASE}${item.photoUrl}`} alt="" />}<div><strong>{item.name}</strong><small>Только для пакетного предложения · {item.grams} г</small>{item.description && <p>{item.description}</p>}<small>К {item.nutrition?.kcal ?? '—'} · Б {item.nutrition?.protein ?? '—'} · Ж {item.nutrition?.fat ?? '—'} · У {item.nutrition?.carbs ?? '—'}</small>{item.labels?.length > 0 && <small>{item.labels.join(' · ')}</small>}</div></div>)}</div>)}
   </section>;
 }
 function GuestMenu({ detail, busy, save, canSelect, guestView }) {
@@ -2012,13 +2142,18 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
     </>
   );
 }
-function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
+function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, uploadPhoto, addGuest, editGuest, deleteDish, editDish, setForGuests, saveShared, saveCatalogMenu }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
   const [packageDraft, setPackageDraft] = useState(detail.event.package?.id || '');
+  const [dateDraft, setDateDraft] = useState(localDateTime(detail.event.date));
+  const [deadlineDraft, setDeadlineDraft] = useState(localDateTime(detail.event.deadline));
+  const [hallDraft, setHallDraft] = useState(detail.event.hallId);
+  const [durationDraft, setDurationDraft] = useState(detail.event.durationHours || 4);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(null);
+  const [catalogQuery, setCatalogQuery] = useState('');
   const serverShared = JSON.stringify(detail.shared || []);
   const toDraft = () => Object.fromEntries((detail.shared || []).map(s => [s.menuItemId, s.quantity]));
   const [shared, setShared] = useState(toDraft);
@@ -2026,16 +2161,25 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
   useEffect(() => { if (!sharedDirty) setShared(toDraft()); }, [serverShared]);
   useEffect(() => { setModeDraft(detail.event.selectionMode || 'individual'); }, [detail.event.selectionMode]);
   useEffect(() => { setPackageDraft(detail.event.package?.id || ''); }, [detail.event.package?.id]);
+  useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setDeadlineDraft(localDateTime(detail.event.deadline)); setHallDraft(detail.event.hallId); setDurationDraft(detail.event.durationHours || 4); }, [detail.event.id, detail.event.date, detail.event.deadline, detail.event.hallId, detail.event.durationHours]);
+  const chooseEventDate = selected => {
+    setDateDraft(selected);
+    if (selected && (!deadlineDraft || moscowIso(deadlineDraft) >= moscowIso(selected))) setDeadlineDraft(deadlineBefore(selected));
+  };
   const active = detail.event.status === 'collecting';
+  const durations = bookingDurationOptions(catalog?.halls?.find(hall => hall.id === hallDraft), dateDraft, durationDraft);
+  const validDurations = durationOptions(catalog?.halls?.find(hall => hall.id === hallDraft), dateDraft);
   const packages = [...(catalog?.packages || [])];
   if (detail.event.package && !packages.some(offer => offer.id === detail.event.package.id)) packages.push(detail.event.package);
   const selectedOffer = packages.find(offer => offer.id === packageDraft) || packages[0];
-  const hotChoices = selectedOffer?.items.find(item => item.category === 'Горячее на выбор')?.name.split('/').map(value => value.trim()) || [];
+  const hotChoices = selectedOffer?.items.filter(item => item.choiceGroup) || [];
   const inMenu = new Set(detail.menu.map(item => item.id));
-  const missing = (catalog?.menu || []).filter(item => item.available && !inMenu.has(item.id));
+  const catalogItems = (catalog?.menu || []).filter(item => item.available || inMenu.has(item.id));
+  const visibleCatalogItems = catalogItems.filter(item => `${item.name} ${item.category} ${item.description || ''}`.toLocaleLowerCase('ru').includes(catalogQuery.trim().toLocaleLowerCase('ru')));
   const invited = detail.invitedGuests || [];
   const unlistedGuests = detail.guests.filter(guest => !invited.some(entry => entry.userId === guest.id));
   const orderedIds = new Set(detail.guests.flatMap(guest => guest.items.map(item => item.menuItemId)));
+  const lockedCatalogIds = new Set([...orderedIds, ...(detail.shared || []).map(item => item.menuItemId)]);
   const sharedTotal = detail.menu.reduce((sum, item) => sum + item.price * (shared[item.id] || 0), 0);
   const setSharedQty = (id, quantity) => { setShared(value => ({ ...value, [id]: quantity })); setSharedDirty(true); };
   return (
@@ -2056,26 +2200,30 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
           const nextMode = form.get('selectionMode');
           const nextPackage = form.get('packageId');
           const nextChoice = form.get('packageChoice');
-          const currentHot = detail.event.package?.items.find(item => item.category === 'Горячее')?.name;
+          const currentHot = detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId;
           const changePackage = nextMode === 'package' && (nextPackage !== detail.event.package?.id || (nextChoice && nextChoice !== currentHot));
-          saveEvent({ title: form.get('title'), photoUrl, date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
+          saveEvent({ title: form.get('title'), photoUrl, date: moscowIso(dateDraft), deadline: moscowIso(deadlineDraft), durationHours: durationDraft, hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} /></label>
           {detail.event.photoUrl && <label className="remove-photo-check"><input type="checkbox" name="removePhoto" disabled={!active} /><span>Убрать текущее фото</span></label>}
           <label>Формат заказа<select name="selectionMode" defaultValue={detail.event.selectionMode || 'individual'} disabled={!active} onChange={event => setModeDraft(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
           {modeDraft === 'package' && <label>Пакетное предложение<select name="packageId" value={selectedOffer?.id || ''} onChange={event => setPackageDraft(event.target.value)} disabled={!active}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)}{catalog?.packages?.some(item => item.id === offer.id) ? '' : ' · сохранён в банкете'}</option>)}</select></label>}
-          {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.includes(detail.event.package?.items.find(item => item.category === 'Горячее')?.name) ? detail.event.package.items.find(item => item.category === 'Горячее').name : hotChoices[0]} disabled={!active}>{hotChoices.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select></label>}
+          {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.some(item => item.dishId === detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId) ? detail.event.package.items.find(item => item.category === 'Горячее').dishId : hotChoices[0].dishId} disabled={!active}>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
           <div className="form-grid">
-            <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
-            <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
-            <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
+            <label>Длительность, часов<select name="durationHours" required value={durationDraft || ''} onChange={event => setDurationDraft(Number(event.target.value))} disabled={!active}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}{hours === durationDraft && !validDurations.includes(hours) ? ' · выберите время в календаре' : ''}</option>)}</select></label>
+            <label>Зал<select name="hallId" value={hallDraft} onChange={event => setHallDraft(event.target.value)} disabled={!active}>{catalog?.halls?.map(hall => <option key={hall.id} value={hall.id}>{hall.name} · до {hall.capacity} гостей</option>)}</select></label>
+            <label>Выбор блюд до<RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" required value={deadlineDraft} onChange={setDeadlineDraft} disabled={!active} /></label>
+            <label>Количество гостей<input type="number" name="expectedGuests" min="1" max={Math.min(1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.capacity || 1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.seatingConfig?.type === 'fixed' ? layoutSeats(catalog.halls.find(hall => hall.id === hallDraft).seatingConfig.fixedLayout).length : 1000)} required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
             {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
             {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
           </div>
+          {active && <BookingMiniCalendar restaurantId={detail.event.restaurantId} hallId={hallDraft} durationHours={durationDraft} value={dateDraft} onChange={chooseEventDate} excludeEventId={detail.event.id} />}
+          {!active && <p className="muted">Дата мероприятия: {formatRussianDateTime(dateDraft)} (Москва).</p>}
           {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
-          {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
+          {active && <Button type="submit" disabled={busy || !dateDraft}>Сохранить параметры</Button>}
         </form>
+        {removeEvent && <div className="danger-zone"><strong>Удаление банкета</strong><p>Банкет, заявки гостей и рассадка будут удалены без возможности восстановления.</p><Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить банкет «${detail.event.title}» вместе с заказами и рассадкой?`, { confirmLabel: 'Удалить банкет' })) removeEvent(); }}>Удалить банкет</Button></div>}
       </section>}
       {section === 'guests' && <section className="panel admin-panel">
         <div className="section-head"><div><h2>Приглашённые гости</h2><p className="muted">Гость подтвердит свой номер в MAX; статус и место видны ниже.</p></div><span>{detail.invitedGuests?.length || 0} из {detail.event.expectedGuests}</span></div>
@@ -2103,7 +2251,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
       {section === 'menu' && (detail.event.selectionMode === 'package' ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} /> : <section className="panel admin-panel">
         <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Отметьте, что могут выбрать гости, и что поставить на общий стол. Изменения действуют только для этого мероприятия.</p></div>
           {active && <div className="admin-actions">
-            <button type="button" disabled={!missing.length} onClick={() => setImporting([])}><Plus size={15} /> Из каталога{missing.length ? ` (${missing.length})` : ''}</button>
+            <button type="button" onClick={() => { setCatalogQuery(''); setImporting(catalogItems.filter(item => inMenu.has(item.id)).map(item => item.id)); }}><Plus size={15} /> Выбрать из каталога</button>
             <button type="button" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={15} /> Своя позиция</button>
           </div>}
         </div>
@@ -2142,18 +2290,20 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
           </div>;
         })}</div>
       </section>)}
-      {section === 'menu' && importing && <Modal title="Добавить из каталога" onClose={() => setImporting(null)}>
-        <p className="muted">Позиции общего меню ресторана, которых ещё нет в этом банкете.</p>
+      {section === 'menu' && importing && <Modal title="Выбрать блюда из каталога" onClose={() => setImporting(null)}>
+        <p className="muted">Отмеченные блюда входят в меню этого банкета. Уже выбранные гостями блюда и общий стол нельзя убрать.</p>
+        <label>Поиск блюда<input type="search" placeholder="Название или категория" value={catalogQuery} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} onChange={event => setCatalogQuery(event.target.value)} /></label>
+        <div className="catalog-selection-tools"><span>В меню: {importing.length} из {catalogItems.length}</span><button type="button" onClick={() => setImporting(current => [...new Set([...current, ...visibleCatalogItems.filter(item => item.available).map(item => item.id)])])}>Выбрать найденные</button><button type="button" onClick={() => setImporting(current => current.filter(id => lockedCatalogIds.has(id) || !visibleCatalogItems.some(item => item.id === id)))}>Снять найденные</button></div>
         <div className="import-list">
-          {missing.map(item => <label key={item.id} className="check">
-            <input type="checkbox" checked={importing.includes(item.id)} onChange={event => setImporting(event.target.checked ? [...importing, item.id] : importing.filter(id => id !== item.id))} />
-            <span>{item.emoji || '🍽️'} {item.name}</span>
-            <small>{item.category} · {money(item.price)}</small>
+          {visibleCatalogItems.map(item => <label key={item.id} className="check">
+            <input type="checkbox" checked={importing.includes(item.id)} disabled={lockedCatalogIds.has(item.id)} onChange={event => setImporting(event.target.checked ? [...importing, item.id] : importing.filter(id => id !== item.id))} />
+            <span>{item.emoji || '🍽️'} {item.name}<small>{item.category} · {money(item.price)}{lockedCatalogIds.has(item.id) ? ' · уже в заказе' : !item.available ? ' · недоступно в каталоге' : ''}</small></span>
           </label>)}
+          {!visibleCatalogItems.length && <p className="muted">Подходящих блюд не найдено.</p>}
         </div>
         <div className="modal-actions">
           <Button type="button" variant="secondary" onClick={() => setImporting(null)}>Отмена</Button>
-          <Button type="button" disabled={busy || !importing.length} onClick={async () => { const result = await importItems(importing); if (result !== null) setImporting(null); }}>Добавить {importing.length || ''}</Button>
+          <Button type="button" disabled={busy} onClick={async () => { const result = await saveCatalogMenu(importing); if (result !== null) setImporting(null); }}>Сохранить выбор</Button>
         </div>
       </Modal>}
       {section === 'guests' && editing && <Modal title="Данные гостя" onClose={() => setEditing(null)}>
@@ -2171,88 +2321,55 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
     </div>
   );
 }
-const ROLE_OPTIONS = [["none", "Нет роли"], ["organizer", "Организатор"], ["admin", "Администратор ресторана"]];
-function UsersAdmin({ session, busy, load, setRole, setGlobal, onError }) {
-  const administered = (session.access || []).filter((entry) => entry.role === "admin");
-  const [query, setQuery] = useState("");
+function UsersAdmin({ session, events, busy, load, setRole, setGlobal, setOrganizer, onError }) {
+  const administered = (session.access || []).filter(entry => entry.role === 'admin');
+  const [query, setQuery] = useState('');
   const [users, setUsers] = useState(null);
-  const [newMaxId, setNewMaxId] = useState('');
-  const [newRestaurant, setNewRestaurant] = useState(administered[0]?.restaurantId || '');
-  const [newRole, setNewRole] = useState('organizer');
+  const [identity, setIdentity] = useState('');
+  const [kind, setKind] = useState(events.length ? 'organizer' : session.superAdmin ? 'restaurant' : 'organizer');
+  const [eventId, setEventId] = useState(events[0]?.id || '');
+  const [restaurantId, setRestaurantId] = useState(administered[0]?.restaurantId || '');
+  const reload = async () => setUsers(await load(query));
   useEffect(() => {
-    let alive = true;
-    const timer = setTimeout(() => load(query).then((list) => alive && setUsers(list)).catch((e) => onError(e.message)), query ? 250 : 0);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [query]);
-  const change = async (user, restaurantId, role) => {
-    const previous = users;
-    setUsers(users.map((entry) => (entry.id === user.id ? { ...entry, roles: { ...entry.roles, [restaurantId]: role } } : entry)));
-    if ((await setRole(restaurantId, user.id, role)) === null) setUsers(previous);
+    let active = true;
+    const timer = setTimeout(() => load(query).then(list => { if (active) setUsers(list); }).catch(error => onError(error.message)), query ? 250 : 0);
+    return () => { active = false; clearTimeout(timer); };
+  }, [query, events.length]);
+  const grant = async (target, nextKind = kind, targetId = nextKind === 'organizer' ? eventId : restaurantId, enabled = true) => {
+    const result = nextKind === 'global' ? await setGlobal(target, enabled) : nextKind === 'restaurant' ? await setRole(targetId, target, enabled ? 'admin' : 'none') : await setOrganizer(targetId, target, enabled);
+    if (result !== null) await reload();
+    return result;
   };
-  return (
-    <section className="panel admin-panel users-admin">
-      <label className="search-field">
-        <Search size={16} />
-        <input type="search" placeholder="Имя, телефон или MAX ID" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Поиск пользователя" />
-      </label>
-      {!session.demo && <form className="grant-max-form" onSubmit={async event => {
-        event.preventDefault();
-        if (!/^[1-9][0-9]{0,18}$/.test(newMaxId)) return onError('Укажите числовой MAX ID пользователя.');
-        if (await (newRole === 'global' ? setGlobal(newMaxId, true) : setRole(newRestaurant, newMaxId, newRole)) !== null) {
-          setNewMaxId('');
-          setUsers(await load(query));
-        }
-      }}>
-        <strong>Назначить роль по MAX ID</strong>
-        <input aria-label="MAX ID пользователя" inputMode="numeric" pattern="[1-9][0-9]{0,18}" placeholder="MAX ID пользователя" value={newMaxId} onChange={event => setNewMaxId(event.target.value)} required />
-        {newRole !== 'global' && <select aria-label="Ресторан для назначения" value={newRestaurant} onChange={event => setNewRestaurant(event.target.value)}>{administered.map(entry => <option key={entry.restaurantId} value={entry.restaurantId}>{entry.restaurantName}</option>)}</select>}
-        <select aria-label="Назначаемая роль" value={newRole} onChange={event => setNewRole(event.target.value)}>{session.superAdmin && <option value="global">Администратор</option>}{ROLE_OPTIONS.filter(([value]) => value !== 'none' && (session.superAdmin || value !== 'admin')).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
-        <Button type="submit" disabled={busy || (newRole !== 'global' && !newRestaurant)}>Назначить</Button>
-      </form>}
-      {session.demo && <p className="muted">В демо роли переключаются вверху справа; изменения здесь действуют только на гостей демо.</p>}
-      {!users ? (
-        <div className="loading-inline"><LoaderCircle className="spin" />Загружаем пользователей…</div>
-      ) : users.length ? (
-        <div className="admin-guest-list">
-          {users.map((user) => (
-            <div className="user-row" key={user.id}>
-              <div>
-                <strong>{user.name}{user.isYou ? " (вы)" : ""}</strong>
-                <small>{[user.superAdmin && "администратор", user.maxId && `MAX ID ${user.maxId}`, user.phone && `+${user.phone}`].filter(Boolean).join(" · ") || "Номер не подтверждён"}</small>
-              </div>
-              <div className="user-roles">
-                {session.superAdmin && !session.demo && <label>
-                  <span>Сервис</span>
-                  <select aria-label={`Глобальная роль ${user.name}`} value={user.superAdmin ? 'admin' : 'none'} disabled={busy || user.isYou || user.fixedGlobal} onChange={async event => {
-                    const previous = users;
-                    const enabled = event.target.value === 'admin';
-                    setUsers(users.map(entry => entry.id === user.id ? { ...entry, superAdmin: enabled } : entry));
-                    if ((await setGlobal(user.maxId || user.id, enabled)) === null) setUsers(previous);
-                    else setUsers(await load(query));
-                  }}><option value="none">Нет роли</option><option value="admin">Администратор</option></select>
-                </label>}
-                {administered.map((entry) => (
-                  <label key={entry.restaurantId}>
-                    {administered.length > 1 && <span>{entry.restaurantName}</span>}
-                    <select
-                      value={user.roles[entry.restaurantId] || "none"}
-                      disabled={busy || user.isYou || user.fixed || user.superAdmin || (!session.superAdmin && user.roles[entry.restaurantId] === 'admin')}
-                      onChange={(e) => change(user, entry.restaurantId, e.target.value)}
-                      aria-label={`Роль ${user.name} в ресторане ${entry.restaurantName}`}
-                    >
-                      {ROLE_OPTIONS.filter(([value]) => session.superAdmin || value !== 'admin' || user.roles[entry.restaurantId] === 'admin').map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </select>
-                  </label>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="muted">{query ? "Никого не нашли." : "Пока никто не открывал приложение."}</p>
-      )}
-    </section>
-  );
+  return <section className="panel admin-panel users-admin">
+    {!session.demo && <form className="grant-max-form" onSubmit={async event => {
+      event.preventDefault();
+      const raw = identity.trim();
+      const target = raw.includes('@') ? '' : raw.startsWith('+') || /^8[\s(]*\d/.test(raw) ? `phone:${raw.replace(/[^+\d]/g, '')}` : /^(?:max:)?[1-9]\d{0,18}$/.test(raw) ? `max:${raw.replace(/^max:/, '')}` : '';
+      if (!target) return onError('Укажите номер телефона или числовой MAX ID.');
+      if (await grant(target) !== null) setIdentity('');
+    }}>
+      <strong>Добавить человека</strong>
+      <input aria-label="Телефон или MAX ID" placeholder="+7 999 123-45-67 или MAX ID" value={identity} onChange={event => setIdentity(event.target.value)} required />
+      <select aria-label="Назначаемая роль" value={kind} onChange={event => setKind(event.target.value)}>
+        {events.length > 0 && <option value="organizer">Организатор банкета</option>}
+        {session.superAdmin && administered.length > 0 && <option value="restaurant">Администратор ресторана</option>}
+        {session.superAdmin && <option value="global">Администратор сервиса</option>}
+      </select>
+      {kind === 'organizer' && <select aria-label="Банкет" value={eventId} onChange={event => setEventId(event.target.value)}>{events.map(event => <option value={event.id} key={event.id}>{event.title} · {event.restaurantName}</option>)}</select>}
+      {kind === 'restaurant' && <select aria-label="Ресторан" value={restaurantId} onChange={event => setRestaurantId(event.target.value)}>{administered.map(entry => <option value={entry.restaurantId} key={entry.restaurantId}>{entry.restaurantName}</option>)}</select>}
+      <Button type="submit" disabled={busy || (kind === 'organizer' && !eventId) || (kind === 'restaurant' && !restaurantId)}>Назначить</Button>
+      <small className="muted">При назначении по телефону доступ появится после подтверждения этого номера в MAX.</small>
+    </form>}
+    <label className="search-field"><Search size={16} /><input type="search" placeholder="Поиск среди участников и администраторов" value={query} onChange={event => setQuery(event.target.value)} aria-label="Поиск пользователя" /></label>
+    {!users ? <div className="loading-inline"><LoaderCircle className="spin" />Загружаем доступы…</div> : users.length ? <div className="admin-guest-list">{users.map(user => <div className="user-row" key={user.id}>
+      <div><strong>{user.name}{user.isYou ? ' (вы)' : ''}</strong><small>{[user.maxId && `MAX ID ${user.maxId}`, user.phone && `+${user.phone}`].filter(Boolean).join(' · ') || 'Номер не подтверждён'}</small></div>
+      <div className="user-roles">
+        {session.superAdmin && !session.demo && <label><span>Сервис</span><select value={user.superAdmin ? 'admin' : 'none'} disabled={busy || user.isYou || user.fixedGlobal} onChange={event => grant(user.id, 'global', '', event.target.value === 'admin')}><option value="none">Нет роли</option><option value="admin">Администратор</option></select></label>}
+        {administered.map(entry => <label key={entry.restaurantId}><span>{entry.restaurantName}</span><select value={user.roles[entry.restaurantId] || 'none'} disabled={busy || !session.superAdmin || user.isYou || user.fixed || user.superAdmin} onChange={event => grant(user.id, 'restaurant', entry.restaurantId, event.target.value === 'admin')}><option value="none">Нет роли</option><option value="admin">Администратор ресторана</option></select></label>)}
+        {events.map(event => <label key={event.id}><span>{event.title} · {event.restaurantName}{user.eventOwned?.[event.id] ? ' · создатель' : ''}</span><select value={user.eventRoles?.[event.id] ? 'organizer' : 'none'} disabled={busy || user.eventOwned?.[event.id]} onChange={input => grant(user.id, 'organizer', event.id, input.target.value === 'organizer')}><option value="none">Нет роли</option><option value="organizer">Организатор банкета</option></select></label>)}
+      </div>
+    </div>)}</div> : <p className="muted">{query ? 'Совпадений нет.' : 'Участников и администраторов пока нет.'}</p>}
+  </section>;
 }
 function KitchenBoard({ board, open, selected, setSelected, exportOne }) {
   if (!board) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем заказы…</div>;
@@ -2287,51 +2404,99 @@ function KitchenBoard({ board, open, selected, setSelected, exportOne }) {
     </div>
   );
 }
-function EditPackage({ offer, busy, onClose, submit, remove }) {
+const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+function HallEditor({ hall, busy, onClose, submit, remove }) {
+  const [name, setName] = useState(hall.name || '');
+  const [capacity, setCapacity] = useState(hall.capacity || 100);
+  const [windows, setWindows] = useState(hall.windows || []);
+  const previousWindows = useRef(alwaysOpen(hall.windows) ? [{ weekday: 1, start: '09:00', end: '23:00' }] : hall.windows || []);
+  const [seatingConfig, setSeatingConfig] = useState(hall.seatingConfig || { type: 'fixed', fixedLayout: generateLayout('rounds', Math.min(hall.capacity || 100, 20)), tablePresets: [{ shape: 'round', seats: 6 }, { shape: 'round', seats: 8 }, { shape: 'rect', seats: 6 }, { shape: 'rect', seats: 10 }] });
+  const updateConfig = patch => setSeatingConfig(current => ({ ...current, ...patch }));
+  const updateWindow = (index, field, value) => setWindows(current => current.map((item, i) => i === index ? { ...item, [field]: field === 'weekday' ? Number(value) : value } : item));
+  return <Modal title={hall.id ? 'Настроить зал' : 'Новый зал'} onClose={onClose}><form onSubmit={event => { event.preventDefault(); submit({ name, capacity: Number(capacity), windows, seatingConfig }); }}>
+    <label>Название зала<input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>
+    <label>Вместимость, гостей<input required type="number" min="1" max="1000" value={capacity} onChange={event => setCapacity(event.target.value)} /></label>
+    <h3>Окна бронирования</h3><p className="muted">Время по Москве, в 24-часовом формате. Для работы без перерыва включите «Круглосуточно»: 23:59 оставляет последнюю минуту дня вне бронирования.</p>
+    <label className="seating-option always-open-option"><input type="checkbox" checked={alwaysOpen(windows)} onChange={event => { if (event.target.checked) { previousWindows.current = windows; setWindows(Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '00:00', end: '24:00' }))); } else setWindows(previousWindows.current.length && !alwaysOpen(previousWindows.current) ? previousWindows.current : [{ weekday: 1, start: '09:00', end: '23:00' }]); }} /><span>Круглосуточно · 24/7</span></label>
+    <div className="booking-windows">{windows.map((window, index) => <div className="booking-window" key={index}><select aria-label={`День ${index + 1}`} value={window.weekday} onChange={event => updateWindow(index, 'weekday', event.target.value)}>{WEEKDAYS.map((day, weekday) => <option key={day} value={weekday}>{day}</option>)}</select><input type="text" inputMode="text" maxLength={5} required pattern="([01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" aria-label={`Начало окна ${index + 1}, 24 часа`} value={window.start} onChange={event => updateWindow(index, 'start', event.target.value)} /><input type="text" inputMode="text" maxLength={5} required pattern="(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)" placeholder="24:00" aria-label={`Конец окна ${index + 1}, 24 часа`} value={window.end} onChange={event => updateWindow(index, 'end', event.target.value)} /><button type="button" className="icon-btn" aria-label="Удалить окно" onClick={() => setWindows(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}</div>
+    <button type="button" className="text-button" onClick={() => setWindows(current => [...current, { weekday: 1, start: '09:00', end: '23:00' }])}>+ Добавить окно</button>
+    <h3>Столы и стулья</h3><p className="muted">Настройка применяется к новым банкетам. Уже созданные сохраняют свою схему.</p>
+    <div className="hall-policy-options" role="radiogroup" aria-label="Кто расставляет столы"><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'fixed'} onChange={() => updateConfig({ type: 'fixed' })} /><span><strong>Готовая схема ресторана</strong><small>Столы и стулья закреплены. Организатор выбирает: гости садятся сами, места назначает он или рассадки нет.</small></span></label><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'flexible'} onChange={() => updateConfig({ type: 'flexible' })} /><span><strong>Столы расставляет организатор</strong><small>Он использует только разрешённые рестораном формы и размеры столов.</small></span></label></div>
+    {seatingConfig.type === 'fixed' ? <HallLayoutDesigner layout={seatingConfig.fixedLayout} onChange={fixedLayout => updateConfig({ fixedLayout })} capacity={Number(capacity)} /> : <div className="hall-presets"><strong>Доступные столы</strong><p className="muted">Укажите, какие столы и сколько стульев за каждым можно использовать.</p><details><summary>Изменить набор · {seatingConfig.tablePresets.length} размеров</summary><div className="hall-presets-list">{seatingConfig.tablePresets.map((preset, index) => <div className="hall-preset-row" key={index}><select aria-label={`Форма стола ${index + 1}`} value={preset.shape} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, shape: event.target.value } : item) })}><option value="round">Круглый</option><option value="rect">Прямоугольный</option></select><input aria-label={`Мест за столом ${index + 1}`} type="number" min="1" max="40" value={preset.seats} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, seats: Number(event.target.value) } : item) })} /><button type="button" aria-label={`Убрать размер ${index + 1}`} onClick={() => updateConfig({ tablePresets: seatingConfig.tablePresets.filter((_, i) => i !== index) })}><X size={15} /></button></div>)}</div><button type="button" className="text-button" onClick={() => updateConfig({ tablePresets: [...seatingConfig.tablePresets, { shape: 'round', seats: 8 }] })}>+ Добавить размер</button></details></div>}
+    <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить зал «${hall.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить зал</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !windows.length}>Сохранить</Button></div>
+  </form></Modal>;
+}
+function PackageDishEditor({ dish, busy, uploadPhoto, onClose, submit, remove }) {
+  const [photoUrl, setPhotoUrl] = useState(dish.photoUrl || '');
+  const [nutrition, setNutrition] = useState(dish.nutrition || { kcal: 0, protein: 0, fat: 0, carbs: 0 });
+  const [labels, setLabels] = useState(dish.labels || []);
+  return <Modal title={dish.id ? 'Блюдо пакетного предложения' : 'Новое блюдо пакета'} onClose={onClose}><form onSubmit={async event => { event.preventDefault(); const form = new FormData(event.currentTarget); const file = form.get('photo'); let nextPhoto = photoUrl; if (file?.size) { const uploaded = await uploadPhoto(file); if (!uploaded) return; nextPhoto = uploaded.photoUrl; } submit({ name: form.get('name'), category: form.get('category'), description: form.get('description'), weight: form.get('weight'), photoUrl: nextPhoto, vegetarian: form.get('vegetarian') === 'on', available: form.get('available') === 'on', nutrition: Object.fromEntries(Object.entries(nutrition).map(([key, value]) => [key, Number(value)])), labels, allergens: String(form.get('allergens') || '').split(',').map(value => value.trim()).filter(Boolean) }); }}>
+    <p className="muted">Только для пакетного предложения. В обычное меню это блюдо не попадёт.</p>
+    <label>Название<input name="name" required maxLength={120} defaultValue={dish.name || ''} /></label><label>Категория<input name="category" required maxLength={80} defaultValue={dish.category || ''} /></label><label>Описание<textarea name="description" maxLength={500} defaultValue={dish.description || ''} /></label><label>Вес порции<input name="weight" maxLength={40} defaultValue={dish.weight || ''} placeholder="100 г" /></label>
+    {photoUrl && <div className="package-photo-preview"><img src={`${BASE}${photoUrl}`} alt="Фото блюда" /><button type="button" onClick={() => setPhotoUrl('')}>Убрать фото</button></div>}
+    <label>Фото (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
+    <div className="form-grid">{[['kcal', 'Ккал'], ['protein', 'Белки, г'], ['fat', 'Жиры, г'], ['carbs', 'Углеводы, г']].map(([key, label]) => <label key={key}>{label}<input type="number" required min="0" max="10000" step={key === 'kcal' ? '1' : '0.1'} value={nutrition[key]} onChange={event => setNutrition(current => ({ ...current, [key]: event.target.value }))} /></label>)}</div>
+    <label>Аллергены через запятую<input name="allergens" defaultValue={(dish.allergens || []).join(', ')} /></label><label className="check"><input type="checkbox" name="vegetarian" defaultChecked={dish.vegetarian || false} /> Без мяса</label><label className="check"><input type="checkbox" name="available" defaultChecked={dish.available !== false} /> Доступно для пакетов</label>
+    {MENU_LABELS.map(label => <label className="check" key={label}><input type="checkbox" checked={labels.includes(label)} onChange={event => setLabels(current => event.target.checked ? [...current, label] : current.filter(value => value !== label))} /> {label}</label>)}
+    <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить блюдо «${dish.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
+  </form></Modal>;
+}
+function EditPackage({ offer, dishes, busy, onError, onClose, submit, remove }) {
   const [name, setName] = useState(offer.name || '');
   const [description, setDescription] = useState(offer.description || '');
   const [price, setPrice] = useState((offer.price || 0) / 100);
-  const [lines, setLines] = useState((offer.items || []).map(item => `${item.category} | ${item.name} | ${item.grams}`).join('\n'));
-  const [error, setError] = useState('');
-  return <Modal title={offer.id ? 'Пакетное предложение' : 'Новый пакет'} onClose={onClose}>
-    <form onSubmit={event => { event.preventDefault();
-      const items = lines.trim().split('\n').map(line => {
-        const [category, itemName, grams] = line.split('|').map(value => value?.trim());
-        return { category, name: itemName, grams: Number(grams) };
-      });
-      if (!items.length || items.some(item => !item.category || !item.name || !Number.isInteger(item.grams) || item.grams < 1)) return setError('Каждая строка: категория | название | грамм на гостя.');
-      setError(''); submit({ name, description, price: Math.round(Number(price) * 100), items });
-    }}>
-      <label>Название<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
-      <label>Цена на гостя, ₽<input required type="number" min="0.01" step="0.01" value={price} onChange={event => setPrice(event.target.value)} /></label>
-      <label>Описание<textarea maxLength={500} value={description} onChange={event => setDescription(event.target.value)} /></label>
-      <label>Состав: категория | название | грамм на гостя<textarea className="package-lines" required value={lines} onChange={event => setLines(event.target.value)} placeholder="Холодные закуски | Лосось слабой соли | 50" /></label>
-      {error && <p className="alert">{error}</p>}
-      <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить пакет «${offer.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
-    </form>
-  </Modal>;
+  const [items, setItems] = useState((offer.items || []).map(item => ({ dishId: item.dishId, grams: item.grams, choiceGroup: item.choiceGroup || '' })));
+  const update = (index, changes) => setItems(current => current.map((item, i) => i === index ? { ...item, ...changes } : item));
+  return <Modal title={offer.id ? 'Пакетное предложение' : 'Новый пакет'} onClose={onClose}><form onSubmit={event => { event.preventDefault(); if (!items.length || items.some(item => !item.dishId || !Number.isInteger(Number(item.grams)) || Number(item.grams) < 1)) return onError('Добавьте хотя бы одно блюдо и укажите граммы.'); submit({ name, description, price: Math.round(Number(price) * 100), items: items.map(item => ({ ...item, grams: Number(item.grams) })) }); }}>
+    <label>Название<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label><label>Цена на гостя, ₽<input required type="number" min="0.01" step="0.01" value={price} onChange={event => setPrice(event.target.value)} /></label><label>Описание<textarea maxLength={500} value={description} onChange={event => setDescription(event.target.value)} /></label>
+    <h3>Состав пакета</h3><p className="muted">Выбирайте блюда из каталога «Только для пакетов». Для нескольких вариантов горячего включите «На выбор» у каждого.</p>
+    {items.map((item, index) => <div className="package-edit-row" key={index}><select aria-label={`Блюдо ${index + 1}`} value={item.dishId} onChange={event => update(index, { dishId: event.target.value })}><option value="">Выберите блюдо</option>{dishes.filter(dish => dish.available || dish.id === item.dishId).map(dish => <option key={dish.id} value={dish.id}>{dish.category} · {dish.name}</option>)}</select><input type="number" min="1" max="10000" aria-label={`Граммы ${index + 1}`} value={item.grams} onChange={event => update(index, { grams: event.target.value })} /><span>г</span><label className="check"><input type="checkbox" checked={Boolean(item.choiceGroup)} onChange={event => update(index, { choiceGroup: event.target.checked ? 'Горячее' : '' })} /> На выбор</label><button type="button" className="icon-btn" aria-label="Убрать блюдо" onClick={() => setItems(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}
+    <button type="button" className="text-button" disabled={!dishes.length} onClick={() => setItems(current => [...current, { dishId: dishes.find(dish => dish.available)?.id || '', grams: 100, choiceGroup: '' }])}>+ Добавить блюдо</button>{!dishes.length && <p className="muted">Сначала добавьте блюдо для пакетного предложения в разделе выше.</p>}
+    <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить пакет «${offer.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !dishes.length}>Сохранить</Button></div>
+  </form></Modal>;
 }
-function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
-  const [seatingMode, setSeatingMode] = useState("off");
+function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, submit }) {
+  const firstHall = restaurants[0]?.halls?.[0];
+  const hallDefaultMode = entry => entry?.seatingConfig?.type === 'fixed' ? 'choice' : entry?.allowedSeating.includes('fixed') ? 'fixed' : entry?.allowedSeating.includes('choice') ? 'choice' : 'off';
+  const [seatingMode, setSeatingMode] = useState(hallDefaultMode(firstHall));
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id || '');
+  const [restaurantSearch, setRestaurantSearch] = useState('');
+  const [showFavorites, setShowFavorites] = useState(false);
+  const [hallId, setHallId] = useState(restaurants[0]?.halls?.[0]?.id || '');
   const [selectionMode, setSelectionMode] = useState('individual');
   const [packageId, setPackageId] = useState('');
-  const packages = restaurants.find(restaurant => restaurant.id === restaurantId)?.packages || [];
+  const restaurant = restaurants.find(entry => entry.id === restaurantId);
+  const halls = restaurant?.halls || [];
+  const hall = halls.find(entry => entry.id === hallId) || halls[0];
+  const canCustomizeSeating = hall?.seatingConfig?.type === 'flexible';
+  const maxGuests = Math.min(500, hall?.capacity || 500, hall?.seatingConfig?.type === 'fixed' ? layoutSeats(hall.seatingConfig.fixedLayout).length : 500);
+  const [guestCount, setGuestCount] = useState(Math.min(12, maxGuests));
+  useEffect(() => { setSeatingMode(hallDefaultMode(hall)); }, [hall?.id]);
+  useEffect(() => { setGuestCount(current => Math.min(current, maxGuests)); }, [maxGuests]);
+  const packages = restaurant?.packages || [];
   const selectedOffer = packages.find(offer => offer.id === packageId) || packages[0];
-  const hotChoices = selectedOffer?.items.find(item => item.category === 'Горячее на выбор')?.name.split('/').map(value => value.trim()) || [];
+  const hotChoices = selectedOffer?.items.filter(item => item.choiceGroup) || [];
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
+    return `${d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })}T18:00`;
   };
+  const [eventDate, setEventDate] = useState('');
+  const [deadline, setDeadline] = useState(future(5));
+  const chooseEventDate = selected => {
+    setEventDate(selected);
+    if (selected && (!deadline || moscowIso(deadline) >= moscowIso(selected))) setDeadline(deadlineBefore(selected));
+  };
+  const [duration, setDuration] = useState(4);
+  const durations = bookingDurationOptions(hall, eventDate, duration);
+  const validDurations = durationOptions(hall, eventDate);
+  const visibleRestaurants = restaurants.filter(r => (!showFavorites || r.favorite) && `${r.name} ${r.address}`.toLocaleLowerCase('ru').includes(restaurantSearch.trim().toLocaleLowerCase('ru'))).sort((a,b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name, 'ru'));
   return (
     <Modal title="Новый банкет" onClose={onClose}>
       <p className="muted">
         Задайте детали вечера. Меню выбранного ресторана будет доступно каждому
         гостю.
       </p>
-      {!restaurants.length && <div className="alert">Нет ресторанов, где у вас есть доступ организатора. Попросите администратора ресторана выдать его.</div>}
+      {!restaurants.length && <div className="alert">Пока нет ресторанов для бронирования. Попросите администратора добавить ресторан.</div>}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
@@ -2347,14 +2512,16 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
             title: f.get("title"),
             photoUrl,
             restaurantId: f.get("restaurantId"),
+            hallId: f.get('hallId'),
+            durationHours: duration,
             selectionMode,
             ...(selectionMode === 'package' ? { packageId: f.get('packageId'), ...(hotChoices.length ? { packageChoice: f.get('packageChoice') } : {}) } : {}),
-            date: new Date(f.get("date")).toISOString(),
-            deadline: new Date(f.get("deadline")).toISOString(),
+            date: moscowIso(eventDate),
+            deadline: moscowIso(f.get("deadline")),
             expectedGuests: Number(f.get("guests")),
             foodBudget: Math.round(Number(f.get("foodBudget") || 0) * 100),
             drinkBudget: Math.round(Number(f.get("drinkBudget") || 0) * 100),
-            seating: { mode: f.get("seatingMode"), template: f.get("seatingTemplate") },
+            seating: { mode: seatingMode },
           });
         }}
       >
@@ -2369,37 +2536,33 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
           />
         </label>
         <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
-        <label>
-          Ресторан
-          <select name="restaurantId" required value={restaurantId} onChange={event => { setRestaurantId(event.target.value); setPackageId(''); if (!restaurants.find(r => r.id === event.target.value)?.packages?.length) setSelectionMode('individual'); }}>
-            {restaurants.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="restaurant-picker" role="group" aria-label="Выбор ресторана">
+          <div className="restaurant-picker-heading"><strong>Ресторан</strong><span>{restaurant ? `Выбран: ${restaurant.name}` : 'Выберите ресторан'}</span></div>
+          <div className="restaurant-search"><label className="search-field"><Search size={16} /><input type="search" placeholder="Название или адрес" aria-label="Поиск ресторана" autoComplete="off" value={restaurantSearch} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} onChange={event => setRestaurantSearch(event.target.value)} /></label><button type="button" className={showFavorites ? 'favorite-filter active' : 'favorite-filter'} aria-pressed={showFavorites} onClick={() => setShowFavorites(value => !value)}><Star size={16} fill={showFavorites ? 'currentColor' : 'none'} /> Избранные</button></div>
+          <div className="restaurant-results" aria-live="polite">
+            {visibleRestaurants.map(r => <button key={r.id} type="button" className={restaurantId === r.id ? 'restaurant-result selected' : 'restaurant-result'} aria-pressed={restaurantId === r.id} onClick={() => { setRestaurantId(r.id); setHallId(r.halls?.[0]?.id || ''); setPackageId(''); if (!r.packages?.length) setSelectionMode('individual'); }}><span className="restaurant-result-icon"><Store size={18} /></span><span className="restaurant-result-copy"><strong>{r.name}</strong><small>{r.address || r.description || 'Адрес уточняется'}</small></span>{r.favorite && <Star className="restaurant-result-star" size={15} fill="currentColor" />}{restaurantId === r.id && <Check className="restaurant-result-check" size={19} />}</button>)}
+            {!visibleRestaurants.length && <p className="restaurant-no-results">Рестораны не найдены. Попробуйте другое название или отключите «Избранные».</p>}
+          </div>
+          <input type="hidden" name="restaurantId" value={restaurantId} />
+          {restaurant && <button type="button" className={restaurant.favorite ? 'favorite-inline active' : 'favorite-inline'} onClick={() => toggleFavorite(restaurant)}><Star size={16} fill={restaurant.favorite ? 'currentColor' : 'none'} /> {restaurant.favorite ? 'Убрать выбранный ресторан из избранного' : 'Добавить выбранный ресторан в избранное'}</button>}
+        </div>
         <label>Формат заказа<select name="selectionMode" value={selectionMode} onChange={event => setSelectionMode(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
         {selectionMode === 'package' && <label>Пакетное предложение<select name="packageId" required value={selectedOffer?.id || ''} onChange={event => setPackageId(event.target.value)}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)} / гость</option>)}</select><small className="muted">Гости увидят состав пакета и не смогут менять блюда.</small></label>}
-        {selectionMode === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select name="packageChoice" required>{hotChoices.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select></label>}
+        {selectionMode === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select name="packageChoice" required>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
+        <label>Зал<select name="hallId" required value={hall?.id || ''} onChange={event => setHallId(event.target.value)}>{halls.map(entry => <option key={entry.id} value={entry.id}>{entry.name} · до {entry.capacity} гостей</option>)}</select></label>
         <div className="form-grid">
           <label>
-            Когда встречаемся
-            <input
-              type="datetime-local"
-              name="date"
+            Собрать выбор до
+            <RussianDateTimeInput
+              name="deadline"
               required
-              defaultValue={future(7)}
+              value={deadline}
+              onChange={setDeadline}
             />
           </label>
           <label>
-            Собрать выбор до
-            <input
-              type="datetime-local"
-              name="deadline"
-              required
-              defaultValue={future(5)}
-            />
+            Длительность, часов
+            <select name="durationHours" required value={duration || ''} onChange={event => setDuration(Number(event.target.value))}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет свободного времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}{hours === duration && !validDurations.includes(hours) ? ' · выберите время в календаре' : ''}</option>)}</select>
           </label>
           <label>
             Количество гостей
@@ -2407,8 +2570,9 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
               type="number"
               name="guests"
               min={1}
-              max={500}
-              defaultValue={12}
+              max={maxGuests}
+              value={guestCount}
+              onChange={event => setGuestCount(Number(event.target.value))}
               required
             />
           </label>
@@ -2421,31 +2585,13 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
             <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
           </label>}
         </div>
-        <div className="form-grid">
-          <label>
-            Рассадка
-            <select name="seatingMode" value={seatingMode} onChange={(e) => setSeatingMode(e.target.value)}>
-              {Object.entries(SEATING_MODE_NAMES).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
-          </label>
-          {seatingMode !== "off" && (
-            <label>
-              Схема зала
-              <select name="seatingTemplate" defaultValue="rounds">
-                {SEATING_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
+        <BookingMiniCalendar restaurantId={restaurantId} hallId={hall?.id} durationHours={duration} value={eventDate} onChange={chooseEventDate} />
+        {hall && <div className="hall-seating-choice"><label>Рассадка<select name="seatingMode" value={seatingMode} onChange={event => setSeatingMode(event.target.value)}>{Object.entries(SEATING_MODE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>{canCustomizeSeating ? <small>После создания банкета вы сможете расставить столы из набора ресторана во вкладке «Рассадка».</small> : <><strong>Готовая схема зала · {layoutSeats(hall.seatingConfig.fixedLayout).length} мест</strong><small>Расположение столов и стульев закреплено рестораном. Режим рассадки можно изменить позже.</small><details><summary>Посмотреть схему</summary><SeatingMap layout={hall.seatingConfig.fixedLayout} /></details></>}</div>}
         <div className="modal-actions">
           <Button variant="secondary" type="button" onClick={onClose}>
             Отмена
           </Button>
-          <Button disabled={busy || !restaurants.length} type="submit">
+          <Button disabled={busy || !restaurants.length || !eventDate} type="submit">
             Создать банкет <ArrowUpRight size={17} />
           </Button>
         </div>

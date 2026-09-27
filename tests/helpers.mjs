@@ -4,6 +4,10 @@ import { once } from 'node:events';
 import { createApp } from '../server/index.mjs';
 
 export const BOT_TOKEN = '123456:only-a-test-token';
+export const futureMoscow = days => {
+  const day = new Date(Date.now() + days * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+  return new Date(`${day}T18:00:00+03:00`).toISOString();
+};
 export function sign({ id = 100, name = 'Александра', timestamp = Math.floor(Date.now() / 1000), extra = {} } = {}) {
   const params = new URLSearchParams({ auth_date: String(timestamp), query_id: 'fixture-query', user: JSON.stringify({ id, first_name: name, last_name: 'Тестовая' }), ...extra });
   const data = [...params].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, value]) => `${key}=${value}`).join('\n');
@@ -38,10 +42,12 @@ export async function fixture(t, overrides = {}) {
     assert.equal(response.status, 200);
     return response.data;
   };
+  let eventCount = 0;
   const event = async token => {
     const restaurants = await request('/api/restaurants', { token });
     const restaurant = restaurants.data[0];
-    const response = await request('/api/events', { token, method: 'POST', body: { title: 'Банкет', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 12, foodBudget: 300000 } });
+    const offset = eventCount++;
+    const response = await request('/api/events', { token, method: 'POST', body: { title: 'Банкет', restaurantId: restaurant.id, date: futureMoscow(14 + offset), deadline: futureMoscow(10 + offset), expectedGuests: 12, foodBudget: 300000 } });
     assert.equal(response.status, 201);
     return { ...response.data, menu: restaurant.menu };
   };

@@ -196,7 +196,8 @@ export const PETR_MENU = rows.trim().split('\n').map((line, index) => {
   const factor = Math.min(Number(weight), 1000) / 100;
   const vegetarian = ['Фрукты', 'Гарниры', 'Десерты'].includes(category) || (!seafood.test(name) && !meat.test(name) && ['Мини-закуски сырные и овощные', 'Салаты'].includes(category));
   return {
-    name, category, description: 'Меню ресторана «Петръ». КБЖУ ориентировочное; уточняйте состав и аллергены у ресторана.',
+    name, category, description: '',
+    photoUrl: `/petr-photos/${String(index + 1).padStart(3, '0')}.jpg`,
     price: Number(rubles) * 100, weight: `${weight} ${category === 'Напитки' ? 'мл' : 'г'}`,
     emoji: category === 'Напитки' ? '🥤' : category === 'Фрукты' ? '🍇' : category === 'Десерты' ? '🍰' : '🍽️',
     allergens: [], vegetarian, available: true, labels: [],

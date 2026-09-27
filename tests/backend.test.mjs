@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { verifyInitData } from '../server/auth.mjs';
 import { createApp, clientIp } from '../server/index.mjs';
 import { createNotifier } from '../server/notifications.mjs';
-import { BOT_TOKEN, fixture, sign, signedContact } from './helpers.mjs';
+import { BOT_TOKEN, fixture, futureMoscow, sign, signedContact } from './helpers.mjs';
 
 test('MAX signature authenticates decoded fields and rejects forgery, duplicate keys and stale/future launches', () => {
   const valid = sign({ name: 'Анна + Мария & друзья' });
@@ -29,7 +29,7 @@ test('API exposes no secrets, rejects unsigned sessions and derives restaurant r
   assert.equal((await f.request('/api/events')).status, 401);
   assert.equal((await f.request('/api/me', { token: 'max_900' })).status, 401);
   const ordinary = await f.login(101);
-  assert.equal(ordinary.user.role, 'organizer');
+  assert.equal(ordinary.user.role, 'guest');
   assert.equal(ordinary.user.demo, false);
   const admin = await f.login(900);
   assert.equal(admin.user.role, 'admin');
@@ -168,7 +168,7 @@ test('SQLite persists sessions and orders after server restart', async t => {
   const session = first.store.loginMax({ id: '100', name: 'Persistent Owner' });
   const user = first.store.authenticate(session.token);
   const restaurant = first.store.restaurants(user)[0];
-  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, foodBudget: 1000000 });
+  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 10, foodBudget: 1000000 });
   first.store.bindPhone(user, '79990000001');
   first.store.addInvite(user, event.id, { name: 'Persistent Owner', phone: '79990000001' });
   const bound = first.store.authenticate(session.token);
@@ -325,7 +325,7 @@ test('event administration edits metadata and event-only KBJU menu with revision
   const owner = await f.login(100);
   const outsider = await f.login(200);
   const event = await f.event(owner.token);
-  const newDate = new Date(Date.now() + 20 * 86400000).toISOString();
+  const newDate = futureMoscow(20);
   const next = await f.request(`/api/events/${event.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: event.revision, title: 'Новая дата', date: newDate, expectedGuests: 18 } });
   assert.equal(next.status, 200);
   assert.equal(next.data.expectedGuests, 18);
@@ -375,6 +375,36 @@ test('opted-in MAX notifications are queued, delivered and stopped when a guest 
   assert.equal(sent.filter(message => message.url.includes('user_id=200')).length, 1);
 });
 
+test('notification categories persist and suppress queued and future MAX messages', async t => {
+  const f = await fixture(t);
+  const owner = await f.login(100);
+  const event = await f.event(owner.token);
+  f.store.recordBotActivity('100', true);
+  const changed = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { enabled: true, categories: { guestJoined: false } } });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.data.notificationPreferences.guestJoined, false);
+  assert.equal(changed.data.notificationPreferences.guestSelection, true);
+  assert.equal((await f.request('/api/me', { token: owner.token })).data.notificationPreferences.guestJoined, false);
+  assert.equal((await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { unknown: false } } })).status, 400);
+  assert.equal((await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { reminders: 'false' } } })).status, 400);
+  f.store.queueNotice(event.id, owner.user.id, 'guest_joined:other');
+  f.store.queueNotice(event.id, owner.user.id, 'selection:1');
+  assert.deepEqual(f.store.dueNotices().map(job => job.kind), ['selection:1']);
+  const disabled = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: false } } });
+  assert.equal(disabled.status, 200);
+  assert.deepEqual(f.store.dueNotices(), []);
+  f.store.queueNotice(event.id, owner.user.id, 'selection:2');
+  assert.deepEqual(f.store.dueNotices(), []);
+  f.store.db.prepare("UPDATE notification_jobs SET cancelled_at=NULL WHERE event_id=? AND kind='selection:1'").run(event.id);
+  assert.deepEqual(f.store.dueNotices(), [], 'delivery also respects the current category preference');
+  await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: false } } });
+  const enabledAgain = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: true } } });
+  assert.equal(enabledAgain.status, 200);
+  assert.deepEqual(f.store.dueNotices(), [], 'old messages do not appear after a category is re-enabled');
+  f.store.queueNotice(event.id, owner.user.id, 'selection:3');
+  assert.deepEqual(f.store.dueNotices().map(job => job.kind), ['selection:3']);
+});
+
 test('photo upload validates image bytes and exposes only generated media path', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'banquet-media-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -391,7 +421,7 @@ test('photo upload validates image bytes and exposes only generated media path',
   assert.equal(retrieved.status, 200);
   assert.deepEqual(Buffer.from(await retrieved.arrayBuffer()), bytes);
   const restaurant = (await f.request('/api/restaurants', { token: owner.token })).data[0];
-  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { restaurantId: restaurant.id, title: 'Банкет с фото', photoUrl, date: new Date(Date.now() + 14 * 86400000).toISOString(), deadline: new Date(Date.now() + 10 * 86400000).toISOString(), expectedGuests: 3 } });
+  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { restaurantId: restaurant.id, title: 'Банкет с фото', photoUrl, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 3 } });
   assert.equal(created.status, 201);
   assert.equal(created.data.photoUrl, photoUrl);
   assert.equal((await f.request(`/api/events/${created.data.id}`, { token: owner.token })).data.event.photoUrl, photoUrl);
