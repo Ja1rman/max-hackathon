@@ -662,9 +662,10 @@ export class Store {
     const capacity = integer(body.capacity ?? old?.capacity, 'Вместимость', 1, 1000);
     const windows = body.windows ?? old?.windows;
     if (!Array.isArray(windows) || !windows.length || windows.length > 28) throw new HttpError(400, 'Укажите окна бронирования до 28 интервалов в неделю.');
-    const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+    const validStart = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+    const validEnd = value => validStart(value) || value === '24:00';
     const normalized = windows.map(window => {
-      if (!Number.isInteger(window.weekday) || window.weekday < 0 || window.weekday > 6 || !validTime(window.start) || !validTime(window.end) || window.start >= window.end) throw new HttpError(400, 'Окно бронирования: день недели 0–6 и время HH:MM с началом до конца.');
+      if (!Number.isInteger(window.weekday) || window.weekday < 0 || window.weekday > 6 || !validStart(window.start) || !validEnd(window.end) || window.start >= window.end) throw new HttpError(400, 'Окно бронирования: день недели 0–6, начало от 00:00 до 23:59, конец до 24:00.');
       return { weekday: window.weekday, start: window.start, end: window.end };
     });
     for (const [index, first] of normalized.entries()) if (normalized.some((second, next) => next > index && second.weekday === first.weekday && first.start < second.end && first.end > second.start)) throw new HttpError(400, 'Окна бронирования не должны пересекаться.');
@@ -673,7 +674,9 @@ export class Store {
     const value = { id: hallId || id('hall'), name, capacity, windows: normalized, allowedSeating };
     if (old) {
       for (const event of this.db.prepare('SELECT * FROM events WHERE hall_id=? AND date>?').all(old.id, iso(Date.now()))) {
-        if (event.expected_guests > capacity || (event.seating_mode !== 'off' && !allowedSeating.includes(event.seating_mode)) || !this.hallWindow(value, event.date, event.duration_hours)) throw new HttpError(409, 'Настройки противоречат уже забронированному банкету. Сначала измените банкет.');
+        if (event.expected_guests > capacity) throw new HttpError(409, `Банкет «${event.title}» рассчитан на ${event.expected_guests} гостей. Вместимость зала должна быть не меньше.`);
+        if (event.seating_mode !== 'off' && !allowedSeating.includes(event.seating_mode)) throw new HttpError(409, `В банкете «${event.title}» используется ${event.seating_mode === 'choice' ? 'выбор места гостями' : 'фиксированная рассадка'}. Оставьте этот вариант в допустимой рассадке зала.`);
+        if (!this.hallWindow(value, event.date, event.duration_hours)) throw new HttpError(409, `Банкет «${event.title}» не помещается в новые часы работы зала. Сохраните прежнее окно или сначала измените время банкета.`);
       }
     }
     this.db.prepare('INSERT INTO restaurant_halls VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,capacity=excluded.capacity,windows=excluded.windows,allowed_seating=excluded.allowed_seating').run(value.id, restaurantId, name, capacity, JSON.stringify(normalized), JSON.stringify(allowedSeating));
@@ -687,14 +690,17 @@ export class Store {
     return { success: true };
   }
   hallWindow(hall, dateValue, durationHours) {
+    if (hall.windows.length === 7 && new Set(hall.windows.map(window => window.weekday)).size === 7 && hall.windows.every(window => window.start === '00:00' && window.end === '24:00')) return true;
     const start = new Date(dateValue);
     const end = new Date(start.getTime() + durationHours * 3600000);
     const parts = value => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value).map(part => [part.type, part.value]));
     const a = parts(start), b = parts(end);
-    if (`${a.year}-${a.month}-${a.day}` !== `${b.year}-${b.month}-${b.day}`) return false;
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(a.weekday);
-    const startTime = `${a.hour}:${a.minute}`, endTime = `${b.hour}:${b.minute}`;
-    return hall.windows.some(window => window.weekday === weekday && window.start <= startTime && endTime <= window.end);
+    const day = value => Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day));
+    const startMinute = Number(a.hour) * 60 + Number(a.minute);
+    const endMinute = (day(b) - day(a)) / 86400000 * 1440 + Number(b.hour) * 60 + Number(b.minute);
+    const minutes = value => Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+    return hall.windows.some(window => window.weekday === weekday && minutes(window.start) <= startMinute && endMinute <= minutes(window.end));
   }
   reserveHall(restaurantId, hallId, dateValue, durationHours, expectedGuests, excludeEventId = '') {
     const hall = this.halls(restaurantId).find(entry => entry.id === hallId);
@@ -714,7 +720,8 @@ export class Store {
     const halls = this.halls(restaurantId).filter(hall => !hallId || hall.id === hallId);
     if (!halls.length) throw new HttpError(404, 'Зал не найден.');
     const weekday = new Date(`${day}T12:00:00+03:00`).getUTCDay();
-    return halls.map(hall => ({ ...hall, windows: hall.windows.filter(window => window.weekday === weekday), booked: this.db.prepare("SELECT id,date,duration_hours FROM events WHERE hall_id=? AND status IN ('collecting','approved')").all(hall.id).filter(event => new Date(event.date).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }) === day).map(event => ({ eventId: event.id, start: event.date, end: iso(Date.parse(event.date) + event.duration_hours * 3600000) })) }));
+    const dayStart = Date.parse(`${day}T00:00:00+03:00`), dayEnd = dayStart + 86400000;
+    return halls.map(hall => ({ ...hall, windows: hall.windows.filter(window => window.weekday === weekday), booked: this.db.prepare("SELECT id,date,duration_hours FROM events WHERE hall_id=? AND status IN ('collecting','approved')").all(hall.id).filter(event => Date.parse(event.date) < dayEnd && Date.parse(event.date) + event.duration_hours * 3600000 > dayStart).map(event => ({ eventId: event.id, start: event.date, end: iso(Date.parse(event.date) + event.duration_hours * 3600000) })) }));
   }
   editPackage(user, restaurantId, offerId, body) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Пакеты редактирует администратор ресторана.');
@@ -794,7 +801,10 @@ export class Store {
     const hall = this.halls(row.restaurant_id).find(entry => entry.id === row.hall_id);
     const event = { id: row.id, title: row.title, photoUrl: row.photo_url || '', date: row.date, deadline: row.deadline, durationHours: row.duration_hours, hallId: row.hall_id, hallName: hall?.name || '', status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true, seatingMode: row.seating_mode, selectionMode: row.selection_mode, package: selectedPackage };
     if (!publicOnly) Object.assign(event, { expectedGuests: row.expected_guests, total, responded: counts.responded, joined: counts.joined, approvedAt: row.approved_at, isOwner: user?.id === row.owner_id, revision: row.revision, foodBudget: row.food_budget, drinkBudget: row.drink_budget });
-    if (!publicOnly) event.canManage = Boolean(user && this.isManager(user, row));
+    if (!publicOnly) {
+      event.canManage = Boolean(user && this.isManager(user, row));
+      event.canDelete = Boolean(user && (row.status === 'approved' ? this.adminOf(user, row.restaurant_id) : event.canManage));
+    }
     if (!publicOnly && event.canManage) {
       const owner = this.db.prepare('SELECT name FROM users WHERE id=?').get(row.owner_id);
       Object.assign(event, { budget: (row.food_budget + row.drink_budget) * row.expected_guests, sharedTotal, inviteCode: row.invite_code, ownerName: owner?.name || '' });
@@ -878,6 +888,7 @@ export class Store {
     return this.transaction(() => {
       const event = this.eventRow(eventId, user);
       if (!this.isManager(user, event)) throw new HttpError(403, 'Удалить банкет может его организатор или администратор ресторана.');
+      if (event.status === 'approved' && !this.adminOf(user, event.restaurant_id)) throw new HttpError(403, 'После утверждения банкет удаляет только администратор ресторана.');
       this.db.prepare('DELETE FROM events WHERE id=?').run(event.id);
       return { success: true, eventId };
     });

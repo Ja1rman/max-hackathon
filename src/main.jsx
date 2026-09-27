@@ -40,6 +40,7 @@ import {
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
 import { SEATING_TEMPLATES } from '../shared/seating.mjs';
+import { formatRussianDateTime, parseRussianDateTime, moscowDateTimeIso } from '../shared/moscow-date.mjs';
 import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
 const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
 import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
@@ -56,6 +57,7 @@ const money = (value = 0) =>
 const dateText = (value, time = false) =>
   value
     ? new Date(value).toLocaleString("ru-RU", {
+        timeZone: 'Europe/Moscow',
         day: "numeric",
         month: "long",
         ...(time ? { hour: "2-digit", minute: "2-digit" } : {}),
@@ -92,9 +94,11 @@ function russianError(value) {
   const message = typeof value === 'string' ? value : value?.message || '';
   return /[А-Яа-яЁё]/.test(message) ? message : 'Не удалось выполнить действие. Попробуйте ещё раз.';
 }
+const alwaysOpen = windows => windows?.length === 7 && new Set(windows.map(window => window.weekday)).size === 7 && windows.every(window => window.start === '00:00' && window.end === '24:00');
 function durationOptions(hall, localValue) {
   const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localValue || '');
   if (!hall || !parts) return [];
+  if (alwaysOpen(hall.windows)) return Array.from({ length: 12 }, (_, index) => index + 1);
   const weekday = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))).getUTCDay();
   const start = Number(parts[4]) * 60 + Number(parts[5]);
   const end = Math.max(0, ...hall.windows.filter(window => window.weekday === weekday && Number(window.start.slice(0, 2)) * 60 + Number(window.start.slice(3)) <= start && start < Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))).map(window => Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))));
@@ -169,7 +173,28 @@ const localDateTime = value => {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow', hour12: false }).replace(' ', 'T').slice(0, 16);
 };
-const moscowIso = value => new Date(`${value}:00+03:00`).toISOString();
+const moscowIso = moscowDateTimeIso;
+function RussianDateTimeInput({ name, value, defaultValue, onChange, ...props }) {
+  const [display, setDisplay] = useState(formatRussianDateTime(value ?? defaultValue));
+  return <input
+    {...props}
+    type="text"
+    name={name}
+    inputMode="text"
+    autoComplete="off"
+    maxLength={16}
+    placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
+    aria-label={props['aria-label'] || 'Дата и время: ДД.ММ.ГГГГ ЧЧ:ММ'}
+    value={display}
+    onChange={event => {
+      const next = event.target.value;
+      const parsed = parseRussianDateTime(next);
+      event.target.setCustomValidity(next && !parsed ? 'Введите реальную дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ.' : '');
+      setDisplay(next);
+      onChange?.(parsed);
+    }}
+  />;
+}
 function Brand({ small = false }) {
   return (
     <div className={`brand ${small ? "small" : ""}`}>
@@ -1232,7 +1257,7 @@ function App() {
                       saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Общий стол сохранён')}
                       importItems={itemIds => updateAdmin(() => api(`/events/${selected}/menu/import`, { method: 'POST', body: { itemIds } }), 'Позиции добавлены в меню банкета')}
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
-                      removeEvent={() => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); })}
+                      removeEvent={detail.event.canDelete ? () => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); }) : null}
                       uploadPhoto={file => perform(() => uploadImage(file))}
                       addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
@@ -2131,15 +2156,15 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
           {modeDraft === 'package' && <label>Пакетное предложение<select name="packageId" value={selectedOffer?.id || ''} onChange={event => setPackageDraft(event.target.value)} disabled={!active}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)}{catalog?.packages?.some(item => item.id === offer.id) ? '' : ' · сохранён в банкете'}</option>)}</select></label>}
           {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.some(item => item.dishId === detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId) ? detail.event.package.items.find(item => item.category === 'Горячее').dishId : hotChoices[0].dishId} disabled={!active}>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
           <div className="form-grid">
-            <label>Дата мероприятия<input type="datetime-local" name="date" required value={dateDraft} onChange={event => setDateDraft(event.target.value)} disabled={!active} /></label>
+            <label>Дата мероприятия<RussianDateTimeInput key={`${detail.event.id}-date-${detail.event.date}`} name="date" required value={dateDraft} onChange={setDateDraft} disabled={!active} /></label>
             <label>Длительность, часов<select name="durationHours" required value={durationDraft || ''} onChange={event => setDurationDraft(Number(event.target.value))} disabled={!active}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}</option>)}</select></label>
             <label>Зал<select name="hallId" value={hallDraft} onChange={event => setHallDraft(event.target.value)} disabled={!active}>{catalog?.halls?.map(hall => <option key={hall.id} value={hall.id}>{hall.name} · до {hall.capacity} гостей</option>)}</select></label>
-            <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
+            <label>Выбор блюд до<RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
             {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
             {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
           </div>
-          {availability && <div className="booking-availability"><strong>Зал «{availability.name}» · {dateDraft.slice(0, 10)}</strong><small>Окна: {availability.windows.length ? availability.windows.map(window => `${window.start}–${window.end}`).join(', ') : 'в этот день нет'}</small><small>Другие брони: {availability.booked.filter(slot => slot.eventId !== detail.event.id).length ? availability.booked.filter(slot => slot.eventId !== detail.event.id).map(slot => `${dateText(slot.start, true)}–${new Date(slot.end).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`).join(', ') : 'пока свободно'}</small></div>}
+          {availability && <div className="booking-availability"><strong>Зал «{availability.name}» · {formatRussianDateTime(dateDraft).slice(0, 10)}</strong><small>Окна: {availability.windows.length ? availability.windows.map(window => `${window.start}–${window.end}`).join(', ') : 'в этот день нет'}</small><small>Другие брони: {availability.booked.filter(slot => slot.eventId !== detail.event.id).length ? availability.booked.filter(slot => slot.eventId !== detail.event.id).map(slot => `${dateText(slot.start, true)}–${new Date(slot.end).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' })}`).join(', ') : 'пока свободно'}</small></div>}
           {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
           {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
         </form>
@@ -2327,15 +2352,17 @@ function HallEditor({ hall, busy, onClose, submit, remove }) {
   const [name, setName] = useState(hall.name || '');
   const [capacity, setCapacity] = useState(hall.capacity || 100);
   const [windows, setWindows] = useState(hall.windows || []);
+  const previousWindows = useRef(alwaysOpen(hall.windows) ? [{ weekday: 1, start: '09:00', end: '23:00' }] : hall.windows || []);
   const [allowedSeating, setAllowedSeating] = useState(hall.allowedSeating || ['choice', 'fixed']);
   const updateWindow = (index, field, value) => setWindows(current => current.map((item, i) => i === index ? { ...item, [field]: field === 'weekday' ? Number(value) : value } : item));
   return <Modal title={hall.id ? 'Настроить зал' : 'Новый зал'} onClose={onClose}><form onSubmit={event => { event.preventDefault(); submit({ name, capacity: Number(capacity), windows, allowedSeating }); }}>
     <label>Название зала<input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>
     <label>Вместимость, гостей<input required type="number" min="1" max="1000" value={capacity} onChange={event => setCapacity(event.target.value)} /></label>
-    <h3>Окна бронирования</h3><p className="muted">Время указано по Москве. Банкет целиком должен помещаться в одно окно.</p>
-    <div className="booking-windows">{windows.map((window, index) => <div className="booking-window" key={index}><select aria-label={`День ${index + 1}`} value={window.weekday} onChange={event => updateWindow(index, 'weekday', event.target.value)}>{WEEKDAYS.map((day, weekday) => <option key={day} value={weekday}>{day}</option>)}</select><input type="time" aria-label={`Начало окна ${index + 1}`} value={window.start} onChange={event => updateWindow(index, 'start', event.target.value)} /><input type="time" aria-label={`Конец окна ${index + 1}`} value={window.end} onChange={event => updateWindow(index, 'end', event.target.value)} /><button type="button" className="icon-btn" aria-label="Удалить окно" onClick={() => setWindows(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}</div>
+    <h3>Окна бронирования</h3><p className="muted">Время по Москве, в 24-часовом формате. Для работы без перерыва включите «Круглосуточно»: 23:59 оставляет последнюю минуту дня вне бронирования.</p>
+    <label className="seating-option always-open-option"><input type="checkbox" checked={alwaysOpen(windows)} onChange={event => { if (event.target.checked) { previousWindows.current = windows; setWindows(Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '00:00', end: '24:00' }))); } else setWindows(previousWindows.current.length && !alwaysOpen(previousWindows.current) ? previousWindows.current : [{ weekday: 1, start: '09:00', end: '23:00' }]); }} /><span>Круглосуточно · 24/7</span></label>
+    <div className="booking-windows">{windows.map((window, index) => <div className="booking-window" key={index}><select aria-label={`День ${index + 1}`} value={window.weekday} onChange={event => updateWindow(index, 'weekday', event.target.value)}>{WEEKDAYS.map((day, weekday) => <option key={day} value={weekday}>{day}</option>)}</select><input type="text" inputMode="text" maxLength={5} required pattern="([01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" aria-label={`Начало окна ${index + 1}, 24 часа`} value={window.start} onChange={event => updateWindow(index, 'start', event.target.value)} /><input type="text" inputMode="text" maxLength={5} required pattern="(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)" placeholder="24:00" aria-label={`Конец окна ${index + 1}, 24 часа`} value={window.end} onChange={event => updateWindow(index, 'end', event.target.value)} /><button type="button" className="icon-btn" aria-label="Удалить окно" onClick={() => setWindows(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}</div>
     <button type="button" className="text-button" onClick={() => setWindows(current => [...current, { weekday: 1, start: '09:00', end: '23:00' }])}>+ Добавить окно</button>
-    <h3>Допустимая рассадка</h3>{['choice', 'fixed'].map(mode => <label className="check" key={mode}><input type="checkbox" checked={allowedSeating.includes(mode)} onChange={event => setAllowedSeating(current => event.target.checked ? [...current, mode] : current.filter(value => value !== mode))} /> {SEATING_MODE_NAMES[mode]}</label>)}
+    <h3>Допустимая рассадка</h3>{['choice', 'fixed'].map(mode => <label className="seating-option" key={mode}><input type="checkbox" checked={allowedSeating.includes(mode)} onChange={event => setAllowedSeating(current => event.target.checked ? [...current, mode] : current.filter(value => value !== mode))} /><span>{SEATING_MODE_NAMES[mode]}</span></label>)}
     <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить зал «${hall.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить зал</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !windows.length}>Сохранить</Button></div>
   </form></Modal>;
 }
@@ -2463,18 +2490,16 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
         <div className="form-grid">
           <label>
             Когда встречаемся
-            <input
-              type="datetime-local"
+            <RussianDateTimeInput
               name="date"
               required
               value={eventDate}
-              onChange={event => setEventDate(event.target.value)}
+              onChange={setEventDate}
             />
           </label>
           <label>
             Собрать выбор до
-            <input
-              type="datetime-local"
+            <RussianDateTimeInput
               name="deadline"
               required
               defaultValue={future(5)}
@@ -2504,7 +2529,7 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
             <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
           </label>}
         </div>
-        {availability && <div className="booking-availability"><strong>Зал «{availability.name}» · {eventDate.slice(0, 10)}</strong><small>Окна: {availability.windows.length ? availability.windows.map(window => `${window.start}–${window.end}`).join(', ') : 'в этот день нет'}</small><small>Занято: {availability.booked.length ? availability.booked.map(slot => `${dateText(slot.start, true)}–${new Date(slot.end).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`).join(', ') : 'пока свободно'}</small></div>}
+        {availability && <div className="booking-availability"><strong>Зал «{availability.name}» · {formatRussianDateTime(eventDate).slice(0, 10)}</strong><small>Окна: {availability.windows.length ? availability.windows.map(window => `${window.start}–${window.end}`).join(', ') : 'в этот день нет'}</small><small>Занято: {availability.booked.length ? availability.booked.map(slot => `${dateText(slot.start, true)}–${new Date(slot.end).toLocaleTimeString('ru-RU', { timeZone: 'Europe/Moscow', hour: '2-digit', minute: '2-digit' })}`).join(', ') : 'пока свободно'}</small></div>}
         <div className="form-grid">
           <label>
             Рассадка

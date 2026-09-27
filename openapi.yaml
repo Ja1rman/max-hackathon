@@ -677,7 +677,7 @@ paths:
     delete:
       operationId: deleteEvent
       summary: Удалить банкет, приглашения, заказы и рассадку
-      description: Организатор банкета или администратор ресторана.
+      description: До утверждения — организатор банкета или администратор ресторана; после утверждения — только администратор ресторана.
       parameters:
       - "$ref": "#/components/parameters/eventId"
       responses:
@@ -2007,7 +2007,7 @@ components:
             properties:
               weekday: { type: integer, minimum: 0, maximum: 6, description: Воскресенье = 0 }
               start: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
-              end: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+              end: { type: string, pattern: '^(([01]\d|2[0-3]):[0-5]\d|24:00)$', description: '24:00 означает конец суток. Семь окон 00:00–24:00 задают круглосуточный режим.' }
         allowedSeating: { type: array, uniqueItems: true, items: { type: string, enum: [choice, fixed] } }
     PackageDishInput:
       type: object
@@ -2175,6 +2175,9 @@ components:
         canManage:
           type: boolean
           description: Администратор ресторана или организатор этого банкета.
+        canDelete:
+          type: boolean
+          description: После утверждения true только для администратора ресторана.
         revision:
           type: integer
           minimum: 0

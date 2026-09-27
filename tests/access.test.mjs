@@ -63,6 +63,28 @@ test('service administrator grants restaurant admins by MAX ID while guests can 
   assert.equal((await f.request(`/api/events/${event.id}`, { token: guest.token })).data.canSelect, true);
 });
 
+test('only a restaurant administrator may delete an approved banquet', async t => {
+  const f = await fixture(t);
+  const serviceAdmin = await f.login(900);
+  const organizer = await f.login(300);
+  const restaurantAdmin = await f.login(200);
+  const restaurant = (await f.request('/api/restaurants', { token: serviceAdmin.token })).data[0];
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/members/max:200`, { token: serviceAdmin.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
+  const created = await f.request('/api/events', { token: organizer.token, method: 'POST', body: banquet(restaurant.id) });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.canDelete, true);
+  f.store.db.prepare("UPDATE events SET status='approved', approved_at=? WHERE id=?").run(new Date().toISOString(), created.data.id);
+  const organizerEvent = (await f.request(`/api/events/${created.data.id}`, { token: organizer.token })).data.event;
+  const adminEvent = (await f.request(`/api/events/${created.data.id}`, { token: restaurantAdmin.token })).data.event;
+  assert.equal(organizerEvent.canManage, true);
+  assert.equal(organizerEvent.canDelete, false);
+  assert.equal(adminEvent.canDelete, true);
+  const denied = await f.request(`/api/events/${created.data.id}`, { token: organizer.token, method: 'DELETE' });
+  assert.equal(denied.status, 403);
+  assert.match(denied.data.error, /После утверждения.*администратор ресторана/);
+  assert.equal((await f.request(`/api/events/${created.data.id}`, { token: restaurantAdmin.token, method: 'DELETE' })).status, 200);
+});
+
 test('kitchen board exports CSV and a valid XLSX workbook, also through a one-use link', async t => {
   const f = await fixture(t);
   const admin = await f.login(900, 'Шеф');

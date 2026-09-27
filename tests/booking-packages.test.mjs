@@ -38,6 +38,33 @@ test('hall bookings reject overlap, allow back-to-back and parallel halls, and e
   assert.equal((await f.request(`/api/events/${first.data.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: first.data.revision, date: plusHours(date, 2) } })).status, 409);
 });
 
+test('a 24/7 hall accepts a banquet across midnight and reports bookings on both days', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const owner = await f.login(100);
+  const restaurant = (await f.request('/api/restaurants', { token: admin.token })).data[0];
+  const hall = restaurant.halls[0];
+  const windows = Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '00:00', end: '24:00' }));
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${hall.id}`, { token: admin.token, method: 'PATCH', body: { windows } })).status, 200);
+  const day = new Date(Date.now() + 14 * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+  const date = new Date(`${day}T23:00:00+03:00`).toISOString();
+  const weekday = new Date(`${day}T12:00:00+03:00`).getUTCDay();
+  assert.equal(f.store.hallWindow({ windows: [{ weekday, start: '00:00', end: '24:00' }] }, date, 1), true);
+  assert.equal(f.store.hallWindow({ windows: [{ weekday, start: '00:00', end: '24:00' }] }, date, 2), false);
+  const deadline = atNoon(10);
+  const body = { title: 'Ночной банкет', restaurantId: restaurant.id, hallId: hall.id, date, deadline, durationHours: 4, expectedGuests: 8, seating: { mode: 'choice', template: 'rounds' } };
+  const first = await f.request('/api/events', { token: owner.token, method: 'POST', body });
+  assert.equal(first.status, 201);
+  const nextDay = new Date(Date.parse(date) + 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+  const availability = await f.request(`/api/restaurants/${restaurant.id}/availability?date=${nextDay}&hallId=${hall.id}`, { token: owner.token });
+  assert.equal(availability.data[0].booked[0].eventId, first.data.id);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Пересечение ночью', date: plusHours(date, 2) } })).status, 409);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Следом', date: plusHours(date, 4) } })).status, 201);
+  const seatingConflict = await f.request(`/api/restaurants/${restaurant.id}/halls/${hall.id}`, { token: admin.token, method: 'PATCH', body: { allowedSeating: [] } });
+  assert.equal(seatingConflict.status, 409);
+  assert.match(seatingConflict.data.error, /«Ночной банкет».*выбор места гостями/);
+});
+
 test('package-only dishes have their own KBJU and snapshots stay stable after editing', async t => {
   const f = await fixture(t);
   const admin = await f.login(900);
