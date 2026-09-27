@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { verifyInitData } from '../server/auth.mjs';
 import { createApp, clientIp } from '../server/index.mjs';
 import { createNotifier } from '../server/notifications.mjs';
-import { BOT_TOKEN, fixture, sign, signedContact } from './helpers.mjs';
+import { BOT_TOKEN, fixture, futureMoscow, sign, signedContact } from './helpers.mjs';
 
 test('MAX signature authenticates decoded fields and rejects forgery, duplicate keys and stale/future launches', () => {
   const valid = sign({ name: 'Анна + Мария & друзья' });
@@ -168,7 +168,7 @@ test('SQLite persists sessions and orders after server restart', async t => {
   const session = first.store.loginMax({ id: '100', name: 'Persistent Owner' });
   const user = first.store.authenticate(session.token);
   const restaurant = first.store.restaurants(user)[0];
-  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: new Date(Date.now() + 86400000 * 14).toISOString(), deadline: new Date(Date.now() + 86400000 * 10).toISOString(), expectedGuests: 10, foodBudget: 1000000 });
+  const event = first.store.createEvent(user, { title: 'Persistent Banquet', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 10, foodBudget: 1000000 });
   first.store.bindPhone(user, '79990000001');
   first.store.addInvite(user, event.id, { name: 'Persistent Owner', phone: '79990000001' });
   const bound = first.store.authenticate(session.token);
@@ -325,7 +325,7 @@ test('event administration edits metadata and event-only KBJU menu with revision
   const owner = await f.login(100);
   const outsider = await f.login(200);
   const event = await f.event(owner.token);
-  const newDate = new Date(Date.now() + 20 * 86400000).toISOString();
+  const newDate = futureMoscow(20);
   const next = await f.request(`/api/events/${event.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: event.revision, title: 'Новая дата', date: newDate, expectedGuests: 18 } });
   assert.equal(next.status, 200);
   assert.equal(next.data.expectedGuests, 18);
@@ -391,7 +391,7 @@ test('photo upload validates image bytes and exposes only generated media path',
   assert.equal(retrieved.status, 200);
   assert.deepEqual(Buffer.from(await retrieved.arrayBuffer()), bytes);
   const restaurant = (await f.request('/api/restaurants', { token: owner.token })).data[0];
-  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { restaurantId: restaurant.id, title: 'Банкет с фото', photoUrl, date: new Date(Date.now() + 14 * 86400000).toISOString(), deadline: new Date(Date.now() + 10 * 86400000).toISOString(), expectedGuests: 3 } });
+  const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: { restaurantId: restaurant.id, title: 'Банкет с фото', photoUrl, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 3 } });
   assert.equal(created.status, 201);
   assert.equal(created.data.photoUrl, photoUrl);
   assert.equal((await f.request(`/api/events/${created.data.id}`, { token: owner.token })).data.event.photoUrl, photoUrl);

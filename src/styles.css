@@ -521,12 +521,23 @@ main {
 .admin-panel label.remove-photo-check { display: inline-flex; justify-self: start; align-items: center; gap: 10px; font-size: 12px; color: var(--ink); cursor: pointer; }
 .admin-panel .remove-photo-check input { width: 18px; height: 18px; min-width: 18px; min-height: 18px; max-height: 18px; padding: 0; margin: 0; }
 .restaurant-choice-grid, .package-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 16px; margin-bottom: 24px; }
-.restaurant-choice { display: grid; gap: 10px; width: 100%; min-width: 0; text-align: left; cursor: pointer; color: var(--ink); }
+.restaurant-choice { position: relative; display: grid; gap: 10px; width: 100%; min-width: 0; text-align: left; color: var(--ink); }
+.restaurant-choice-open { display: grid; gap: 10px; width: 100%; padding: 0 38px 0 0; border: 0; background: transparent; text-align: left; color: inherit; cursor: pointer; }
+.restaurant-search { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
+.restaurant-search .search-field { flex: 1; min-width: 0; margin: 0; }
+.favorite-filter, .favorite-inline { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.favorite-filter.active, .favorite-inline.active, .favorite-button.active { color: #ad7519; background: #fff8e9; border-color: #d8b568; }
+.favorite-button { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
+.danger-zone { display: grid; justify-items: start; gap: 8px; margin-top: 24px; padding-top: 20px; border-top: 1px solid #ecc9c4; color: #8b382e; }
+.danger-zone p { margin: 0; color: var(--muted); font-size: 11px; }
+.danger-zone .btn { border-color: #bb5d50; color: #9a3b30; }
 .restaurant-choice:hover { border-color: #92ad80; background: #f8fbf5; }
 .restaurant-choice-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; color: #416e37; background: #edf4e8; }
 .restaurant-choice strong { font-size: 18px; }
 .restaurant-choice small { color: var(--muted); line-height: 1.45; }
-.restaurant-choice > span:last-child { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #416e37; }
+.restaurant-choice-open > span:last-child { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #416e37; }
+.photo-credits { margin: 14px 0 0; font-size: 12px; }
+.photo-credits a { color: #416e37; text-decoration: underline; text-underline-offset: 2px; }
 .menu-category { border-top: 1px solid var(--line); padding: 12px 0; }
 .menu-category summary { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 700; font-size: 17px; padding: 10px 2px; }
 .menu-category summary span { font-size: 11px; color: var(--muted); border-radius: 99px; background: var(--soft); padding: 3px 8px; }
@@ -2647,26 +2658,26 @@ main {
 
 /* Seating */
 .guest-seat { display: inline-block; margin-left: 8px; font-size: 8px; font-weight: 700; color: var(--green); background: var(--soft); padding: 2px 6px; border-radius: 4px; }
-.seating-map { position: relative; border: 1px solid var(--line); border-radius: 10px; background: #fbfcf9; }
+.seating-map { position: relative; border: 1px solid #9ab69f; border-radius: 10px; background: #f2f7ee; }
 .seating-scroll { overflow: auto; max-height: min(70vh, 640px); border-radius: 10px; }
 .seating-scroll > svg { display: block; min-width: 100%; height: auto; user-select: none; -webkit-user-select: none; }
 .seating-zoom { position: absolute; top: 8px; right: 8px; z-index: 1; display: flex; align-items: center; gap: 4px; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 3px; font-size: 10px; color: var(--muted); }
 .seating-zoom button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; }
 .seating-zoom button:hover:not(:disabled) { background: var(--soft); }
 .seating-zoom span { min-width: 34px; text-align: center; }
-.seating-table circle, .seating-table rect { fill: #e9efe3; stroke: #b9c9ad; stroke-width: 2; }
+.seating-table circle, .seating-table rect { fill: #d6e7d2; stroke: #42744d; stroke-width: 2.5; }
 .seating-table.editable > g:first-child { cursor: grab; }
 .seating-table.editable > g:first-child:active { cursor: grabbing; }
 .seating-table.selected > g:first-child circle, .seating-table.selected > g:first-child rect { stroke: var(--green); stroke-width: 3; fill: #dfe9d6; }
-.table-label { font-size: 18px; font-weight: 750; fill: #5d7250; text-anchor: middle; dominant-baseline: central; }
+.table-label { font-size: 18px; font-weight: 750; fill: #173f2a; text-anchor: middle; dominant-baseline: central; }
 .seat circle { stroke-width: 2; }
 .seat circle.hit, .seat.free circle.hit, .seat.taken circle.hit, .seat.mine circle.hit, .seat.clickable:hover circle.hit { fill: transparent; stroke: none; }
 .seat text { font-size: 11px; font-weight: 700; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
-.seat.free circle { fill: #fff; stroke: #9fb592; }
-.seat.free text { fill: #7d8f72; }
-.seat.taken circle { fill: #c9cfc4; stroke: #aab3a4; }
+.seat.free circle { fill: #fff; stroke: #367149; }
+.seat.free text { fill: #205334; }
+.seat.taken circle { fill: #a84b44; stroke: #762d2a; }
 .seat.taken text { fill: #fff; }
-.seat.mine circle { fill: var(--green); stroke: #1c4a37; }
+.seat.mine circle { fill: #13765b; stroke: #0a4835; }
 .seat.mine text { fill: #fff; }
 .seat.clickable { cursor: pointer; }
 .seat.clickable:hover circle:not(.hit), .seat.clickable:focus-visible circle:not(.hit) { fill: #d7ead0; stroke: var(--green); }
@@ -2674,9 +2685,9 @@ main {
 .seat.selected circle { stroke: #c08b2c; stroke-width: 3; }
 .seating-legend { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px 12px; font-size: 10px; color: var(--muted); border-top: 1px solid var(--line); }
 .seating-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.seating-legend i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #9fb592; background: #fff; }
-.seating-legend i.taken { background: #c9cfc4; border-color: #aab3a4; }
-.seating-legend i.mine { background: var(--green); border-color: #1c4a37; }
+.seating-legend i { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #367149; background: #fff; }
+.seating-legend i.taken { background: #a84b44; border-color: #762d2a; }
+.seating-legend i.mine { background: #13765b; border-color: #0a4835; }
 .my-seat { display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 16px; border-radius: 10px; background: #f6f7f2; color: var(--muted); }
 .my-seat.set { background: var(--soft); color: var(--green); }
 .my-seat > div { flex: 1; min-width: 0; }
@@ -2779,6 +2790,8 @@ button:not(:disabled):active { transform: scale(0.97); }
 .btn:not(.secondary):not(:disabled):active { filter: brightness(0.92); }
 .mobile-nav button { border-radius: 10px; transition: color .15s, background .15s; }
 .mobile-nav button.active { color: var(--green); font-weight: 750; background: var(--soft); }
+.mobile-nav button, .mobile-nav button:hover, .mobile-nav button:active { -webkit-tap-highlight-color: transparent; background: transparent; transform: none !important; filter: none !important; box-shadow: none; }
+.mobile-nav button.active, .mobile-nav button.active:hover, .mobile-nav button.active:active { color: var(--green); font-weight: 750; background: var(--soft); }
 .admin-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .profile-link { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; color: var(--ink); font-size: 11px; font-weight: 650; }
 .profile-link small { display: block; margin-top: 3px; font-size: 9px; font-weight: 500; color: var(--muted); }

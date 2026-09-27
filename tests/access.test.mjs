@@ -6,10 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../server/store.mjs';
-import { fixture, signedContact } from './helpers.mjs';
+import { fixture, futureMoscow, signedContact } from './helpers.mjs';
 
-const future = days => new Date(Date.now() + days * 86400000).toISOString();
-const banquet = restaurantId => ({ title: 'Корпоратив', restaurantId, date: future(14), deadline: future(10), expectedGuests: 5 });
+const banquet = restaurantId => ({ title: 'Корпоратив', restaurantId, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 5 });
 
 test('banquet organizers have full rights only for assigned events; access list hides unrelated users', async t => {
   const f = await fixture(t, { openOrganizerSignup: false });
@@ -116,7 +115,7 @@ test('v8 migration turns the old organizer list and banquet owners into restaura
   t.after(() => migrated.close());
   assert.deepEqual(migrated.db.prepare('SELECT user_id FROM event_organizers WHERE event_id=? ORDER BY user_id').all('e1').map(row => row.user_id), ['max_1', 'max_2']);
   assert.equal(migrated.db.prepare("SELECT 1 FROM sqlite_master WHERE name='organizers'").get(), undefined);
-  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 11);
+  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 12);
 });
 
 test('a live organizer orders and picks a seat at their own banquet without being on the guest list', async t => {

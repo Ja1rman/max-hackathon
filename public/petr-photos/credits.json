@@ -1,0 +1,1558 @@
+{
+  "001": {
+    "dish": "Тост со сливочным маслом для вашей икры",
+    "file": "001.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "002": {
+    "dish": "Тарталетка с мягким сливочным маслом и перепелиным яйцом для вашей икры",
+    "file": "002.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "003": {
+    "dish": "Мини оладушки с мягким сливочным маслом и сметаной для вашей икры (2 шт.)",
+    "file": "003.jpg",
+    "pageId": 27251206,
+    "source": "https://commons.wikimedia.org/wiki/File:Singer_Caf%C3%A9_-_Blini_with_sour_cream_and_red_caviar_IMG_3424.JPG",
+    "artist": "Deror_avi",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "blini pancakes sour cream"
+  },
+  "004": {
+    "dish": "Икорная станция (мини оладушки, красная и щучья икра, сметана и масло)",
+    "file": "004.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "005": {
+    "dish": "Икра красная",
+    "file": "005.jpg",
+    "pageId": 9187132,
+    "source": "https://commons.wikimedia.org/wiki/File:Lachskaviar,_Salmon_roe,_Red_caviar,_%D0%9A%D1%80%D0%B0%D1%81%D0%BD%D0%B0%D1%8F_%D0%B8%D0%BA%D1%80%D0%B0_005.JPG",
+    "artist": "Puschinka",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "red caviar salmon roe"
+  },
+  "006": {
+    "dish": "Икра щучья",
+    "file": "006.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "007": {
+    "dish": "Эклер с кремом из авокадо, тартаром из лосося и соусом манго",
+    "file": "007.jpg",
+    "pageId": 166149939,
+    "source": "https://commons.wikimedia.org/wiki/File:TERIYAKI_SALMON_SALAD_-_Jonny%27s_2025-05-27.jpg",
+    "artist": "Andy Li",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "salmon food"
+  },
+  "008": {
+    "dish": "Эклер с кремом из авокадо, тартаром из тунца и соусом манго",
+    "file": "008.jpg",
+    "pageId": 41870680,
+    "source": "https://commons.wikimedia.org/wiki/File:Tuna_on_Marseille_fish_market.jpg",
+    "artist": "Ratki",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "tuna food"
+  },
+  "009": {
+    "dish": "Тартар из лосося на креветочном чипсе",
+    "file": "009.jpg",
+    "pageId": 66330351,
+    "source": "https://commons.wikimedia.org/wiki/File:Baked_salmon_2.jpg",
+    "artist": "Tiia Monto",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "salmon food"
+  },
+  "010": {
+    "dish": "Канапе с креветкой и соусом Арахисовый чили",
+    "file": "010.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "011": {
+    "dish": "Креветки в панировке с соусом Коктейль",
+    "file": "011.jpg",
+    "pageId": 129495256,
+    "source": "https://commons.wikimedia.org/wiki/File:A_heap_of_shrimp_shells_on_a_plate_in_Tuntorp_1.jpg",
+    "artist": "W.carter",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "shrimp food"
+  },
+  "012": {
+    "dish": "Профитроль с чернилами каракатицы с красной икрой и сливочным сыром",
+    "file": "012.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "013": {
+    "dish": "Татаки из тунца в чёрном кунжуте",
+    "file": "013.jpg",
+    "pageId": 2471147,
+    "source": "https://commons.wikimedia.org/wiki/File:Ventr%C3%A8che_de_thon.jpg",
+    "artist": "gerard cohen",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/",
+    "query": "tuna food"
+  },
+  "014": {
+    "dish": "Осьминог на печёном картофеле с соусом Вителло",
+    "file": "014.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "015": {
+    "dish": "Севиче из гребешка с красной икрой и соусом Понзу",
+    "file": "015.jpg",
+    "pageId": 10852974,
+    "source": "https://commons.wikimedia.org/wiki/File:Caviar_spoons.jpg",
+    "artist": "THOR",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "caviar food"
+  },
+  "016": {
+    "dish": "Рулетики из ветчины с остро-сырной пастой",
+    "file": "016.jpg",
+    "pageId": 107567899,
+    "source": "https://commons.wikimedia.org/wiki/File:Easter_breakfast_in_Serbia_(close-up).jpg",
+    "artist": "Petar Milošević",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "ham food"
+  },
+  "017": {
+    "dish": "Канапе с прошутто и кубиком ананаса",
+    "file": "017.jpg",
+    "pageId": 82239624,
+    "source": "https://commons.wikimedia.org/wiki/File:Kajmak_and_Pr%C5%A1ut_from_Montenegro_02.jpg",
+    "artist": "Milica Buha",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "prosciutto food"
+  },
+  "018": {
+    "dish": "Канапе с чоризо и огурцом на зерновом хлебце",
+    "file": "018.jpg",
+    "pageId": 130312775,
+    "source": "https://commons.wikimedia.org/wiki/File:Chorizo_from_Fatted_Calf_-_April_2023_-_Sarah_Stierch.jpg",
+    "artist": "Missvain",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "chorizo food"
+  },
+  "019": {
+    "dish": "Канапе из буженины с зерновой горчицей и маринованным корнишоном",
+    "file": "019.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "020": {
+    "dish": "Профитроли с паштетом из телячьей печени и конфитюром из чёрной смородины",
+    "file": "020.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "021": {
+    "dish": "Канапе Вителло",
+    "file": "021.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "022": {
+    "dish": "Ростбиф из телятины с печёным перцем",
+    "file": "022.jpg",
+    "pageId": 61937462,
+    "source": "https://commons.wikimedia.org/wiki/File:Beef_sticks_drying_in_the_sun.jpg",
+    "artist": "Basile Morin",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef food"
+  },
+  "023": {
+    "dish": "Копчёная куриная грудка со свежим огурцом и крем-чиз",
+    "file": "023.jpg",
+    "pageId": 5811761,
+    "source": "https://commons.wikimedia.org/wiki/File:Chickens_in_market.jpg",
+    "artist": "Tomás Castelazo",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "chicken food"
+  },
+  "024": {
+    "dish": "Канапе с сыром Моцарелла и вялеными томатами",
+    "file": "024.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "025": {
+    "dish": "Карамелизированная груша с сыром Бри",
+    "file": "025.jpg",
+    "pageId": 143579066,
+    "source": "https://commons.wikimedia.org/wiki/File:Ash_brie_%26_blue_cheese_with_prosciutto,_figs_and_grapes.jpg",
+    "artist": "Kgbo",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "brie cheese food"
+  },
+  "026": {
+    "dish": "Хрустящие гренки с рикоттой и муссом из горгонзолы",
+    "file": "026.jpg",
+    "pageId": 184881881,
+    "source": "https://commons.wikimedia.org/wiki/File:Food_on_a_plate_at_restaurant_Saino.jpg",
+    "artist": "JIP",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "restaurant food plate"
+  },
+  "027": {
+    "dish": "Крутон с муссом из белых грибов, сливочным сыром и чёрным трюфелем",
+    "file": "027.jpg",
+    "pageId": 57814708,
+    "source": "https://commons.wikimedia.org/wiki/File:Cheese_roll_at_The_Original_Tea_Hut_at_High_Beach,_Essex,_England.jpg",
+    "artist": "Acabashi",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "cheese food"
+  },
+  "028": {
+    "dish": "Чернослив с пармезаном и грецким орехом",
+    "file": "028.jpg",
+    "pageId": 40687528,
+    "source": "https://commons.wikimedia.org/wiki/File:Parmesan_cheese_knife_on_block_of_cheese.jpg",
+    "artist": "Benoît Prieur",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "parmesan food"
+  },
+  "029": {
+    "dish": "Чизболл три сыра с виноградом в обсыпке из миндаля",
+    "file": "029.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "030": {
+    "dish": "Мини Моцарелла с томатом Черри и оливкой в шоте с соусом Песто",
+    "file": "030.jpg",
+    "pageId": 24902245,
+    "source": "https://commons.wikimedia.org/wiki/File:Mozzarella_cheese_(1).jpg",
+    "artist": "Jon Sullivan",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "mozzarella food"
+  },
+  "031": {
+    "dish": "Овощные палочки в шоте с йогуртовым соусом с зеленью",
+    "file": "031.jpg",
+    "pageId": 112673444,
+    "source": "https://commons.wikimedia.org/wiki/File:Elizabeth%27s_Restaurant_-_Food_and_Devices_-_New_Orleans_2016.jpg",
+    "artist": "Infrogmation of New Orleans",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "restaurant food plate"
+  },
+  "032": {
+    "dish": "Профитроль с лососем и шпинатом",
+    "file": "032.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "033": {
+    "dish": "Профитроль с цыплёнком и брокколи",
+    "file": "033.jpg",
+    "pageId": 21962258,
+    "source": "https://commons.wikimedia.org/wiki/File:Chicken_Egg_without_Eggshell_5859.jpg",
+    "artist": "Biswarup Ganguly",
+    "license": "CC BY 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+    "query": "chicken food"
+  },
+  "034": {
+    "dish": "Грибные шляпки с сыром сулугуни и зеленью",
+    "file": "034.jpg",
+    "pageId": 41188787,
+    "source": "https://commons.wikimedia.org/wiki/File:Stuffed_mushrooms,_2015-06-25.jpg",
+    "artist": "Crisco 1492",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "stuffed mushrooms cheese"
+  },
+  "035": {
+    "dish": "Шашлычок из креветок с соусом Сладкий чили",
+    "file": "035.jpg",
+    "pageId": 176919501,
+    "source": "https://commons.wikimedia.org/wiki/File:Bacon_Wrapped_Shrimp_Skewers_at_The_Revel_Patio_Grill.jpg",
+    "artist": "Revelpatiogrill",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "shrimp skewers"
+  },
+  "036": {
+    "dish": "Шашлычок из ассорти морепродуктов (креветки, осьминог, лосось)",
+    "file": "036.jpg",
+    "pageId": 199579675,
+    "source": "https://commons.wikimedia.org/wiki/File:Raw_Meat_and_Seafood_Skewers_at_Davao_City.jpg",
+    "artist": "PAULIX04",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "seafood skewers"
+  },
+  "037": {
+    "dish": "Куриный шашлычок с томатно-пряным соусом",
+    "file": "037.jpg",
+    "pageId": 70903253,
+    "source": "https://commons.wikimedia.org/wiki/File:Dak-kkochi_1.jpg",
+    "artist": "향긋한 커피매니아",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "chicken skewers"
+  },
+  "038": {
+    "dish": "Шашлык из лосося со сливочным соусом",
+    "file": "038.jpg",
+    "pageId": 195992123,
+    "source": "https://commons.wikimedia.org/wiki/File:DFC_0309_Close-up_of_skewers_with_bright_red_glazed_meat_chunks_green_bell_pepper_pieces_and_pineapple_wedges_threaded_on_wooden_sticks.jpg",
+    "artist": "PattayaPatrol",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "salmon skewers"
+  },
+  "039": {
+    "dish": "Овощной шашлык из цукини, болгарского перца, шампиньонов и баклажана",
+    "file": "039.jpg",
+    "pageId": 200007328,
+    "source": "https://commons.wikimedia.org/wiki/File:DSC_9439_Skewers_of_glossy_grilled_meat_and_vegetables_stacked_in_a_warm_inviting_display_-_perfect_street-food_comfort.jpg",
+    "artist": "PattayaPatrol",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "grilled vegetable skewers"
+  },
+  "040": {
+    "dish": "Брускетта с лососем, свежим огурцом и сливочным сыром",
+    "file": "040.jpg",
+    "pageId": 115941294,
+    "source": "https://commons.wikimedia.org/wiki/File:Food_court_in_the_Salmon_Run_Mall.jpg",
+    "artist": "Lallint",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "salmon food"
+  },
+  "041": {
+    "dish": "Брускетта с бужениной, маринованным огурчиком и зернистой горчицей",
+    "file": "041.jpg",
+    "pageId": 117311136,
+    "source": "https://commons.wikimedia.org/wiki/File:Food_court_pork_burger.jpg",
+    "artist": "Wlyshen",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "pork food"
+  },
+  "042": {
+    "dish": "Брускетта с ростбифом и печёной паприкой",
+    "file": "042.jpg",
+    "pageId": 140399052,
+    "source": "https://commons.wikimedia.org/wiki/File:Beef_with_vegetables.jpg",
+    "artist": "Pannet",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "beef food"
+  },
+  "043": {
+    "dish": "Брускетта с тартаром из вяленых томатов и сливочным сыром",
+    "file": "043.jpg",
+    "pageId": 37225764,
+    "source": "https://commons.wikimedia.org/wiki/File:2014_Bruschetta_The_Larder_Chiang_Mai.jpg",
+    "artist": "Takeaway",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "cheese tomato bruschetta"
+  },
+  "044": {
+    "dish": "Брускетта с печёной паприкой",
+    "file": "044.jpg",
+    "pageId": 11788883,
+    "source": "https://commons.wikimedia.org/wiki/File:Rally_Finland_2010_-_shakedown_-_Alessandro_Bruschetta_1.jpg",
+    "artist": "kallerna",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "bruschetta bruschetta"
+  },
+  "045": {
+    "dish": "Брускетта с Мортаделлой и трюфельным кремом",
+    "file": "045.jpg",
+    "pageId": 13708990,
+    "source": "https://commons.wikimedia.org/wiki/File:Chocolate_truffle_-_Delacre.jpg",
+    "artist": "M0tty",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "truffle food"
+  },
+  "046": {
+    "dish": "Круассан",
+    "file": "046.jpg",
+    "pageId": 27094233,
+    "source": "https://commons.wikimedia.org/wiki/File:Cronut.jpg",
+    "artist": "cumi&ciki",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "croissant bakery pastry"
+  },
+  "047": {
+    "dish": "Блинчики со сметаной, сгущёнкой и вареньем",
+    "file": "047.jpg",
+    "pageId": 79696538,
+    "source": "https://commons.wikimedia.org/wiki/File:Foodiesfeed.com_pouring-honey-on-pancakes-with-walnuts.jpg",
+    "artist": "Mae Mu",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "pancake food"
+  },
+  "048": {
+    "dish": "Оладьи со сметаной, сгущёнкой и вареньем",
+    "file": "048.jpg",
+    "pageId": 100280030,
+    "source": "https://commons.wikimedia.org/wiki/File:Pancake_stack.jpg",
+    "artist": "Shisma",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "pancake food"
+  },
+  "049": {
+    "dish": "Печенье шоколадное с крошкой из белого шоколада",
+    "file": "049.jpg",
+    "pageId": 17266903,
+    "source": "https://commons.wikimedia.org/wiki/File:Choc-Chip-Cookie.jpg",
+    "artist": "Evan-Amos",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "chocolate chip cookies"
+  },
+  "050": {
+    "dish": "Печенье апельсиновое с Нутеллой",
+    "file": "050.jpg",
+    "pageId": 10325829,
+    "source": "https://commons.wikimedia.org/wiki/File:White_Chocolate_and_Orange_Cookies,_March_2008.jpg",
+    "artist": "Nathan Jones",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "orange chocolate cookies"
+  },
+  "051": {
+    "dish": "Гриссини с кунжутом",
+    "file": "051.jpg",
+    "pageId": 85356375,
+    "source": "https://commons.wikimedia.org/wiki/File:Baked_Ziti_and_breadsticks,_Fazoli%27s.jpg",
+    "artist": "Michael Rivera",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "breadsticks food"
+  },
+  "052": {
+    "dish": "Гриссини с Пармезаном",
+    "file": "052.jpg",
+    "pageId": 38385158,
+    "source": "https://commons.wikimedia.org/wiki/File:Parmesan_-_Thil_2.jpg",
+    "artist": "Benoît Prieur",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "parmesan food"
+  },
+  "053": {
+    "dish": "Гриссини с Прошутто",
+    "file": "053.jpg",
+    "pageId": 82239626,
+    "source": "https://commons.wikimedia.org/wiki/File:Kajmak_and_Pr%C5%A1ut_from_Montenegro_01.jpg",
+    "artist": "Milica Buha",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "prosciutto food"
+  },
+  "054": {
+    "dish": "Хлебная корзина (чиабатта, фокачча с оливками и маслинами, ржаной зерновой хлеб)",
+    "file": "054.jpg",
+    "pageId": 36999849,
+    "source": "https://commons.wikimedia.org/wiki/File:Air_Olive_1.JPG",
+    "artist": "Ввласенко",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "olive food"
+  },
+  "055": {
+    "dish": "Итальянская хлебная корзина (чиабатта, фокачча с оливками, фокачча с песто, гриссини с кунжутом)",
+    "file": "055.jpg",
+    "pageId": 83665159,
+    "source": "https://commons.wikimedia.org/wiki/File:Small_olive_crusher,_press,_and_%22settler,%22_illustration_from_The_Encyclopedia_of_Food_by_Artemas_Ward.jpg",
+    "artist": "Artemas Ward",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "olive food"
+  },
+  "056": {
+    "dish": "Фокачча с оливками и маслинами",
+    "file": "056.jpg",
+    "pageId": 121278835,
+    "source": "https://commons.wikimedia.org/wiki/File:Food_in_Catalonia_01.jpg",
+    "artist": "Kritzolina",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "olive food"
+  },
+  "057": {
+    "dish": "Фокачча классическая",
+    "file": "057.jpg",
+    "pageId": 75546574,
+    "source": "https://commons.wikimedia.org/wiki/File:Focaccia_sucr%C3%A9e_%C3%A0_Focaccia_(Part-Dieu)_%C3%A0_Lyon.jpg",
+    "artist": "Benoît Prieur",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "focaccia food"
+  },
+  "058": {
+    "dish": "Фокачча с Песто",
+    "file": "058.jpg",
+    "pageId": 30228318,
+    "source": "https://commons.wikimedia.org/wiki/File:Focaccia_Food_Cart.jpg",
+    "artist": "Visitor7",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "focaccia food"
+  },
+  "059": {
+    "dish": "Фруктовые шоты",
+    "file": "059.jpg",
+    "pageId": 26690833,
+    "source": "https://commons.wikimedia.org/wiki/File:Fresh_Fruit_Dessert.jpg",
+    "artist": "Audrey from Central Pennsylvania, USA",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "fruit dessert cups"
+  },
+  "060": {
+    "dish": "Мини-шоколадный торт",
+    "file": "060.jpg",
+    "pageId": 127617607,
+    "source": "https://commons.wikimedia.org/wiki/File:Mini_Chocolate_Cake.jpg",
+    "artist": "Marife.altabano",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "mini chocolate cake"
+  },
+  "061": {
+    "dish": "Мини-Медовик",
+    "file": "061.jpg",
+    "pageId": 34802756,
+    "source": "https://commons.wikimedia.org/wiki/File:Beskidische_Honigkuchen,_Sanok.JPG",
+    "artist": "Silar",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "honey layer cake"
+  },
+  "062": {
+    "dish": "Чизкейк (классический, шоколадный, фисташковый)",
+    "file": "062.jpg",
+    "pageId": 10226971,
+    "source": "https://commons.wikimedia.org/wiki/File:Cheesecake_with_slice_cut_out.jpg",
+    "artist": "Martin van Dam",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "cheesecake slice"
+  },
+  "063": {
+    "dish": "Графские развалины",
+    "file": "063.jpg",
+    "pageId": 10269184,
+    "source": "https://commons.wikimedia.org/wiki/File:Animal_Meringues_-_Planet_Chocolate,_Doncaster.jpg",
+    "artist": "Alpha",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "meringue chocolate cake"
+  },
+  "064": {
+    "dish": "Конфеты с белым шоколадом",
+    "file": "064.jpg",
+    "pageId": 137840235,
+    "source": "https://commons.wikimedia.org/wiki/File:2023_Cukierki_Micha%C5%82ki_z_Wawelu_Bia%C5%82e.jpg",
+    "artist": "Jacek Halicki",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "white chocolate candy"
+  },
+  "065": {
+    "dish": "Конфеты с солёным шоколадом",
+    "file": "065.jpg",
+    "pageId": 198056272,
+    "source": "https://commons.wikimedia.org/wiki/File:Little_dark_chocolate_candies_(2026).jpg",
+    "artist": "Gpkp",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "dark chocolate candy"
+  },
+  "066": {
+    "dish": "Жасминовая панакота с вишнёвым компоте в шоте",
+    "file": "066.jpg",
+    "pageId": 168780024,
+    "source": "https://commons.wikimedia.org/wiki/File:ELDERFLOWER_PANNA_COTTA_-_The_Meeting_Place_2025-06-28.jpg",
+    "artist": "Andy Li",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "panna cotta food"
+  },
+  "067": {
+    "dish": "Лосось слабой соли",
+    "file": "067.jpg",
+    "pageId": 99553916,
+    "source": "https://commons.wikimedia.org/wiki/File:Cold_Entr%C3%A9e._Chicken_M%C3%A9daillons,_Cold_Border_of_Salmon,_Beef_Galantine,_Zephires_of_Duck,_Mutton_Cutlets_in_Aspic,_Chartreuse_of_Pheasant,_Timbale_of_Turbot,_and_Chicken_Darioles._Mrs._Beeton_Household_Management_1923.jpg",
+    "artist": "Illustrator/photographer not credited (1923 book in the public domain)",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "salmon cold appetizer"
+  },
+  "068": {
+    "dish": "Тунец подкопчённый, маринованный в стружке бонито",
+    "file": "068.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "069": {
+    "dish": "Форель холодного копчения",
+    "file": "069.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "070": {
+    "dish": "Масляная рыба холодного копчения",
+    "file": "070.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "071": {
+    "dish": "Сельдь с обжаренным картофелем и маринованным луком",
+    "file": "071.jpg",
+    "pageId": 151427864,
+    "source": "https://commons.wikimedia.org/wiki/File:Wikimania_2024_food_herring_and_new_potatoes_and_raspberry.jpg",
+    "artist": "DrThneed",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "herring food"
+  },
+  "072": {
+    "dish": "Ассорти мясных деликатесов (Парма, Чоризо, Милано, Мортаделла)",
+    "file": "072.jpg",
+    "pageId": 82239630,
+    "source": "https://commons.wikimedia.org/wiki/File:Kajmak_and_Pr%C5%A1ut_from_Montenegro_03.jpg",
+    "artist": "Milica Buha",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "prosciutto food"
+  },
+  "073": {
+    "dish": "Вителло Тоннато",
+    "file": "073.jpg",
+    "pageId": 26755640,
+    "source": "https://commons.wikimedia.org/wiki/File:Vitello_tonnato_(6977537544).jpg",
+    "artist": "cyclonebill from Copenhagen, Denmark",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "vitello tonnato"
+  },
+  "074": {
+    "dish": "Ростбиф из говядины с перечным соусом",
+    "file": "074.jpg",
+    "pageId": 88270247,
+    "source": "https://commons.wikimedia.org/wiki/File:Steam_beef_in_dinner.jpg",
+    "artist": "Peachyeung316",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef food"
+  },
+  "075": {
+    "dish": "Говяжий язык с домашним хреном и горчицей",
+    "file": "075.jpg",
+    "pageId": 104012083,
+    "source": "https://commons.wikimedia.org/wiki/File:Baked_pasta_with_Beef_tongue_and_tomato_sauce_from_Kam_Kee_Cafe.jpg",
+    "artist": "Peachyeung316",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef tongue food"
+  },
+  "076": {
+    "dish": "Буженина с домашним хреном и горчицей",
+    "file": "076.jpg",
+    "pageId": 385607,
+    "source": "https://commons.wikimedia.org/wiki/File:Meatplate.jpg",
+    "artist": "",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/",
+    "query": "pork cold appetizer"
+  },
+  "077": {
+    "dish": "Куриный рулет с вялеными томатами, шпинатом и сыром",
+    "file": "077.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "078": {
+    "dish": "Копчёное куриное филе",
+    "file": "078.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "079": {
+    "dish": "Рулетики из ветчины с сырной пастой",
+    "file": "079.jpg",
+    "pageId": 83780194,
+    "source": "https://commons.wikimedia.org/wiki/File:Veeno_platter.jpg",
+    "artist": "Ijjou",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "ham cheese cold appetizer"
+  },
+  "080": {
+    "dish": "Ассорти сырных деликатесов (Бри, Пармезан, Маасдам, Горгонзола)",
+    "file": "080.jpg",
+    "pageId": 50889,
+    "source": "https://commons.wikimedia.org/wiki/File:Cheese_platter.jpg",
+    "artist": "",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/",
+    "query": "cheese platter"
+  },
+  "081": {
+    "dish": "Ассорти локальных сыров (Сулугуни, Чечил копчёный, Маасдам)",
+    "file": "081.jpg",
+    "pageId": 59251950,
+    "source": "https://commons.wikimedia.org/wiki/File:Cheese_Platter_(14362170692).jpg",
+    "artist": "Daniela",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "cheese platter"
+  },
+  "082": {
+    "dish": "Рулетики из баклажан с сыром",
+    "file": "082.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "083": {
+    "dish": "Рулетики из баклажан с ореховой пастой",
+    "file": "083.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "084": {
+    "dish": "Капрезе с помидорами и базиликом",
+    "file": "084.jpg",
+    "pageId": 92560898,
+    "source": "https://commons.wikimedia.org/wiki/File:Caprese_salad_in_hk.jpg",
+    "artist": "Peachyeung316",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "caprese salad mozzarella tomato"
+  },
+  "085": {
+    "dish": "Овощная нарезка (помидор, огурец, паприка, редис, зелень)",
+    "file": "085.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "086": {
+    "dish": "Средиземноморские маслины и оливки",
+    "file": "086.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "087": {
+    "dish": "Вяленые томаты",
+    "file": "087.jpg",
+    "pageId": 6966340,
+    "source": "https://commons.wikimedia.org/wiki/File:Sun-dried_tomatoes.jpg",
+    "artist": "Andrew Deacon",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "sun dried tomatoes"
+  },
+  "088": {
+    "dish": "Ассорти солений",
+    "file": "088.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "089": {
+    "dish": "Грузди солёные",
+    "file": "089.jpg",
+    "pageId": 3772180,
+    "source": "https://commons.wikimedia.org/wiki/File:Pickled_mushrooms....jpg",
+    "artist": "Mariuszjbie",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "pickled mushrooms"
+  },
+  "090": {
+    "dish": "Куриный рулет со стручковой фасолью и вялеными томатами",
+    "file": "090.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "091": {
+    "dish": "Жульен из белых грибов в кокотнице",
+    "file": "091.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "092": {
+    "dish": "Жульен с цыплёнком и шампиньонами в кокотнице",
+    "file": "092.jpg",
+    "pageId": 156449809,
+    "source": "https://commons.wikimedia.org/wiki/File:Golden_Chicken_Milanesa_with_Crisp_Breadcrumb_Coating.jpg",
+    "artist": "Srujanabotcha",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "chicken food"
+  },
+  "093": {
+    "dish": "Фриттини из цукини и моркови с лососем слабой соли и Страчателлой",
+    "file": "093.jpg",
+    "pageId": 106499054,
+    "source": "https://commons.wikimedia.org/wiki/File:Smoked_salmon_20080814_120624.jpg",
+    "artist": "Ka23 13",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "salmon food"
+  },
+  "094": {
+    "dish": "Кассероль из цукини с креветками",
+    "file": "094.jpg",
+    "pageId": 24905979,
+    "source": "https://commons.wikimedia.org/wiki/File:Shrimp_primavera_pasta_cooking_food_dinner.jpg",
+    "artist": "Jon Sullivan",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "shrimp food"
+  },
+  "095": {
+    "dish": "Шашлычок из тигровых креветок с соусом Сладкий чили",
+    "file": "095.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "096": {
+    "dish": "Мидии Киви, запечённые с сыром Горгонзола (2 шт.)",
+    "file": "096.jpg",
+    "pageId": 191480836,
+    "source": "https://commons.wikimedia.org/wiki/File:Drunken_mussels_-_Perch_on_the_Pier_2026-05-07.jpg",
+    "artist": "Andy Li",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "mussels food"
+  },
+  "097": {
+    "dish": "Филе лосося на гриле с брокколи и цветной капустой, запечённые под Пармезаном",
+    "file": "097.jpg",
+    "pageId": 114795227,
+    "source": "https://commons.wikimedia.org/wiki/File:2022-01-29_20_53_20_Blackened_Cajun_Salmon_(6_oz._blackened_and_grilled_salmon_fillet_with_garlic_mashed_potatoes_and_steamed_broccoli)_at_the_Applebee%27s_in_Fair_Lakes,_Fairfax_County,_Virginia.jpg",
+    "artist": "Famartin",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "grilled salmon broccoli"
+  },
+  "098": {
+    "dish": "Дорадо на гриле со стручковой фасолью",
+    "file": "098.jpg",
+    "pageId": 171025734,
+    "source": "https://commons.wikimedia.org/wiki/File:31_Spanish_restaurant_menu_of_the_day_(Menu_del_dia)_in_Madrid,_Spain_-_blackboard_menu_sign.jpg",
+    "artist": "Marek Ślusarczyk (Tupungato) Photo portfolio",
+    "license": "CC BY 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+    "query": "sea bream restaurant main course"
+  },
+  "099": {
+    "dish": "Филе судака по-Милански со свекольным ризотто и йогуртовым соусом",
+    "file": "099.jpg",
+    "pageId": 9165841,
+    "source": "https://commons.wikimedia.org/wiki/File:Perch_and_Pike,_South_Stoke._-_geograph.org.uk_-_36222.jpg",
+    "artist": "Colin Bates",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "pike perch food"
+  },
+  "100": {
+    "dish": "Треска, запечённая в пергаменте с печёными овощами, соусом Песто и каперсами фри",
+    "file": "100.jpg",
+    "pageId": 184890683,
+    "source": "https://commons.wikimedia.org/wiki/File:Child_Care_Recipes_(Team_Nutiriton)_(20211103-FNS-UNC-0011).jpg",
+    "artist": "USDAgov",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "baked cod vegetables"
+  },
+  "101": {
+    "dish": "Осьминог на гриле с овощами по-Сицилийски",
+    "file": "101.jpg",
+    "pageId": 106759330,
+    "source": "https://commons.wikimedia.org/wiki/File:Octopus_with_carrot_and_vegetables_from_Bostonian_Seafood_%26_Grill.jpg",
+    "artist": "Peachyeung316",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "grilled octopus vegetables"
+  },
+  "102": {
+    "dish": "Бефстроганов с белыми грибами, картофельным пюре и маринованным огурчиком",
+    "file": "102.jpg",
+    "pageId": 83151971,
+    "source": "https://commons.wikimedia.org/wiki/File:Beef_Stroganoff_with_unpolished_red_rice_(4703242780).jpg",
+    "artist": "Alpha from Melbourne, Australia",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "beef stroganoff mashed potatoes"
+  },
+  "103": {
+    "dish": "Стейк из говядины с соусом Деми-гласс и овощами гриль",
+    "file": "103.jpg",
+    "pageId": 130029526,
+    "source": "https://commons.wikimedia.org/wiki/File:Grilled_Sirloin_Steak_with_Vegetables.jpg",
+    "artist": "Ceeseven",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef steak grilled vegetables"
+  },
+  "104": {
+    "dish": "Томлёные говяжьи щечки с картофельным пюре и соусом Деми-гласс",
+    "file": "104.jpg",
+    "pageId": 157135623,
+    "source": "https://commons.wikimedia.org/wiki/File:Le_Tout-Paris,_main_course.jpg",
+    "artist": "Gerda Arendt",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "potato restaurant main course"
+  },
+  "105": {
+    "dish": "Бифштекс из рубленой говядины с яйцом пашот, муссом из Пармезана и соусом Деми-гласс",
+    "file": "105.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "106": {
+    "dish": "Каре ягнёнка с овощами гриль и томатным соусом",
+    "file": "106.jpg",
+    "pageId": 170014902,
+    "source": "https://commons.wikimedia.org/wiki/File:Rack-of-lambs.jpg",
+    "artist": "Uswe070508",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "lamb rack grilled vegetables"
+  },
+  "107": {
+    "dish": "Запечённая свиная шея со сливочным соусом из лесных грибов и картофелем Айдахо",
+    "file": "107.jpg",
+    "pageId": 8183286,
+    "source": "https://commons.wikimedia.org/wiki/File:Roast_pork_loin,_potatoes_(2585116058).jpg",
+    "artist": "Sara Goldsmith",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "roast pork potatoes"
+  },
+  "108": {
+    "dish": "Утиная ножка Конфи со сливочным ризотто и вишнёвым компоте",
+    "file": "108.jpg",
+    "pageId": 146795315,
+    "source": "https://commons.wikimedia.org/wiki/File:Rice_Noodle_With_Braised_Duck_And_Hard_Boiled_Egg_From_Ang_Mo_Kio_Central_Food_Centre,_Singapore.jpg",
+    "artist": "Banej",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "duck food"
+  },
+  "109": {
+    "dish": "Филе индейки в сырной корочке с картофелем сотэ, салатом из рукколы и чесночным соусом",
+    "file": "109.jpg",
+    "pageId": 134673259,
+    "source": "https://commons.wikimedia.org/wiki/File:Sunday_Roast_Turkey_Dinner_Great_Easton_Essex_darker.jpg",
+    "artist": "Acabashi",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "roast turkey potatoes"
+  },
+  "110": {
+    "dish": "Салат Греческий с сыром Фета и маслинами",
+    "file": "110.jpg",
+    "pageId": 8817796,
+    "source": "https://commons.wikimedia.org/wiki/File:Flickr_-_cyclonebill_-_Gr%C3%A6sk_salat.jpg",
+    "artist": "cyclonebill",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "greek salad feta"
+  },
+  "111": {
+    "dish": "Зелёный салат из брокколи, свежего огурца, авокадо и орехового соуса",
+    "file": "111.jpg",
+    "pageId": 179369826,
+    "source": "https://commons.wikimedia.org/wiki/File:Romanesco_broccoli_2025_G2.jpg",
+    "artist": "George Chernilevsky",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "broccoli food"
+  },
+  "112": {
+    "dish": "Винегрет с квашеной капустой и сельдью",
+    "file": "112.jpg",
+    "pageId": 14909945,
+    "source": "https://commons.wikimedia.org/wiki/File:Privat_julbord.JPG",
+    "artist": "This image was produced by me, David Castor (user:dcastor). The pictures I submit to the Wikipedia Project are released to the public domain. This gives you the right to use them in any way you like, without any kind of notification. This said, I would still appreciate to be mentioned as the originator whenever you think it complies well with your use of the picture. A message to me  about how it has been used would also be welcome. You are obviously not required to respond to these wishes of mine, just in a friendly manner encouraged to. (All my photos are placed in Category:Images by David Castor or a subcategory thereof.)",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "beetroot herring salad"
+  },
+  "113": {
+    "dish": "Винегрет с квашеной капустой и солёными груздями",
+    "file": "113.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "114": {
+    "dish": "Салат с тёплыми хрустящими баклажанами, спелыми томатами и Страчателлой",
+    "file": "114.jpg",
+    "pageId": 143031707,
+    "source": "https://commons.wikimedia.org/wiki/File:EGGPLANT_SALAD_WITH_A_TWIST_PANGASINAN.jpg",
+    "artist": "Elmer Centeno Guevarra",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "eggplant tomato salad"
+  },
+  "115": {
+    "dish": "Салат с мясом утиной ножки и картофелем пай",
+    "file": "115.jpg",
+    "pageId": 174382877,
+    "source": "https://commons.wikimedia.org/wiki/File:Duck_salad,_Wallrabenstein.jpg",
+    "artist": "Gerda Arendt",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "duck salad"
+  },
+  "116": {
+    "dish": "Салат с копчёной куриной грудкой, карамелизованной грушей и грецким орехом",
+    "file": "116.jpg",
+    "pageId": 117668131,
+    "source": "https://commons.wikimedia.org/wiki/File:Chicken_salad_with_eggs.jpg",
+    "artist": "T. Bjornstad",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "chicken salad salad"
+  },
+  "117": {
+    "dish": "Салат Цезарь с цыплёнком",
+    "file": "117.jpg",
+    "pageId": 40972336,
+    "source": "https://commons.wikimedia.org/wiki/File:Chicken_fettuccine_alfredo.JPG",
+    "artist": "Dllu",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "chicken caesar salad"
+  },
+  "118": {
+    "dish": "Салат Цезарь с креветками",
+    "file": "118.jpg",
+    "pageId": 153580699,
+    "source": "https://commons.wikimedia.org/wiki/File:Caesar_salad_with_shrimp_-_San_Francisco.jpg",
+    "artist": "Daderot",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "shrimp caesar salad"
+  },
+  "119": {
+    "dish": "Салат с креветками, томатами Черри, авокадо, мягкой грендюр и бальзамическим кремом под сыром Пармезан",
+    "file": "119.jpg",
+    "pageId": 75421009,
+    "source": "https://commons.wikimedia.org/wiki/File:Caesar_Salad_%26_Grilled_Shrimps_(19461199606).jpg",
+    "artist": "Prayitno / Thank you for (12 millions +) view from Los Angeles, USA",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "shrimp parmesan salad"
+  },
+  "120": {
+    "dish": "Нисуаз с консервированным тунцом, печёным картофелем и свежими овощами",
+    "file": "120.jpg",
+    "pageId": 44657246,
+    "source": "https://commons.wikimedia.org/wiki/File:Chilled_Tuna_Nicoise_Salad.JPG",
+    "artist": "Chefkevindoherty",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "nicoise tuna salad"
+  },
+  "121": {
+    "dish": "Тёплый салат с кальмаром, свежими овощами и луком фри под сливочным соусом",
+    "file": "121.jpg",
+    "pageId": 74480792,
+    "source": "https://commons.wikimedia.org/wiki/File:Mum%27s_Squid_and_Kangkong_Salad_(2874460137).jpg",
+    "artist": "Alpha from Melbourne, Australia",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "squid salad salad"
+  },
+  "122": {
+    "dish": "Салат из свежих овощей с говядиной по-Генуэзски",
+    "file": "122.jpg",
+    "pageId": 194523741,
+    "source": "https://commons.wikimedia.org/wiki/File:Thai_beef_salad_gn.jpg",
+    "artist": "Gnangcomapp",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef salad salad"
+  },
+  "123": {
+    "dish": "Оливье с говядиной",
+    "file": "123.jpg",
+    "pageId": 2438424,
+    "source": "https://commons.wikimedia.org/wiki/File:Beef,_Mushoom_and_Olive_Salad.jpg",
+    "artist": "Alpha from Melbourne, Australia",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "beef olive salad"
+  },
+  "124": {
+    "dish": "Оливье с цыплёнком су-вид",
+    "file": "124.jpg",
+    "pageId": 176799418,
+    "source": "https://commons.wikimedia.org/wiki/File:%D0%A1%D0%B0%D0%BB%D0%B0%D1%82_%D0%9E%D0%BB%D1%96%D0%B2%27%D1%94_%D0%B7_%D0%BA%D1%83%D1%80%D1%8F%D1%87%D0%B8%D0%BC_%D0%BC%27%D1%8F%D1%81%D0%BE%D0%BC.jpg",
+    "artist": "Sypuchyi",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "olivier chicken salad"
+  },
+  "125": {
+    "dish": "Салат с говяжьим языком, зелёным яблоком, маринованным дайконом под соусом Хрен",
+    "file": "125.jpg",
+    "pageId": 99495128,
+    "source": "https://commons.wikimedia.org/wiki/File:Ox_tongue_with_salad_and_fries_from_Gathering.jpg",
+    "artist": "Peachyeung316",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "beef tongue salad salad"
+  },
+  "126": {
+    "dish": "Цветная капуста и брокколи на пару",
+    "file": "126.jpg",
+    "pageId": 183820849,
+    "source": "https://commons.wikimedia.org/wiki/File:Liat_Portal_for_Foodie_Disorder_-_Roasted_chicken_with_cauliflower_broccoli_potatoes_rice_and_salad.jpg",
+    "artist": "HaJunkiyada",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "steamed broccoli cauliflower"
+  },
+  "127": {
+    "dish": "Пюре картофельное",
+    "file": "127.jpg",
+    "pageId": 1635424,
+    "source": "https://commons.wikimedia.org/wiki/File:MashedPotatoes.jpg",
+    "artist": "Renee Comet (photographer)",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "mashed potatoes"
+  },
+  "128": {
+    "dish": "Картофель Айдахо",
+    "file": "128.jpg",
+    "pageId": 94106074,
+    "source": "https://commons.wikimedia.org/wiki/File:Saveloy_with_potato_wedges.jpg",
+    "artist": "Remy Sharp",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "potato wedges"
+  },
+  "129": {
+    "dish": "Овощи на гриле (цуккини, баклажан, перец болгарский, шампиньоны, томаты Черри)",
+    "file": "129.jpg",
+    "pageId": 152529189,
+    "source": "https://commons.wikimedia.org/wiki/File:Grilled_vegetables_(20240910).jpg",
+    "artist": "Fumikas Sagisavas",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "grilled vegetables"
+  },
+  "130": {
+    "dish": "Стручковая фасоль жареная",
+    "file": "130.jpg",
+    "pageId": 79974839,
+    "source": "https://commons.wikimedia.org/wiki/File:Four_Different_Varieties_of_Green_Beans_(Phaseolus_vulgaris).jpg",
+    "artist": "Christopher Franz",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "green beans"
+  },
+  "131": {
+    "dish": "Лосось, фаршированный креветками под икорным соусом (заказ от 5 кг)",
+    "file": "131.jpg",
+    "pageId": 104426292,
+    "source": "https://commons.wikimedia.org/wiki/File:Bagel_with_cream_cheese,_salmon_and_vegetables_-_Sarah_Stierch.jpg",
+    "artist": "Missvain",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
+    "query": "salmon food"
+  },
+  "132": {
+    "dish": "Поркетта из свинины (заказ от 3 кг)",
+    "file": "132.jpg",
+    "pageId": 163086625,
+    "source": "https://commons.wikimedia.org/wiki/File:Porchetta_sandwich_meal_deal_-_Social_Board_2025-04-01.jpg",
+    "artist": "Andy Li",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "porchetta roast pork"
+  },
+  "133": {
+    "dish": "Филе ягнёнка на гриле (заказ от 3 кг)",
+    "file": "133.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "134": {
+    "dish": "Стейк Томагавк сухого вызревания (заказ от 1 кг)",
+    "file": "134.jpg",
+    "pageId": 112204222,
+    "source": "https://commons.wikimedia.org/wiki/File:-2021-10-31_Rib_of_Beef,_Trimingham,_Norfolk.JPG",
+    "artist": "Kolforn (Kolforn)\nI'd appreciate if you could mail me (Kolforn@gmail.com) if you want to use this picture out of the Wikimedia project scope.\n\n\n\n This file is licensed under the Creative Commons Attribution-Share Alike 4.0 International license.\nYou are free:\nto share – to copy, distribute and transmit the work\nto remix – to adapt the work\nUnder the following conditions:\nattribution – You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.\nshare alike – If you remix, transform, or build upon the material, you must distribute your contributions under the same or compatible license as the original.https://creativecommons.org/licenses/by-sa/4.0CC BY-SA 4.0 Creative Commons Attribution-Share Alike 4.0 truetrue",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "tomahawk beef steak"
+  },
+  "135": {
+    "dish": "Гусь колоривский, фаршированный гречей с белыми грибами (заказ от 4 кг)",
+    "file": "135.jpg",
+    "pageId": 152363725,
+    "source": "https://commons.wikimedia.org/wiki/File:Laoling_%22JiaoXiangMei%22_Roast_goose(KaoE).jpg",
+    "artist": "Suginami",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "roast goose"
+  },
+  "136": {
+    "dish": "Индейка, запечённая с апельсинами (заказ от 5 кг)",
+    "file": "136.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "137": {
+    "dish": "Фруктовая тарелка (ананас, виноград, киви, мандарины, ягоды)",
+    "file": "137.jpg",
+    "pageId": 1716496,
+    "source": "https://commons.wikimedia.org/wiki/File:Fruitbowlwithmelons.jpg",
+    "artist": "Mauro David",
+    "license": "CC BY 2.5",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.5",
+    "query": "fruit platter"
+  },
+  "138": {
+    "dish": "Клубника",
+    "file": "138.jpg",
+    "pageId": 125914690,
+    "source": "https://commons.wikimedia.org/wiki/File:Fresh_strawberry_pie.jpg",
+    "artist": "An Mai",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "strawberry fresh fruit"
+  },
+  "139": {
+    "dish": "Виноград",
+    "file": "139.jpg",
+    "pageId": 99192226,
+    "source": "https://commons.wikimedia.org/wiki/File:Fresh_Grape.jpg",
+    "artist": "Gaurav Dhwaj Khadka",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "grapes fresh fruit"
+  },
+  "140": {
+    "dish": "Ананас",
+    "file": "140.jpg",
+    "pageId": 101926383,
+    "source": "https://commons.wikimedia.org/wiki/File:Fresh_pineapple_and_mango.jpg",
+    "artist": "Joseph Sly1015",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "pineapple fresh fruit"
+  },
+  "141": {
+    "dish": "Мандарины",
+    "file": "141.jpg",
+    "pageId": 179543184,
+    "source": "https://commons.wikimedia.org/wiki/File:Liat_Portal_for_Foodie_Disorder_-_Mandarin_Orange.jpg",
+    "artist": "HaJunkiyada",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "mandarin orange fresh fruit"
+  },
+  "142": {
+    "dish": "Груша",
+    "file": "142.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "143": {
+    "dish": "Манго",
+    "file": "143.jpg",
+    "pageId": 182063887,
+    "source": "https://commons.wikimedia.org/wiki/File:Liat_Portal_for_Foodie_Disorder_-_Fresh_mango_halves_scored_and_plated.jpg",
+    "artist": "HaJunkiyada",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "mango fresh fruit"
+  },
+  "144": {
+    "dish": "Куриный супчик",
+    "file": "144.jpg",
+    "pageId": 152362119,
+    "source": "https://commons.wikimedia.org/wiki/File:Chicken_soup_with_kreplach.jpg",
+    "artist": "stu_spivack",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "chicken soup"
+  },
+  "145": {
+    "dish": "Овощные палочки",
+    "file": "145.jpg",
+    "pageId": 35032997,
+    "source": "https://commons.wikimedia.org/wiki/File:Fish_sticks,_fries_and_vegetable_soup_(12424231993).jpg",
+    "artist": "Pierre Fred Walter from Phnom Penh, Cambodia",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "vegetable sticks"
+  },
+  "146": {
+    "dish": "Макарошки «Мак энд Чиз»",
+    "file": "146.jpg",
+    "pageId": 2201560,
+    "source": "https://commons.wikimedia.org/wiki/File:Flickr_qmnonic_123431456--Kraft_Dinner_and_veggie_dogs.jpg",
+    "artist": "Matt MacGillivray from Toronto, Ontario, Canada",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "macaroni and cheese"
+  },
+  "147": {
+    "dish": "Куриные наггетсы",
+    "file": "147.jpg",
+    "pageId": 133882307,
+    "source": "https://commons.wikimedia.org/wiki/File:Impossible_chicken_nuggets_2.jpg",
+    "artist": "Mx. Granger",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "chicken nuggets"
+  },
+  "148": {
+    "dish": "Мясные фрикадельки из говядины с пюре и сливочным соусом",
+    "file": "148.jpg",
+    "pageId": 62681326,
+    "source": "https://commons.wikimedia.org/wiki/File:K%C3%B6nigsberger_Klopse_Ketzin_An_der_F%C3%A4hre.jpg",
+    "artist": "Benreis",
+    "license": "CC BY 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
+    "query": "beef meatballs mashed potatoes"
+  },
+  "149": {
+    "dish": "Картофель фри с сырным соусом",
+    "file": "149.jpg",
+    "pageId": 5058055,
+    "source": "https://commons.wikimedia.org/wiki/File:Fried_cheese,_french_fries,_and_beer.jpg",
+    "artist": "Herr Kriss",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "french fries cheese sauce"
+  },
+  "150": {
+    "dish": "Молочный коктейль (ваниль, шоколад, клубника)",
+    "file": "150.jpg",
+    "pageId": 153667505,
+    "source": "https://commons.wikimedia.org/wiki/File:GLASS_OF_HAPPINESS.jpg",
+    "artist": "Elakkiya Loganayaki",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "milkshake glass"
+  },
+  "151": {
+    "dish": "Мороженое (ваниль, шоколад, клубника, фисташка)",
+    "file": "151.jpg",
+    "pageId": 88494704,
+    "source": "https://commons.wikimedia.org/wiki/File:Apple_cake_with_vanilla_ice_cream_2.jpg",
+    "artist": "W.carter",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "ice cream"
+  },
+  "152": {
+    "dish": "Маргарита",
+    "file": "152.jpg",
+    "pageId": 29093071,
+    "source": "https://commons.wikimedia.org/wiki/File:Margherita_Originale.JPG",
+    "artist": "Mario56",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "margherita pizza"
+  },
+  "153": {
+    "dish": "4 сыра",
+    "file": "153.jpg",
+    "pageId": 24281677,
+    "source": "https://commons.wikimedia.org/wiki/File:Pizza_quattro_formaggi_at_restaurant,_Chalk_Farm_Road,_London.jpg",
+    "artist": "Ewan Munro from London, UK",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
+    "query": "four cheese pizza"
+  },
+  "154": {
+    "dish": "Капричоза",
+    "file": "154.jpg",
+    "pageId": 35244452,
+    "source": "https://commons.wikimedia.org/wiki/File:Pizza_capricciosa.jpg",
+    "artist": "Phil Whitehouse from London, United Kingdom",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "capricciosa pizza"
+  },
+  "155": {
+    "dish": "Пепперони",
+    "file": "155.jpg",
+    "pageId": 106092414,
+    "source": "https://commons.wikimedia.org/wiki/File:Vegetarian_Pizza.jpg",
+    "artist": "Petar Milošević",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "pepperoni pizza"
+  },
+  "156": {
+    "dish": "Жульен",
+    "file": "156.jpg",
+    "pageId": 133069315,
+    "source": "https://commons.wikimedia.org/wiki/File:KFC-Pizza_(Mushroom_Chicken_Gravy).jpg",
+    "artist": "Franklin Rainier",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "mushroom chicken pizza"
+  },
+  "157": {
+    "dish": "Шоколадный фонтан (ананас, бананы, клубника, маршмеллоу)",
+    "file": "157.jpg",
+    "pageId": 39218099,
+    "source": "https://commons.wikimedia.org/wiki/File:Chocolate_Fountain_for_Hire_with_Palm_Fruit_Tree.JPG",
+    "artist": "KatSz",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "chocolate fountain fruit"
+  },
+  "158": {
+    "dish": "Сырный фонтан (гренки из чиабатты, гриссини, картофельные крокеты)",
+    "file": "158.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "159": {
+    "dish": "Каскад для игристых вин (до 55 бокалов)",
+    "file": "159.jpg",
+    "pageId": 9782946,
+    "source": "https://commons.wikimedia.org/wiki/File:Bigest_champagne_tower.jpg",
+    "artist": "Filaos",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
+    "query": "champagne glasses tower"
+  },
+  "160": {
+    "dish": "Горка игристых вин (до 55 бокалов)",
+    "file": "160.jpg",
+    "pageId": 5236607,
+    "source": "https://commons.wikimedia.org/wiki/File:Champagne_tower.jpg",
+    "artist": "ori2uru",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0",
+    "query": "champagne glasses pyramid"
+  },
+  "161": {
+    "dish": "Питание персонала (салат, горячее, выпечка, напиток)",
+    "file": "161.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "162": {
+    "dish": "Морс облепиховый",
+    "file": "162.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "163": {
+    "dish": "Морс клюквенный",
+    "file": "163.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "164": {
+    "dish": "Морс вишнёвый",
+    "file": "164.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "165": {
+    "dish": "Морс малиновый",
+    "file": "165.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "166": {
+    "dish": "Морс черносмородиновый",
+    "file": "166.jpg",
+    "pageId": 93824017,
+    "source": "https://commons.wikimedia.org/wiki/File:Ribena_blackcurrant_juice_drink.jpg",
+    "artist": "Mx. Granger",
+    "license": "CC0",
+    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
+    "query": "blackcurrant drink"
+  },
+  "167": {
+    "dish": "Вода питьевая в ассортименте (пластик)",
+    "file": "167.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "168": {
+    "dish": "Вода питьевая в ассортименте (стекло)",
+    "file": "168.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "169": {
+    "dish": "Вода в кувшине с яблоком, лимоном и мятой",
+    "file": "169.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  },
+  "170": {
+    "dish": "Лимонад Кока-Кола",
+    "file": "170.jpg",
+    "pageId": 43692381,
+    "source": "https://commons.wikimedia.org/wiki/File:15-09-26-RalfR-WLC-0098_-_Coca-Cola_glass_bottle_(Germany).jpg",
+    "artist": "Ralf Roletschek",
+    "license": "Public domain",
+    "licenseUrl": "",
+    "query": "cola drink glass"
+  },
+  "171": {
+    "dish": "Сок в ассортименте",
+    "file": "171.jpg",
+    "pageId": 162659680,
+    "source": "https://commons.wikimedia.org/wiki/File:Cocktail_of_passion_fruit_juice_and_watermelon_juice_in_a_glass.jpg",
+    "artist": "B722N",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "query": "fruit juice glass"
+  },
+  "172": {
+    "dish": "Чай заварной в ассортименте",
+    "file": "172.jpg",
+    "source": "Generated for this project with OpenAI imagegen",
+    "license": "Project asset"
+  }
+}

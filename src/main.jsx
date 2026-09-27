@@ -34,6 +34,7 @@ import {
   Pencil,
   Search,
   Store,
+  Star,
   UserRound,
 } from "lucide-react";
 import "./styles.css";
@@ -86,6 +87,18 @@ async function api(path, options = {}) {
   if (!response.ok)
     throw new Error(data.error || `Не удалось выполнить запрос (${response.status}).`);
   return data;
+}
+function russianError(value) {
+  const message = typeof value === 'string' ? value : value?.message || '';
+  return /[А-Яа-яЁё]/.test(message) ? message : 'Не удалось выполнить действие. Попробуйте ещё раз.';
+}
+function durationOptions(hall, localValue) {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(localValue || '');
+  if (!hall || !parts) return [];
+  const weekday = new Date(Date.UTC(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))).getUTCDay();
+  const start = Number(parts[4]) * 60 + Number(parts[5]);
+  const end = Math.max(0, ...hall.windows.filter(window => window.weekday === weekday && Number(window.start.slice(0, 2)) * 60 + Number(window.start.slice(3)) <= start && start < Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))).map(window => Number(window.end.slice(0, 2)) * 60 + Number(window.end.slice(3))));
+  return Array.from({ length: Math.min(12, Math.floor((end - start) / 60)) }, (_, index) => index + 1);
 }
 async function uploadImage(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
@@ -154,8 +167,9 @@ function openExternal(link) {
 const positions = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? "позиция" : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? "позиции" : "позиций"}`;
 const localDateTime = value => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow', hour12: false }).replace(' ', 'T').slice(0, 16);
 };
+const moscowIso = value => new Date(`${value}:00+03:00`).toISOString();
 function Brand({ small = false }) {
   return (
     <div className={`brand ${small ? "small" : ""}`}>
@@ -263,6 +277,8 @@ function App() {
     [board, setBoard] = useState(null),
     [kitchenSelection, setKitchenSelection] = useState([]),
     [catalogRestaurant, setCatalogRestaurant] = useState(null),
+    [restaurantQuery, setRestaurantQuery] = useState(''),
+    [favoriteOnly, setFavoriteOnly] = useState(false),
     [profileOpen, setProfileOpen] = useState(false),
     [restaurantForm, setRestaurantForm] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
@@ -287,6 +303,11 @@ function App() {
   const notify = useCallback((message) => {
     setToast(message);
   }, []);
+  const toggleFavorite = async restaurant => perform(async () => {
+    await api(`/restaurants/${restaurant.id}/favorite`, { method: restaurant.favorite ? 'DELETE' : 'PUT' });
+    await refresh();
+    notify(restaurant.favorite ? 'Ресторан удалён из избранного' : 'Ресторан добавлен в избранное');
+  });
   useEffect(() => {
     if (toast) {
       const id = setTimeout(() => setToast(""), 4500);
@@ -484,7 +505,7 @@ function App() {
     try {
       return await fn();
     } catch (e) {
-      setError(e.message);
+      setError(russianError(e));
       return null;
     } finally {
       setBusy(false);
@@ -664,7 +685,7 @@ function App() {
             )}
             <p className="fineprint">
               {config?.demoEnabled
-                ? "Демонстрация с тестовым рестораном и меню. Ваши изменения сохраняются в отдельном пространстве."
+                ? "Демо банкетного зала «Петръ»: четыре роли, готовые банкеты и тестовые гости. Изменения остаются в отдельном пространстве."
                 : "Для входа откройте мини-приложение в MAX."}
             </p>
           </div>
@@ -694,7 +715,7 @@ function App() {
           Банкеты без бесконечных переписок
           <span>Организатор · Гости · Ресторан</span>
         </div>
-        {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{error}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
+        {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{russianError(error)}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
       </div>
     );
   const role = session.role,
@@ -797,9 +818,9 @@ function App() {
                   disabled={busy || !sandbox.current}
                   onChange={(e) => demo(e.target.value)}
                 >
-                  {['organizer', 'guest', 'restaurant'].map(k => (
+                  {['admin', 'restaurant', 'organizer', 'guest'].map(k => (
                     <option key={k} value={k}>
-                      {k === 'restaurant' ? 'Ресторан' : roleNames[k]}
+                      {roleNames[k]}
                     </option>
                   ))}
                 </select>
@@ -817,7 +838,7 @@ function App() {
           {session.demo && (
             <div className="demo-note">
               <Sparkles size={15} />
-              <span>Демо-пространство · тестовый ресторан, гости и меню</span>
+              <span>Демо «Петръ» · четыре роли, два банкета и тестовые гости</span>
             </div>
           )}
           {invite && (
@@ -885,13 +906,14 @@ function App() {
                   <Button variant="secondary" onClick={() => setRestaurantForm({})}><Store size={16} /> Добавить ресторан</Button>
                 )}
               </div>
-              {!restaurants.length && <Empty title="Нет доступных ресторанов">Попросите администратора ресторана выдать вам доступ.</Empty>}
-              {!catalogRestaurant && <div className="restaurant-choice-grid">{restaurants.map(r => <button className="restaurant-choice panel" type="button" key={r.id} onClick={() => setCatalogRestaurant(r.id)}>
+              {!restaurants.length && <Empty title="Пока нет ресторанов">Администратор может добавить ресторан.</Empty>}
+              {!catalogRestaurant && <div className="restaurant-search"><label className="search-field"><Search size={16} /><input type="search" placeholder="Найти ресторан" aria-label="Поиск ресторана" value={restaurantQuery} onChange={event => setRestaurantQuery(event.target.value)} /></label><button type="button" className={favoriteOnly ? 'favorite-filter active' : 'favorite-filter'} onClick={() => setFavoriteOnly(value => !value)}><Star size={16} fill={favoriteOnly ? 'currentColor' : 'none'} /> Избранные</button></div>}
+              {!catalogRestaurant && <div className="restaurant-choice-grid">{restaurants.filter(r => (!favoriteOnly || r.favorite) && `${r.name} ${r.address} ${r.description}`.toLocaleLowerCase('ru').includes(restaurantQuery.trim().toLocaleLowerCase('ru'))).sort((a,b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name, 'ru')).map(r => <div className="restaurant-choice panel" key={r.id}><button className="restaurant-choice-open" type="button" onClick={() => setCatalogRestaurant(r.id)}>
                 <span className="restaurant-choice-icon"><Store size={25} /></span>
                 <strong>{r.name}</strong>
                 <small>{r.address || r.description}</small>
                 <span>{r.menu?.length || 0} позиций · {r.packages?.length || 0} пакетов <ArrowUpRight size={16} /></span>
-              </button>)}</div>}
+              </button><button type="button" className={r.favorite ? 'favorite-button active' : 'favorite-button'} aria-label={r.favorite ? `Убрать ${r.name} из избранного` : `Добавить ${r.name} в избранное`} onClick={() => toggleFavorite(r)}><Star size={20} fill={r.favorite ? 'currentColor' : 'none'} /></button></div>)}</div>}
               {restaurants.filter(r => r.id === catalogRestaurant).map((r) => (
                 <section key={r.id}>
                   <div className="section-head">
@@ -937,6 +959,7 @@ function App() {
                     ))}
                   </div></details>)}
                   {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
+                  {r.name.includes('Петръ') && <p className="photo-credits"><a href={`${BASE}/petr-photos/credits.html`} target="_blank" rel="noopener noreferrer">Источники фотографий блюд</a></p>}
                   <div className="section-head package-section-head"><div><h2>Пакетные предложения</h2><p className="muted">Фиксированная цена на гостя. Состав сохраняется в банкет при выборе пакета.</p></div>
                     {r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackage({ restaurantId: r.id, name: '', price: 0, items: [] })}><Plus size={16} /> Добавить пакет</Button>}
                   </div>
@@ -1209,6 +1232,7 @@ function App() {
                       saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Общий стол сохранён')}
                       importItems={itemIds => updateAdmin(() => api(`/events/${selected}/menu/import`, { method: 'POST', body: { itemIds } }), 'Позиции добавлены в меню банкета')}
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
+                      removeEvent={() => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); })}
                       uploadPhoto={file => perform(() => uploadImage(file))}
                       addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
@@ -1524,11 +1548,12 @@ function App() {
           {toast}
         </div>
       )}
-      {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{error}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
+      {error && <div className="toast toast-error" role="alert"><CircleHelp size={18} /><span>{russianError(error)}</span><button type="button" className="icon-btn" aria-label="Закрыть ошибку" onClick={() => setError('')}><X size={16} /></button></div>}
       {createOpen && (
         <CreateEvent
           restaurants={restaurants}
           busy={busy}
+          toggleFavorite={toggleFavorite}
           uploadPhoto={file => perform(() => uploadImage(file))}
           onClose={() => setCreateOpen(false)}
           submit={(body) =>
@@ -2038,13 +2063,14 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
     </>
   );
 }
-function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
+function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, uploadPhoto, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
   const [packageDraft, setPackageDraft] = useState(detail.event.package?.id || '');
   const [dateDraft, setDateDraft] = useState(localDateTime(detail.event.date));
   const [hallDraft, setHallDraft] = useState(detail.event.hallId);
+  const [durationDraft, setDurationDraft] = useState(detail.event.durationHours || 4);
   const [availability, setAvailability] = useState(null);
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(null);
@@ -2055,7 +2081,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
   useEffect(() => { if (!sharedDirty) setShared(toDraft()); }, [serverShared]);
   useEffect(() => { setModeDraft(detail.event.selectionMode || 'individual'); }, [detail.event.selectionMode]);
   useEffect(() => { setPackageDraft(detail.event.package?.id || ''); }, [detail.event.package?.id]);
-  useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setHallDraft(detail.event.hallId); }, [detail.event.id, detail.event.date, detail.event.hallId]);
+  useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setHallDraft(detail.event.hallId); setDurationDraft(detail.event.durationHours || 4); }, [detail.event.id, detail.event.date, detail.event.hallId, detail.event.durationHours]);
   useEffect(() => {
     if (!dateDraft || !hallDraft) return;
     let active = true;
@@ -2063,6 +2089,8 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
     return () => { active = false; clearTimeout(timer); };
   }, [detail.event.restaurantId, dateDraft, hallDraft]);
   const active = detail.event.status === 'collecting';
+  const durations = durationOptions(catalog?.halls?.find(hall => hall.id === hallDraft), dateDraft);
+  useEffect(() => { if (!durations.includes(durationDraft)) setDurationDraft(durations.at(-1) || 0); }, [hallDraft, dateDraft]);
   const packages = [...(catalog?.packages || [])];
   if (detail.event.package && !packages.some(offer => offer.id === detail.event.package.id)) packages.push(detail.event.package);
   const selectedOffer = packages.find(offer => offer.id === packageDraft) || packages[0];
@@ -2094,7 +2122,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
           const nextChoice = form.get('packageChoice');
           const currentHot = detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId;
           const changePackage = nextMode === 'package' && (nextPackage !== detail.event.package?.id || (nextChoice && nextChoice !== currentHot));
-          saveEvent({ title: form.get('title'), photoUrl, date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), durationHours: Number(form.get('durationHours')), hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
+          saveEvent({ title: form.get('title'), photoUrl, date: moscowIso(form.get('date')), deadline: moscowIso(form.get('deadline')), durationHours: durationDraft, hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} /></label>
@@ -2104,7 +2132,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
           {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.some(item => item.dishId === detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId) ? detail.event.package.items.find(item => item.category === 'Горячее').dishId : hotChoices[0].dishId} disabled={!active}>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
           <div className="form-grid">
             <label>Дата мероприятия<input type="datetime-local" name="date" required value={dateDraft} onChange={event => setDateDraft(event.target.value)} disabled={!active} /></label>
-            <label>Длительность, часов<input type="number" name="durationHours" min="1" max="12" step="1" required defaultValue={detail.event.durationHours || 4} disabled={!active} /></label>
+            <label>Длительность, часов<select name="durationHours" required value={durationDraft || ''} onChange={event => setDurationDraft(Number(event.target.value))} disabled={!active}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}</option>)}</select></label>
             <label>Зал<select name="hallId" value={hallDraft} onChange={event => setHallDraft(event.target.value)} disabled={!active}>{catalog?.halls?.map(hall => <option key={hall.id} value={hall.id}>{hall.name} · до {hall.capacity} гостей</option>)}</select></label>
             <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
@@ -2115,6 +2143,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, ad
           {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
           {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
         </form>
+        {removeEvent && <div className="danger-zone"><strong>Удаление банкета</strong><p>Банкет, заявки гостей и рассадка будут удалены без возможности восстановления.</p><Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить банкет «${detail.event.title}» вместе с заказами и рассадкой?`, { confirmLabel: 'Удалить банкет' })) removeEvent(); }}>Удалить банкет</Button></div>}
       </section>}
       {section === 'guests' && <section className="panel admin-panel">
         <div className="section-head"><div><h2>Приглашённые гости</h2><p className="muted">Гость подтвердит свой номер в MAX; статус и место видны ниже.</p></div><span>{detail.invitedGuests?.length || 0} из {detail.event.expectedGuests}</span></div>
@@ -2339,9 +2368,11 @@ function EditPackage({ offer, dishes, busy, onError, onClose, submit, remove }) 
     <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить пакет «${offer.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !dishes.length}>Сохранить</Button></div>
   </form></Modal>;
 }
-function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
+function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, submit }) {
   const [seatingMode, setSeatingMode] = useState("off");
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id || '');
+  const [restaurantSearch, setRestaurantSearch] = useState('');
+  const [showFavorites, setShowFavorites] = useState(false);
   const [hallId, setHallId] = useState(restaurants[0]?.halls?.[0]?.id || '');
   const [selectionMode, setSelectionMode] = useState('individual');
   const [packageId, setPackageId] = useState('');
@@ -2353,11 +2384,13 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
   const hotChoices = selectedOffer?.items.filter(item => item.choiceGroup) || [];
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
+    return `${d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })}T18:00`;
   };
   const [eventDate, setEventDate] = useState(`${future(7).slice(0, 10)}T18:00`);
+  const [duration, setDuration] = useState(4);
+  const durations = durationOptions(hall, eventDate);
+  useEffect(() => { if (!durations.includes(duration)) setDuration(durations.at(-1) || 0); }, [restaurantId, hall?.id, eventDate]);
+  const visibleRestaurants = restaurants.filter(r => (!showFavorites || r.favorite) && `${r.name} ${r.address}`.toLocaleLowerCase('ru').includes(restaurantSearch.trim().toLocaleLowerCase('ru'))).sort((a,b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name, 'ru'));
   const [availability, setAvailability] = useState(null);
   useEffect(() => {
     if (!restaurantId || !hall?.id || !eventDate) return;
@@ -2388,11 +2421,11 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
             photoUrl,
             restaurantId: f.get("restaurantId"),
             hallId: f.get('hallId'),
-            durationHours: Number(f.get('durationHours')),
+            durationHours: duration,
             selectionMode,
             ...(selectionMode === 'package' ? { packageId: f.get('packageId'), ...(hotChoices.length ? { packageChoice: f.get('packageChoice') } : {}) } : {}),
-            date: new Date(f.get("date")).toISOString(),
-            deadline: new Date(f.get("deadline")).toISOString(),
+            date: moscowIso(f.get("date")),
+            deadline: moscowIso(f.get("deadline")),
             expectedGuests: Number(f.get("guests")),
             foodBudget: Math.round(Number(f.get("foodBudget") || 0) * 100),
             drinkBudget: Math.round(Number(f.get("drinkBudget") || 0) * 100),
@@ -2411,16 +2444,18 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
           />
         </label>
         <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
+        <div className="restaurant-search"><label className="search-field"><Search size={16} /><input type="search" placeholder="Найти ресторан" aria-label="Поиск ресторана" value={restaurantSearch} onChange={event => setRestaurantSearch(event.target.value)} /></label><button type="button" className={showFavorites ? 'favorite-filter active' : 'favorite-filter'} onClick={() => setShowFavorites(value => !value)}><Star size={16} fill={showFavorites ? 'currentColor' : 'none'} /> Избранные</button></div>
         <label>
           Ресторан
           <select name="restaurantId" required value={restaurantId} onChange={event => { setRestaurantId(event.target.value); setHallId(restaurants.find(r => r.id === event.target.value)?.halls?.[0]?.id || ''); setPackageId(''); if (!restaurants.find(r => r.id === event.target.value)?.packages?.length) setSelectionMode('individual'); }}>
-            {restaurants.map((r) => (
+            {restaurants.filter(r => r.id === restaurantId || visibleRestaurants.some(item => item.id === r.id)).sort((a,b) => Number(b.favorite) - Number(a.favorite) || a.name.localeCompare(b.name, 'ru')).map((r) => (
               <option key={r.id} value={r.id}>
-                {r.name}
+                {r.favorite ? '★ ' : ''}{r.name}
               </option>
             ))}
           </select>
         </label>
+        {restaurant && <button type="button" className={restaurant.favorite ? 'favorite-inline active' : 'favorite-inline'} onClick={() => toggleFavorite(restaurant)}><Star size={16} fill={restaurant.favorite ? 'currentColor' : 'none'} /> {restaurant.favorite ? 'В избранном' : 'В избранное'}</button>}
         <label>Формат заказа<select name="selectionMode" value={selectionMode} onChange={event => setSelectionMode(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
         {selectionMode === 'package' && <label>Пакетное предложение<select name="packageId" required value={selectedOffer?.id || ''} onChange={event => setPackageId(event.target.value)}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)} / гость</option>)}</select><small className="muted">Гости увидят состав пакета и не смогут менять блюда.</small></label>}
         {selectionMode === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select name="packageChoice" required>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
@@ -2447,7 +2482,7 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
           </label>
           <label>
             Длительность, часов
-            <input type="number" name="durationHours" min={1} max={12} step={1} defaultValue={4} required />
+            <select name="durationHours" required value={duration || ''} onChange={event => setDuration(Number(event.target.value))}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет свободного времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}</option>)}</select>
           </label>
           <label>
             Количество гостей

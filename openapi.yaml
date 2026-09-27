@@ -2,7 +2,7 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.8.0
+  version: 1.9.0
   description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
     — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
     <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
@@ -388,6 +388,25 @@ paths:
           "$ref": "#/components/responses/403"
         '404':
           "$ref": "#/components/responses/404"
+  "/api/restaurants/{restaurantId}/favorite":
+    put:
+      operationId: addRestaurantFavorite
+      summary: Добавить ресторан в личное избранное
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      responses:
+        '200': { description: Состояние избранного текущего пользователя }
+        '401': { "$ref": "#/components/responses/401" }
+        '404': { "$ref": "#/components/responses/404" }
+    delete:
+      operationId: removeRestaurantFavorite
+      summary: Убрать ресторан из личного избранного
+      parameters:
+      - "$ref": "#/components/parameters/restaurantId"
+      responses:
+        '200': { description: Состояние избранного текущего пользователя }
+        '401': { "$ref": "#/components/responses/401" }
+        '404': { "$ref": "#/components/responses/404" }
   "/api/restaurants/{restaurantId}/members":
     get:
       operationId: listRestaurantMembers
@@ -655,6 +674,17 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
+    delete:
+      operationId: deleteEvent
+      summary: Удалить банкет, приглашения, заказы и рассадку
+      description: Организатор банкета или администратор ресторана.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      responses:
+        '200': { description: Банкет удалён }
+        '401': { "$ref": "#/components/responses/401" }
+        '403': { "$ref": "#/components/responses/403" }
+        '404': { "$ref": "#/components/responses/404" }
   "/api/events/{eventId}/guests":
     post:
       operationId: addInvitedGuest
@@ -1702,6 +1732,7 @@ components:
         role:
           type: string
           enum:
+          - admin
           - organizer
           - guest
           - restaurant
@@ -1928,6 +1959,9 @@ components:
           type: string
         sampleMenu:
           type: boolean
+        favorite:
+          type: boolean
+          description: Ресторан в избранном текущего пользователя.
         access:
           type: string
           enum: [admin]

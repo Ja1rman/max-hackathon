@@ -171,6 +171,7 @@ export function createApp(options = {}) {
       }
       if (path === '/api/restaurants' && req.method === 'GET') return json(store.restaurants(user));
       if (path === '/api/restaurants' && req.method === 'POST') return json(store.createRestaurant(user, await readBody(req)), 201);
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/favorite$/)) && ['PUT', 'DELETE'].includes(req.method)) return json(store.setRestaurantFavorite(user, match[1], req.method === 'PUT'));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editRestaurant(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/halls(?:\/([^/]+))?$/)) && ((req.method === 'POST' && !match[2]) || (req.method === 'PATCH' && match[2]))) return json(store.editHall(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/halls\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteHall(user, match[1], match[2]));
@@ -187,6 +188,7 @@ export function createApp(options = {}) {
       if (path === '/api/events' && req.method === 'POST') { const body = await readBody(req); return json(store.transaction(() => store.createEvent(user, body)), 201); }
       if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'GET') return json(store.detail(user, match[1]));
       if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'PATCH') return json(store.editEvent(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteEvent(user, match[1]));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/organizers$/)) && req.method === 'GET') return json(store.eventOrganizers(user, match[1]));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/organizers\/([^/]+)$/)) && req.method === 'PUT') return json(store.setEventOrganizer(user, match[1], match[2], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/organizers\/([^/]+)$/)) && req.method === 'DELETE') return json(store.setEventOrganizer(user, match[1], match[2], { enabled: false }));

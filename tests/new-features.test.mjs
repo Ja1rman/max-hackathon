@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture } from './helpers.mjs';
+import { fixture, futureMoscow } from './helpers.mjs';
 import { PETR_MENU, PETR_PACKAGES } from '../server/petr-menu.mjs';
-
-const future = days => new Date(Date.now() + days * 86400000).toISOString();
 
 test('a service administrator can delegate the global role by MAX ID, restaurant admins cannot', async t => {
   const f = await fixture(t, { openOrganizerSignup: false });
@@ -42,11 +40,11 @@ test('fixed banquet package needs no guest order; exports selected events with p
   const petr = (await f.request('/api/restaurants', { token: root.token })).data.find(restaurant => restaurant.name === 'Петръ');
   const offer = petr.packages[0];
   const hot = offer.items.filter(item => item.choiceGroup)[1];
-  const event = await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Пакетный вечер', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: hot.dishId, date: future(14), deadline: future(10), expectedGuests: 2 } });
+  const event = await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Пакетный вечер', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: hot.dishId, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 2 } });
   assert.equal(event.status, 201);
   assert.equal(event.data.total, offer.price * 2);
   assert.equal(event.data.package.items.find(item => item.category === 'Горячее').name, hot.name);
-  assert.equal((await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Ошибка', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: 'Не из пакета', date: future(14), deadline: future(10), expectedGuests: 2 } })).status, 400);
+  assert.equal((await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Ошибка', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: 'Не из пакета', date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 2 } })).status, 400);
   const guest = await f.login(200);
   await f.inviteGuest(root.token, event.data, guest.token, 200, '+79990000200');
   const detail = (await f.request(`/api/events/${event.data.id}`, { token: guest.token })).data;

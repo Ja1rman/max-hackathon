@@ -27,7 +27,7 @@ export const SAMPLE_MENU = [
   { name: 'Чай с мятой', description: 'Горячий чай с листьями мяты', category: 'Напитки', price: 19000, weight: '350 мл', emoji: '🍵', allergens: [], vegetarian: true, labels: ['Мало калорий'], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } },
   { name: 'Капучино', description: 'Эспрессо и вспененное молоко', category: 'Напитки', price: 27000, weight: '250 мл', emoji: '☕', allergens: ['Молоко'], vegetarian: true, nutrition: { kcal: 120, protein: 6, fat: 6, carbs: 11 } },
   { name: 'Вода без газа', description: 'Бутилированная питьевая вода', category: 'Напитки', price: 17000, weight: '500 мл', emoji: '💧', allergens: [], vegetarian: true, nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } },
-];
+].map((item, index) => ({ ...item, photoUrl: `/temp-photos/${String(index + 1).padStart(3, '0')}.jpg` }));
 
 function string(value, label, max = 160, optional = false) {
   if (optional && (value === undefined || value === null)) return '';
@@ -64,7 +64,7 @@ function menuItem(value, itemId) {
   };
   if (typeof item.forGuests !== 'boolean') throw new HttpError(400, 'Доступность гостям должна быть true/false.');
   if (typeof item.available !== 'boolean' || typeof item.vegetarian !== 'boolean') throw new HttpError(400, 'Доступность и вегетарианское блюдо должны быть true/false.');
-  if (typeof item.photoUrl !== 'string' || (item.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(item.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
+  if (typeof item.photoUrl !== 'string' || (item.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(item.photoUrl) && !/^\/(?:petr|temp)-photos\/\d{3}\.jpg$/.test(item.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
   if (!Array.isArray(item.allergens) || item.allergens.length > 20) throw new HttpError(400, 'Аллергены: ожидается список до 20 значений.');
   item.allergens = item.allergens.map(entry => string(entry, 'Аллерген', 80));
   if (!Array.isArray(item.labels) || item.labels.length > MENU_LABELS.length || new Set(item.labels).size !== item.labels.length || item.labels.some(label => !MENU_LABELS.includes(label))) throw new HttpError(400, 'Пометки блюда: выберите значения из доступного списка без повторов.');
@@ -90,7 +90,7 @@ function packageDish(value, dishId) {
     labels: value.labels ?? [], available: value.available ?? true, packageOnly: true,
     nutrition: { kcal: integer(nutrition.kcal, 'Калории', 0, 10000), protein: grams(nutrition.protein, 'Белки'), fat: grams(nutrition.fat, 'Жиры'), carbs: grams(nutrition.carbs, 'Углеводы') },
   };
-  if (typeof dish.photoUrl !== 'string' || (dish.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(dish.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
+  if (typeof dish.photoUrl !== 'string' || (dish.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(dish.photoUrl) && !/^\/(?:petr|temp)-photos\/\d{3}\.jpg$/.test(dish.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
   if (!Array.isArray(dish.allergens) || dish.allergens.length > 20) throw new HttpError(400, 'Аллергены: список до 20 значений.');
   dish.allergens = dish.allergens.map(value => string(value, 'Аллерген', 80));
   if (!Array.isArray(dish.labels) || new Set(dish.labels).size !== dish.labels.length || dish.labels.some(label => !MENU_LABELS.includes(label))) throw new HttpError(400, 'Некорректные пометки блюда.');
@@ -150,6 +150,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS restaurant_packages (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS package_dishes (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS restaurant_halls (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, name TEXT NOT NULL, capacity INTEGER NOT NULL, windows TEXT NOT NULL, allowed_seating TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS restaurant_favorites (user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, PRIMARY KEY(user_id,restaurant_id));
       CREATE TABLE IF NOT EXISTS shared_items (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, menu_item_id TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 1000), price INTEGER NOT NULL CHECK(price >= 0), name TEXT NOT NULL, PRIMARY KEY(event_id,menu_item_id));
       CREATE TABLE IF NOT EXISTS seat_assignments (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, seat_id TEXT NOT NULL, invite_id TEXT REFERENCES guest_invites(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, source TEXT NOT NULL, assigned_at TEXT NOT NULL, PRIMARY KEY(event_id,seat_id), UNIQUE(event_id,invite_id), UNIQUE(event_id,user_id), CHECK((invite_id IS NULL) != (user_id IS NULL)));
       `);
@@ -183,7 +184,8 @@ export class Store {
     if (previousVersion < 8) this.migrateAccess();
     if (previousVersion < 10) this.transaction(() => this.seedPetr());
     if (previousVersion < 11) this.transaction(() => this.migrateBookingsAndPackages());
-    this.db.exec('PRAGMA user_version = 11');
+    if (previousVersion < 12) this.transaction(() => this.migratePetrPhotos());
+    this.db.exec('PRAGMA user_version = 12');
     this.cleanup();
   }
   seedPetr() {
@@ -194,7 +196,7 @@ export class Store {
     const add = this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)');
     for (const entry of PETR_MENU) if (!known.has(entry.name)) {
       const itemId = id('dish');
-      add.run(itemId, restaurantId, JSON.stringify({ ...entry, id: itemId, photoUrl: '', forGuests: true, ingredients: '' }));
+      add.run(itemId, restaurantId, JSON.stringify({ ...entry, id: itemId, forGuests: true, ingredients: '' }));
     }
     const packages = new Set(this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=?').all(restaurantId).map(row => JSON.parse(row.data).name));
     const addPackage = this.db.prepare('INSERT INTO restaurant_packages VALUES (?,?,?)');
@@ -230,7 +232,7 @@ export class Store {
       const tempNames = new Set(this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=?').all(temp.id).map(row => JSON.parse(row.data).name));
       for (const sample of SAMPLE_MENU) if (!tempNames.has(sample.name)) {
         const sampleId = id('dish');
-        this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)').run(sampleId, temp.id, JSON.stringify({ ...sample, id: sampleId, photoUrl: '', ingredients: '', forGuests: true, available: true, vegetarian: Boolean(sample.vegetarian), allergens: sample.allergens || [], labels: sample.labels || [] }));
+        this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)').run(sampleId, temp.id, JSON.stringify({ ...sample, id: sampleId, ingredients: '', forGuests: true, available: true, vegetarian: Boolean(sample.vegetarian), allergens: sample.allergens || [], labels: sample.labels || [] }));
       }
       for (const row of this.db.prepare('SELECT event_menu.event_id,event_menu.item_id,event_menu.data FROM event_menu JOIN events ON events.id=event_menu.event_id WHERE events.restaurant_id=?').all(petr.id)) {
         const old = JSON.parse(row.data);
@@ -263,7 +265,7 @@ export class Store {
             const grams = item.grams;
             const factor = source ? grams / (Number.parseInt(source.weight, 10) || 100) : 1;
             const nutrition = source ? Object.fromEntries(Object.entries(source.nutrition).map(([k, v]) => [k, Math.round(v * factor * 10) / 10])) : { kcal: Math.round(grams * 1.8), protein: Math.round(grams * .1 * 10) / 10, fat: Math.round(grams * .08 * 10) / 10, carbs: Math.round(grams * .12 * 10) / 10 };
-            addDish.run(dishId, row.restaurant_id, JSON.stringify({ id: dishId, name, category, description: 'Блюдо пакетного предложения. КБЖУ ориентировочное — уточните у ресторана.', weight: `${grams} г`, nutrition, photoUrl: '', allergens: source?.allergens || [], vegetarian: source?.vegetarian || false, labels: [], available: true, packageOnly: true }));
+            addDish.run(dishId, row.restaurant_id, JSON.stringify({ id: dishId, name, category, description: 'Блюдо пакетного предложения.', weight: `${grams} г`, nutrition, photoUrl: '', allergens: source?.allergens || [], vegetarian: source?.vegetarian || false, labels: [], available: true, packageOnly: true }));
             dishByName.set(key, dishId);
           }
           refs.push({ dishId, grams: item.grams, choiceGroup: item.category === 'Горячее на выбор' ? 'Горячее' : '' });
@@ -286,6 +288,53 @@ export class Store {
     const grantOrganizer = this.db.prepare('INSERT OR IGNORE INTO event_organizers VALUES (?,?,NULL,?)');
     for (const member of legacy) for (const event of this.db.prepare('SELECT id FROM events WHERE restaurant_id=?').all(member.restaurant_id)) grantOrganizer.run(event.id, member.user_id, iso(Date.now()));
     this.db.prepare("DELETE FROM restaurant_members WHERE role='organizer'").run();
+  }
+  migratePetrPhotos() {
+    const temp = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Temp'").get();
+    if (temp) {
+      const sampleByName = new Map(SAMPLE_MENU.map(item => [item.name, item.photoUrl]));
+      for (const table of ['menu_items', 'event_menu']) {
+        const rows = table === 'menu_items'
+          ? this.db.prepare('SELECT rowid,data FROM menu_items WHERE restaurant_id=?').all(temp.id)
+          : this.db.prepare('SELECT event_menu.rowid,event_menu.data FROM event_menu JOIN events ON events.id=event_menu.event_id WHERE events.restaurant_id=?').all(temp.id);
+        for (const row of rows) {
+          const item = JSON.parse(row.data), photoUrl = item.photoUrl || sampleByName.get(item.name);
+          if (photoUrl && photoUrl !== item.photoUrl) this.db.prepare(`UPDATE ${table} SET data=? WHERE rowid=?`).run(JSON.stringify({ ...item, photoUrl }), row.rowid);
+        }
+      }
+    }
+    const petr = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Петръ'").get();
+    if (!petr) return;
+    const byName = new Map(PETR_MENU.map(item => [item.name, item]));
+    const packagePhotoMatches = {
+      'Сельдь с картофелем и маринованным луком': 71,
+      'Куриный рулет с вялеными томатами': 77,
+      'Тёплый салат с кальмаром': 121,
+      'Салат с тёплыми хрустящими баклажанами': 114,
+      'Салат с копчёной куриной грудкой': 116,
+      'Нисуаз с консервированным тунцом': 120,
+      'Треска в пергаменте': 100,
+      'Бифштекс из говядины': 105,
+      'Свиная шея': 107,
+    };
+    const photoFor = name => byName.get(name)?.photoUrl || PETR_MENU[packagePhotoMatches[name] - 1]?.photoUrl || PETR_MENU.find(item => item.name.startsWith(`${name} `) || name.startsWith(item.name))?.photoUrl || '';
+    const update = (table, key, rows) => {
+      for (const row of rows) {
+        const item = JSON.parse(row.data);
+        const photoUrl = item.photoUrl || photoFor(item.name);
+        const description = /КБЖУ ориентировочное|уточните у ресторана|уточняйте состав и аллергены/i.test(item.description || '') ? '' : item.description;
+        if (photoUrl !== item.photoUrl || description !== item.description) this.db.prepare(`UPDATE ${table} SET data=? WHERE ${key}=?`).run(JSON.stringify({ ...item, photoUrl, description }), row.rowid);
+      }
+    };
+    update('menu_items', 'rowid', this.db.prepare('SELECT rowid,data FROM menu_items WHERE restaurant_id=?').all(petr.id));
+    update('event_menu', 'rowid', this.db.prepare('SELECT event_menu.rowid,event_menu.data FROM event_menu JOIN events ON events.id=event_menu.event_id WHERE events.restaurant_id=?').all(petr.id));
+    update('package_dishes', 'rowid', this.db.prepare('SELECT rowid,data FROM package_dishes WHERE restaurant_id=?').all(petr.id));
+    for (const row of this.db.prepare("SELECT id,package_data FROM events WHERE restaurant_id=? AND selection_mode='package'").all(petr.id)) {
+      if (!row.package_data) continue;
+      const offer = JSON.parse(row.package_data);
+      const items = offer.items.map(item => ({ ...item, photoUrl: item.photoUrl || photoFor(item.name), description: /КБЖУ ориентировочное|уточните у ресторана/i.test(item.description || '') ? '' : item.description }));
+      this.db.prepare('UPDATE events SET package_data=? WHERE id=?').run(JSON.stringify({ ...offer, items }), row.id);
+    }
   }
   /** v8: per-restaurant access replaces the phone-based organizer list. */
   migrateAccess() {
@@ -320,7 +369,7 @@ export class Store {
       const add = this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)');
       for (const entry of SAMPLE_MENU.filter(item => item.category === 'Напитки' && !names.has(item.name))) {
         const itemId = id('dish');
-        add.run(itemId, restaurant.id, JSON.stringify({ ...entry, id: itemId, photoUrl: '', available: true }));
+        add.run(itemId, restaurant.id, JSON.stringify({ ...entry, id: itemId, available: true }));
       }
     }
   }
@@ -352,8 +401,32 @@ export class Store {
     this.ensureHall(restaurantId);
     return restaurantId;
   }
+  seedDemoPetr(scope) {
+    const source = this.db.prepare("SELECT * FROM restaurants WHERE scope='live' AND name='Петръ'").get();
+    if (!source) throw new Error('Demo Petr catalog missing');
+    const restaurantId = id('restaurant');
+    this.db.prepare('INSERT INTO restaurants VALUES (?,?,?,?,?,0)').run(restaurantId, scope, 'Петръ · демо', 'Демонстрационный банкетный зал ресторана «Петръ». Все данные здесь тестовые.', source.address);
+    const addMenu = this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)');
+    for (const row of this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=?').all(source.id)) {
+      const item = JSON.parse(row.data), itemId = id('dish');
+      addMenu.run(itemId, restaurantId, JSON.stringify({ ...item, id: itemId }));
+    }
+    const dishIds = new Map(), addDish = this.db.prepare('INSERT INTO package_dishes VALUES (?,?,?)');
+    for (const row of this.db.prepare('SELECT data FROM package_dishes WHERE restaurant_id=?').all(source.id)) {
+      const dish = JSON.parse(row.data), dishId = id('package_dish');
+      dishIds.set(dish.id, dishId);
+      addDish.run(dishId, restaurantId, JSON.stringify({ ...dish, id: dishId }));
+    }
+    const addPackage = this.db.prepare('INSERT INTO restaurant_packages VALUES (?,?,?)');
+    for (const row of this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=?').all(source.id)) {
+      const offer = JSON.parse(row.data), offerId = id('package');
+      addPackage.run(offerId, restaurantId, JSON.stringify({ ...offer, id: offerId, items: offer.items.map(item => ({ ...item, dishId: dishIds.get(item.dishId) })) }));
+    }
+    this.ensureHall(restaurantId);
+    return restaurantId;
+  }
   isSuperAdmin(user) {
-    return user.demo ? user.role === 'restaurant' : this.config.restaurantAdminIds.includes(user.external_id) || Boolean(this.db.prepare('SELECT 1 FROM global_admins WHERE user_id=?').get(user.id));
+    return user.demo ? user.role === 'admin' : this.config.restaurantAdminIds.includes(user.external_id) || Boolean(this.db.prepare('SELECT 1 FROM global_admins WHERE user_id=?').get(user.id));
   }
   /** restaurantId → 'admin'. Organizer rights belong to a banquet, not a restaurant. */
   accessOf(user) {
@@ -385,7 +458,7 @@ export class Store {
     const botConnected = Boolean(user.external_id && this.db.prepare('SELECT active FROM bot_contacts WHERE external_id=?').get(user.external_id)?.active);
     return { ...this.publicProfile(user), access, superAdmin: user.superAdmin, botConnected };
   }
-  publicProfile(user) { return { id: user.id, maxId: user.external_id || null, name: user.name, role: user.superAdmin && !user.demo ? 'admin' : user.role, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled) }; }
+  publicProfile(user) { return { id: user.id, maxId: user.external_id || null, name: user.name, role: user.superAdmin ? 'admin' : user.role, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled) }; }
   bindPhone(user, phone) {
     if (user.demo || !user.external_id) throw new HttpError(403, 'Подтверждение номера доступно только в MAX.');
     return this.transaction(() => {
@@ -486,7 +559,7 @@ export class Store {
   loginDemo(body) {
     if (!this.config.demoEnabled) throw new HttpError(404, 'Демонстрационный режим выключен.');
     const role = body.role || 'organizer';
-    if (!['organizer', 'guest', 'restaurant'].includes(role)) throw new HttpError(400, 'Неизвестная роль.');
+    if (!['admin', 'organizer', 'guest', 'restaurant'].includes(role)) throw new HttpError(400, 'Неизвестная роль.');
     if (body.inviteCode && !body.sandbox) {
       return this.transaction(() => {
         const event = this.findInvite(body.inviteCode);
@@ -513,12 +586,22 @@ export class Store {
         const count = this.db.prepare("SELECT COUNT(*) AS count FROM scopes WHERE id!='live'").get().count;
         if (count >= this.config.maxDemoSpaces) throw new HttpError(429, 'Все демо-пространства заняты. Продолжите в существующем демо или зайдите позже.');
         this.db.prepare('INSERT INTO scopes VALUES (?,?,?)').run(scope, digest(sandbox), iso(Date.now()));
-        for (const [userRole, name] of [['organizer', 'Александра'], ['guest', 'Вы'], ['restaurant', 'Команда ресторана']]) {
+        for (const [userRole, name] of [['admin', 'Администратор'], ['restaurant', 'Управляющий «Петръ»'], ['organizer', 'Александра'], ['guest', 'Вы']]) {
           this.db.prepare('INSERT INTO users (id,scope,external_id,name,role,demo) VALUES (?,?,NULL,?,?,1)').run(`${scope}_${userRole}`, scope, name, userRole);
         }
-        const restaurantId = this.seedRestaurant(scope);
+        const restaurantId = this.seedDemoPetr(scope);
+        this.db.prepare("INSERT INTO restaurant_members VALUES (?,?, 'admin', ?)").run(restaurantId, `${scope}_restaurant`, iso(Date.now()));
         const owner = this.db.prepare('SELECT * FROM users WHERE id=?').get(`${scope}_organizer`);
-        const event = this.createEvent(owner, { title: 'День рождения Александры', restaurantId, date: iso(Date.now() + 14 * 86400000), deadline: iso(Date.now() + 10 * 86400000), expectedGuests: 12, foodBudget: 250000, drinkBudget: 60000 });
+        const demoDate = days => new Date(`${new Date(Date.now() + days * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })}T18:00:00+03:00`).toISOString();
+        const packages = this.restaurants(this.hydrate(owner))[0].packages;
+        if (packages.length) {
+          const offer = packages[0];
+          const fixed = this.createEvent(owner, { title: 'Корпоратив в «Петръ» · пакет', restaurantId, date: demoDate(18), deadline: demoDate(13), expectedGuests: 10, durationHours: 4, selectionMode: 'package', packageId: offer.id, packageChoice: offer.items.find(item => item.choiceGroup)?.dishId, seating: { mode: 'choice', template: 'rounds' } });
+          this.db.prepare('UPDATE events SET created_at=? WHERE id=?').run(iso(Date.now() - 60_000), fixed.id);
+          this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(fixed.id, `${scope}_guest`, '', iso(Date.now()));
+          for (let index = 0; index < 6; index++) this.db.prepare('INSERT INTO guest_invites (id,event_id,name,phone,created_at) VALUES (?,?,?,?,?)').run(id('invite'), fixed.id, ['Мария Волкова','Дмитрий Соколов','Анна Морозова','Алексей Петров','Екатерина Смирнова','Ольга Зайцева'][index], `7999000100${index}`, iso(Date.now()));
+        }
+        const event = this.createEvent(owner, { title: 'День рождения Александры в «Петръ»', restaurantId, date: demoDate(14), deadline: demoDate(10), expectedGuests: 12, durationHours: 4, foodBudget: 250000, drinkBudget: 60000, seating: { mode: 'choice', template: 'rounds' } });
         const menu = this.eventMenu(event.id);
         for (const [index, [name, notes, indexes]] of [
           // Starters (0, 1) are on the shared table, so guests order mains, desserts and drinks.
@@ -538,8 +621,7 @@ export class Store {
         }
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, `${scope}_guest`, '', iso(Date.now()));
         const shared = this.db.prepare('INSERT INTO shared_items VALUES (?,?,?,?,?)');
-        for (const item of menu.filter(entry => entry.category === 'Закуски').slice(0, 2)) shared.run(event.id, item.id, 3, item.price, item.name);
-        this.db.prepare("UPDATE events SET seating_mode='choice',seating_layout=? WHERE id=?").run(JSON.stringify(generateLayout('rounds', 12)), event.id);
+        for (const item of menu.filter(entry => entry.category === 'Холодные закуски').slice(0, 2)) shared.run(event.id, item.id, 3, item.price, item.name);
         const seat = this.db.prepare("INSERT INTO seat_assignments (event_id,seat_id,user_id,source,assigned_at) VALUES (?,?,?,'guest',?)");
         for (const [index, seatId] of ['t1-1', 't1-2', 't2-1'].entries()) seat.run(event.id, seatId, `${scope}_synthetic_${index}`, iso(Date.now()));
       });
@@ -550,13 +632,21 @@ export class Store {
   }
   restaurants(user) {
     const access = user.access || this.accessOf(user);
+    const favorites = new Set(this.db.prepare('SELECT restaurant_id FROM restaurant_favorites WHERE user_id=?').all(user.id).map(row => row.restaurant_id));
     return this.db.prepare('SELECT * FROM restaurants WHERE scope=? ORDER BY sample_menu DESC,name').all(user.scope).map(row => ({
-      id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu), access: access.get(row.id) || null,
+      id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu), access: access.get(row.id) || null, favorite: favorites.has(row.id),
       menu: this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => presentMenuItem(item.data)),
       packageDishes: this.db.prepare('SELECT data FROM package_dishes WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => JSON.parse(item.data)),
       packages: this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => this.presentPackage(JSON.parse(item.data), row.id)),
       halls: this.halls(row.id),
     }));
+  }
+  setRestaurantFavorite(user, restaurantId, enabled) {
+    const restaurant = this.db.prepare('SELECT id FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+    if (enabled) this.db.prepare('INSERT OR IGNORE INTO restaurant_favorites VALUES (?,?)').run(user.id, restaurantId);
+    else this.db.prepare('DELETE FROM restaurant_favorites WHERE user_id=? AND restaurant_id=?').run(user.id, restaurantId);
+    return { restaurantId, favorite: enabled };
   }
   halls(restaurantId) {
     return this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurantId).map(row => ({ id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: JSON.parse(row.allowed_seating) }));
@@ -782,6 +872,14 @@ export class Store {
       const updated = this.eventRow(event.id, user);
       for (const guest of this.db.prepare('SELECT user_id FROM guests WHERE event_id=?').all(event.id)) this.queueNotice(event.id, guest.user_id, `event_changed:${updated.revision}`);
       return this.presentEvent(updated, user);
+    });
+  }
+  deleteEvent(user, eventId) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Удалить банкет может его организатор или администратор ресторана.');
+      this.db.prepare('DELETE FROM events WHERE id=?').run(event.id);
+      return { success: true, eventId };
     });
   }
   addInvite(user, eventId, body) {
