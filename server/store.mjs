@@ -8,6 +8,7 @@ import { PETR_MENU, PETR_PACKAGES } from './petr-menu.mjs';
 import { spentByUnit } from '../shared/currency.mjs';
 import { workbook } from './xlsx.mjs';
 import { SEATING_MODES, SEATING_TEMPLATES, autoAssign, generateLayout, layoutSeats, seatTitle, tableSeats, validateLayout } from '../shared/seating.mjs';
+import { DEFAULT_NOTIFICATION_PREFERENCES, notificationCategory } from '../shared/notification-categories.mjs';
 
 const secret = () => randomBytes(32).toString('base64url');
 const id = prefix => `${prefix}_${randomUUID()}`;
@@ -208,6 +209,7 @@ export class Store {
     if (!userColumns.includes('phone')) this.db.exec('ALTER TABLE users ADD COLUMN phone TEXT');
     if (!userColumns.includes('phone_verified_at')) this.db.exec('ALTER TABLE users ADD COLUMN phone_verified_at INTEGER');
     if (!userColumns.includes('notifications_enabled')) this.db.exec('ALTER TABLE users ADD COLUMN notifications_enabled INTEGER NOT NULL DEFAULT 0');
+    if (!userColumns.includes('notification_preferences')) this.db.exec("ALTER TABLE users ADD COLUMN notification_preferences TEXT NOT NULL DEFAULT ''");
     this.db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_live_phone_idx ON users(phone) WHERE scope='live' AND phone IS NOT NULL;");
     this.db.prepare('INSERT OR IGNORE INTO scopes VALUES (?, NULL, ?)').run('live', iso(Date.now()));
     if (!this.db.prepare('SELECT id FROM restaurants WHERE scope = ?').get('live')) this.seedRestaurant('live');
@@ -224,7 +226,7 @@ export class Store {
       }
     });
     this.db.prepare("UPDATE events SET seating_config=(SELECT seating_config FROM restaurant_halls WHERE restaurant_halls.id=events.hall_id) WHERE seating_config='' AND hall_id!=''").run();
-    this.db.exec('PRAGMA user_version = 13');
+    this.db.exec('PRAGMA user_version = 14');
     this.cleanup();
   }
   seedPetr() {
@@ -497,7 +499,8 @@ export class Store {
     const botConnected = Boolean(user.external_id && this.db.prepare('SELECT active FROM bot_contacts WHERE external_id=?').get(user.external_id)?.active);
     return { ...this.publicProfile(user), access, superAdmin: user.superAdmin, botConnected };
   }
-  publicProfile(user) { return { id: user.id, maxId: user.external_id || null, name: user.name, role: user.superAdmin ? 'admin' : user.role, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled) }; }
+  notificationPreferences(user) { return { ...DEFAULT_NOTIFICATION_PREFERENCES, ...(user.notification_preferences ? JSON.parse(user.notification_preferences) : {}) }; }
+  publicProfile(user) { return { id: user.id, maxId: user.external_id || null, name: user.name, role: user.superAdmin ? 'admin' : user.role, demo: Boolean(user.demo), phoneVerified: Boolean(user.phone_verified_at), phone: user.phone || null, notificationsEnabled: Boolean(user.notifications_enabled), notificationPreferences: this.notificationPreferences(user) }; }
   bindPhone(user, phone) {
     if (user.demo || !user.external_id) throw new HttpError(403, 'Подтверждение номера доступно только в MAX.');
     return this.transaction(() => {
@@ -540,10 +543,19 @@ export class Store {
     if (!target) throw new HttpError(404, 'Пользователь не найден. Укажите телефон или MAX ID.');
     return target;
   }
-  setNotifications(user, enabled) {
-    if (typeof enabled !== 'boolean') throw new HttpError(400, 'Укажите true или false.');
+  setNotifications(user, settings) {
+    const value = typeof settings === 'boolean' ? { enabled: settings } : settings;
+    if (!value || typeof value !== 'object' || Array.isArray(value) || (value.enabled === undefined && value.categories === undefined)) throw new HttpError(400, 'Укажите общую настройку или категории уведомлений.');
+    if (value.enabled !== undefined && typeof value.enabled !== 'boolean') throw new HttpError(400, 'Укажите true или false.');
+    if (value.categories !== undefined && (!value.categories || typeof value.categories !== 'object' || Array.isArray(value.categories) || Object.entries(value.categories).some(([key, enabled]) => !(key in DEFAULT_NOTIFICATION_PREFERENCES) || typeof enabled !== 'boolean'))) throw new HttpError(400, 'Укажите известные категории уведомлений и значения true или false.');
     if (user.demo) throw new HttpError(403, 'Уведомления доступны после входа через MAX.');
-    this.db.prepare('UPDATE users SET notifications_enabled=? WHERE id=?').run(enabled ? 1 : 0, user.id);
+    const enabled = value.enabled ?? Boolean(user.notifications_enabled);
+    const categories = { ...this.notificationPreferences(user), ...(value.categories || {}) };
+    this.db.prepare('UPDATE users SET notifications_enabled=?,notification_preferences=? WHERE id=?').run(enabled ? 1 : 0, JSON.stringify(categories), user.id);
+    for (const job of this.db.prepare('SELECT id,kind FROM notification_jobs WHERE user_id=? AND sent_at IS NULL AND cancelled_at IS NULL').all(user.id)) {
+      const category = notificationCategory(job.kind);
+      if (category && !categories[category]) this.cancelNotice(job.id);
+    }
     return this.publicUser(this.db.prepare('SELECT * FROM users WHERE id=?').get(user.id));
   }
   recordBotActivity(externalId, active) {
@@ -551,16 +563,22 @@ export class Store {
     this.db.prepare('INSERT INTO bot_contacts VALUES (?,?,?) ON CONFLICT(external_id) DO UPDATE SET active=excluded.active,updated_at=excluded.updated_at').run(String(externalId), active ? 1 : 0, Date.now());
   }
   queueNotice(eventId, userId, kind, dueAt = Date.now()) {
-    if (this.config.botToken && userId) this.db.prepare('INSERT INTO notification_jobs (id,event_id,user_id,kind,due_at) VALUES (?,?,?,?,?) ON CONFLICT(event_id,user_id,kind) DO UPDATE SET due_at=excluded.due_at,cancelled_at=NULL WHERE notification_jobs.sent_at IS NULL').run(id('notice'), eventId, userId, kind, dueAt);
+    if (!this.config.botToken || !userId) return;
+    const recipient = this.db.prepare('SELECT notification_preferences FROM users WHERE id=?').get(userId);
+    const category = notificationCategory(kind);
+    if (recipient && category && !this.notificationPreferences(recipient)[category]) return;
+    this.db.prepare('INSERT INTO notification_jobs (id,event_id,user_id,kind,due_at) VALUES (?,?,?,?,?) ON CONFLICT(event_id,user_id,kind) DO UPDATE SET due_at=excluded.due_at,cancelled_at=NULL WHERE notification_jobs.sent_at IS NULL').run(id('notice'), eventId, userId, kind, dueAt);
   }
   dueNotices(limit = 10) {
-    return this.db.prepare(`SELECT jobs.*,users.external_id,events.title,events.deadline,events.date,events.status AS event_status,events.invite_code,
+    return this.db.prepare(`SELECT jobs.*,users.external_id,users.notification_preferences,events.title,events.deadline,events.date,events.status AS event_status,events.invite_code,
       COALESCE(guests.submitted,0) AS guest_submitted,bot_contacts.active
       FROM notification_jobs jobs JOIN users ON users.id=jobs.user_id JOIN events ON events.id=jobs.event_id
       LEFT JOIN bot_contacts ON bot_contacts.external_id=users.external_id
       LEFT JOIN guests ON guests.event_id=jobs.event_id AND guests.user_id=jobs.user_id
       WHERE jobs.sent_at IS NULL AND jobs.cancelled_at IS NULL AND jobs.attempts<4 AND jobs.due_at<=?
-      AND users.notifications_enabled=1 AND bot_contacts.active=1 ORDER BY jobs.due_at LIMIT ?`).all(Date.now(), limit);
+      AND users.notifications_enabled=1 AND bot_contacts.active=1 ORDER BY jobs.due_at`).all(Date.now())
+      .filter(job => { const category = notificationCategory(job.kind); return !category || this.notificationPreferences(job)[category]; })
+      .slice(0, limit);
   }
   claimNotice(jobId) {
     return this.db.prepare('UPDATE notification_jobs SET attempts=attempts+1,due_at=? WHERE id=? AND sent_at IS NULL AND cancelled_at IS NULL').run(Date.now() + 60_000, jobId).changes === 1;
@@ -690,7 +708,7 @@ export class Store {
   halls(restaurantId) {
     return this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurantId).map(row => {
       const seatingConfig = row.seating_config ? JSON.parse(row.seating_config) : defaultSeatingConfig(row.capacity, row.default_seating_template, JSON.parse(row.allowed_seating).includes('choice') ? 'flexible' : 'fixed');
-      return { id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: seatingConfig.type === 'fixed' ? ['choice'] : SEATING_CHOICES, defaultSeatingTemplate: row.default_seating_template, allowFreeSeating: seatingConfig.type === 'flexible', seatingConfig };
+      return { id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: SEATING_CHOICES, defaultSeatingTemplate: row.default_seating_template, allowFreeSeating: seatingConfig.type === 'flexible', seatingConfig };
     });
   }
   editHall(user, restaurantId, hallId, body) {
@@ -717,7 +735,7 @@ export class Store {
     if (!SEATING_TEMPLATES.some(entry => entry.id === defaultSeatingTemplate && entry.id !== 'empty')) throw new HttpError(400, 'Выберите стандартную схему рассадки зала.');
     const requestedConfig = body.seatingConfig ?? (body.allowedSeating !== undefined ? { ...(old?.seatingConfig || defaultSeatingConfig(capacity, defaultSeatingTemplate)), type: requestedModes.includes('choice') ? 'flexible' : 'fixed' } : old?.seatingConfig || defaultSeatingConfig(capacity, defaultSeatingTemplate));
     const seatingConfig = validSeatingConfig(requestedConfig, capacity);
-    const allowedSeating = seatingConfig.type === 'fixed' ? ['choice'] : SEATING_CHOICES;
+    const allowedSeating = SEATING_CHOICES;
     const value = { id: hallId || id('hall'), name, capacity, windows: normalized, allowedSeating, defaultSeatingTemplate, allowFreeSeating: seatingConfig.type === 'flexible', seatingConfig };
     if (old) {
       for (const event of this.db.prepare('SELECT * FROM events WHERE hall_id=? AND date>?').all(old.id, iso(Date.now()))) {
@@ -913,8 +931,8 @@ export class Store {
     const selectedPackage = selectionMode === 'package' ? this.selectedPackage(restaurant.id, body.packageId, body.packageChoice) : null;
     const hall = this.reserveHall(restaurant.id, hallId, eventDate, durationHours, expected);
     const fixedHall = hall.seatingConfig.type === 'fixed';
-    const seatingMode = fixedHall ? 'choice' : body.seating?.mode ?? 'fixed';
-    if (fixedHall && body.seating && (body.seating.mode && body.seating.mode !== 'choice' || body.seating.template && body.seating.template !== hall.defaultSeatingTemplate)) throw new HttpError(403, 'Для этого зала ресторан закрепил расположение столов и выбор мест гостями.');
+    const seatingMode = body.seating?.mode ?? (fixedHall ? 'choice' : 'fixed');
+    if (fixedHall && (body.seating?.template || body.seating?.layout)) throw new HttpError(403, 'Ресторан закрепил расположение столов и стульев этого зала.');
     if (!SEATING_MODES.includes(seatingMode) || (seatingMode !== 'off' && !hall.allowedSeating.includes(seatingMode))) throw new HttpError(400, 'Этот вариант рассадки недоступен для выбранного зала.');
     const template = body.seating?.template || hall.defaultSeatingTemplate;
     if (!fixedHall && seatingMode !== 'off' && !SEATING_TEMPLATES.some(entry => entry.id === template)) throw new HttpError(400, 'Неизвестная схема зала.');
@@ -930,7 +948,7 @@ export class Store {
     if (!menu.length && !selectedPackage) throw new HttpError(409, 'В ресторане пока нет доступных блюд.');
     const eventId = id('event');
     this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,guest_budget,food_budget,drink_budget,status,invite_code,created_at,approved_at,photo_url,selection_mode,package_data,duration_hours,hall_id,seating_config) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?,?,?,?,?,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, secret().slice(0, 24), iso(Date.now()), photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId, JSON.stringify(hall.seatingConfig));
-    if (seatingMode !== 'off') this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(seatingMode, JSON.stringify(checkedLayout.layout), eventId);
+    if (seatingMode !== 'off' || fixedHall) this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(seatingMode, JSON.stringify(checkedLayout.layout), eventId);
     const add = this.db.prepare('INSERT INTO event_menu VALUES (?,?,?)');
     for (const item of menu) add.run(eventId, item.id, item.data);
     return this.presentEvent(this.eventRow(eventId, user), user);
@@ -958,7 +976,7 @@ export class Store {
         if (hall.seatingConfig.type === 'fixed') {
           const layout = hall.seatingConfig.fixedLayout;
           if (layoutSeats(layout).length < expected) throw new HttpError(409, 'В готовой схеме выбранного зала недостаточно мест для гостей.');
-          nextSeating = { mode: 'choice', layout };
+          nextSeating = { mode: event.seating_mode, layout };
         } else {
           const generated = generateLayout(hall.defaultSeatingTemplate, expected);
           nextSeating = { mode: event.seating_mode === 'off' ? 'off' : event.seating_mode, layout: layoutMatchesPresets(generated, hall.seatingConfig.tablePresets) ? generated : { tables: [] } };
@@ -1549,7 +1567,7 @@ export class Store {
     const hall = this.halls(event.restaurant_id).find(entry => entry.id === event.hall_id);
     const result = { mode: event.seating_mode, layout, seatCount: layoutSeats(layout).length, mySeat: people.find(person => person.key === key)?.seatId || null, occupied: people.filter(person => person.seatId).map(person => person.seatId), names: Object.fromEntries(people.filter(person => person.seatId).map(person => [person.seatId, person.name])) };
     const config = event.seating_config ? JSON.parse(event.seating_config) : hall?.seatingConfig;
-    if (manager) { result.canCustomize = config?.type === 'flexible'; result.allowedModes = config?.type === 'fixed' ? ['choice'] : SEATING_CHOICES; result.tablePresets = config?.tablePresets || []; result.layoutPolicy = config?.type || 'fixed'; result.hallCapacity = hall?.capacity || 0; }
+    if (manager) { result.canCustomize = config?.type === 'flexible'; result.allowedModes = SEATING_CHOICES; result.tablePresets = config?.tablePresets || []; result.layoutPolicy = config?.type || 'fixed'; result.hallCapacity = hall?.capacity || 0; }
     if (manager) result.people = people;
     return result;
   }
@@ -1560,32 +1578,32 @@ export class Store {
       if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
       const hall = this.halls(event.restaurant_id).find(entry => entry.id === event.hall_id);
       const config = event.seating_config ? JSON.parse(event.seating_config) : hall?.seatingConfig;
-      if (config?.type !== 'flexible') throw new HttpError(403, 'Ресторан закрепил расположение столов. Гости выбирают места на готовой схеме.');
       const mode = body.mode === undefined ? event.seating_mode : body.mode;
       if (!SEATING_MODES.includes(mode)) throw new HttpError(400, 'Режим рассадки: off, choice или fixed.');
-      if (mode !== 'off' && !hall?.allowedSeating.includes(mode)) throw new HttpError(409, 'Этот вариант рассадки недоступен для выбранного зала.');
+      if (config?.type === 'fixed' && body.layout !== undefined) throw new HttpError(403, 'Ресторан закрепил расположение столов и стульев этого зала.');
       let layout = this.layoutOf(event);
       if (body.layout !== undefined) {
         const checked = validateLayout(body.layout);
         if (checked.error) throw new HttpError(400, checked.error);
         layout = checked.layout;
       }
-      if (!layoutMatchesPresets(layout, config.tablePresets)) throw new HttpError(400, 'В схеме есть столы вне разрешённого рестораном набора размеров.');
-      if (layoutSeats(layout).length > hall.capacity) throw new HttpError(400, 'Число стульев превышает вместимость зала.');
+      if (config?.type === 'flexible' && !layoutMatchesPresets(layout, config.tablePresets)) throw new HttpError(400, 'В схеме есть столы вне разрешённого рестораном набора размеров.');
+      if (config?.type === 'flexible' && layoutSeats(layout).length > hall.capacity) throw new HttpError(400, 'Число стульев превышает вместимость зала.');
       const seatIds = new Set(layoutSeats(layout).map(seat => seat.id));
       const lost = this.db.prepare('SELECT seat_id FROM seat_assignments WHERE event_id=?').all(event.id).filter(row => !seatIds.has(row.seat_id));
-      if (lost.length) {
+      if (lost.length && mode !== 'off') {
         const old = this.layoutOf(event);
         throw new HttpError(409, `Нельзя убрать занятые места: ${lost.slice(0, 3).map(row => seatTitle(old, row.seat_id)).join('; ')}${lost.length > 3 ? ` и ещё ${lost.length - 3}` : ''}. Сначала пересадите гостей.`);
       }
       this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(mode, JSON.stringify(layout), event.id);
+      if (mode === 'off') this.db.prepare('DELETE FROM seat_assignments WHERE event_id=?').run(event.id);
       return this.seating(user, this.eventRow(event.id, user), true);
     });
   }
   chooseSeat(user, eventId, body) {
     return this.transaction(() => {
       const event = this.eventRow(eventId, user);
-      if (event.seating_mode !== 'choice') throw new HttpError(409, 'В этом банкете места распределяет организатор.');
+      if (event.seating_mode !== 'choice') throw new HttpError(409, event.seating_mode === 'off' ? 'В этом банкете рассадка выключена.' : 'В этом банкете места распределяет организатор.');
       if (event.status !== 'collecting' || Date.parse(event.date) <= Date.now()) throw new HttpError(409, 'Выбор места для этого банкета закрыт.');
       if (!this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id)) {
         if (!this.isOrganizer(user, event)) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
@@ -1611,6 +1629,7 @@ export class Store {
       const event = this.eventRow(eventId, user);
       if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к рассадке банкета.');
       if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
+      if (event.seating_mode === 'off') throw new HttpError(409, 'Сначала включите рассадку.');
       const people = this.seatPeople(event.id);
       const person = people.find(entry => entry.key === body.guest);
       if (!person) throw new HttpError(404, 'Гость не найден.');

@@ -375,6 +375,36 @@ test('opted-in MAX notifications are queued, delivered and stopped when a guest 
   assert.equal(sent.filter(message => message.url.includes('user_id=200')).length, 1);
 });
 
+test('notification categories persist and suppress queued and future MAX messages', async t => {
+  const f = await fixture(t);
+  const owner = await f.login(100);
+  const event = await f.event(owner.token);
+  f.store.recordBotActivity('100', true);
+  const changed = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { enabled: true, categories: { guestJoined: false } } });
+  assert.equal(changed.status, 200);
+  assert.equal(changed.data.notificationPreferences.guestJoined, false);
+  assert.equal(changed.data.notificationPreferences.guestSelection, true);
+  assert.equal((await f.request('/api/me', { token: owner.token })).data.notificationPreferences.guestJoined, false);
+  assert.equal((await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { unknown: false } } })).status, 400);
+  assert.equal((await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { reminders: 'false' } } })).status, 400);
+  f.store.queueNotice(event.id, owner.user.id, 'guest_joined:other');
+  f.store.queueNotice(event.id, owner.user.id, 'selection:1');
+  assert.deepEqual(f.store.dueNotices().map(job => job.kind), ['selection:1']);
+  const disabled = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: false } } });
+  assert.equal(disabled.status, 200);
+  assert.deepEqual(f.store.dueNotices(), []);
+  f.store.queueNotice(event.id, owner.user.id, 'selection:2');
+  assert.deepEqual(f.store.dueNotices(), []);
+  f.store.db.prepare("UPDATE notification_jobs SET cancelled_at=NULL WHERE event_id=? AND kind='selection:1'").run(event.id);
+  assert.deepEqual(f.store.dueNotices(), [], 'delivery also respects the current category preference');
+  await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: false } } });
+  const enabledAgain = await f.request('/api/me/notifications', { token: owner.token, method: 'PUT', body: { categories: { guestSelection: true } } });
+  assert.equal(enabledAgain.status, 200);
+  assert.deepEqual(f.store.dueNotices(), [], 'old messages do not appear after a category is re-enabled');
+  f.store.queueNotice(event.id, owner.user.id, 'selection:3');
+  assert.deepEqual(f.store.dueNotices().map(job => job.kind), ['selection:3']);
+});
+
 test('photo upload validates image bytes and exposes only generated media path', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'banquet-media-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

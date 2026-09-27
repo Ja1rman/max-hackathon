@@ -45,6 +45,7 @@ import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
 const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
 import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview, SeatingMap, HallLayoutDesigner } from './seating.jsx';
 import { ConfirmHost, ask } from './confirm.jsx';
+import { DEFAULT_NOTIFICATION_PREFERENCES, NOTIFICATION_CATEGORIES } from '../shared/notification-categories.mjs';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const money = (value = 0) =>
@@ -282,6 +283,7 @@ function Modal({ title, children, onClose }) {
     const previous = document.activeElement;
     ref.current?.focus();
     const handler = (e) => {
+      if (document.querySelector('.confirm-backdrop')) return;
       if (e.key === "Escape") onClose();
       if (e.key === "Tab") {
         const elements = [
@@ -483,13 +485,13 @@ function App() {
     if (session) refresh().catch((e) => setError(e.message));
   }, [session, refresh]);
   // MAX keeps the mini app alive in the background: pick up roles granted meanwhile.
-  const sessionKey = session ? JSON.stringify([session.role, session.access, session.phoneVerified, session.notificationsEnabled, session.botConnected]) : "";
+  const sessionKey = session ? JSON.stringify([session.role, session.access, session.phoneVerified, session.notificationsEnabled, session.notificationPreferences, session.botConnected]) : "";
   useEffect(() => {
     if (!sessionKey) return;
     const check = () => {
       if (document.visibilityState === "hidden") return;
       api("/me").then((me) => {
-        const key = JSON.stringify([me.role, me.access, me.phoneVerified, me.notificationsEnabled, me.botConnected]);
+        const key = JSON.stringify([me.role, me.access, me.phoneVerified, me.notificationsEnabled, me.notificationPreferences, me.botConnected]);
         if (key !== sessionKey) setSession(me);
       }).catch(() => {});
     };
@@ -517,6 +519,11 @@ function App() {
     const updated = await api('/me/notifications', { method: 'PUT', body: { enabled: !session.notificationsEnabled } });
     setSession(updated);
     notify(updated.notificationsEnabled ? (updated.botConnected ? 'Уведомления включены' : 'Уведомления включены. Откройте чат с ботом и нажмите «Начать».') : 'Уведомления выключены');
+  });
+  const setNotificationCategory = (category, enabled) => perform(async () => {
+    const updated = await api('/me/notifications', { method: 'PUT', body: { categories: { [category]: enabled } } });
+    setSession(updated);
+    notify('Настройки уведомлений сохранены');
   });
   const openBot = () => config?.botUsername && openExternal(`https://max.ru/${config.botUsername}`);
   const exportKitchen = (format, eventIds) => perform(async () => {
@@ -1010,7 +1017,7 @@ function App() {
                     )}
                   </div>
                   <div className="section-head package-section-head"><div><h2>Залы и бронирование</h2><p className="muted">Каждый зал бронируется отдельно. Ресторан задаёт готовую схему со стульями или размеры столов для расстановки организатором.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditHall({ restaurantId: r.id, name: '', capacity: 100, windows: [{ weekday: 1, start: '09:00', end: '23:00' }], seatingConfig: { type: 'fixed', fixedLayout: generateLayout('rounds', 20), tablePresets: [{ shape: 'round', seats: 6 }, { shape: 'round', seats: 8 }, { shape: 'rect', seats: 6 }, { shape: 'rect', seats: 10 }] } })}><Plus size={16} /> Добавить зал</Button>}</div>
-                  <div className="package-grid">{r.halls?.map(hall => <div className="panel package-card" key={hall.id}><strong>{hall.name}</strong><span>До {hall.capacity} гостей</span><small>{hall.windows.length} окон в неделю · {hall.seatingConfig?.type === 'fixed' ? `готовая схема: ${layoutSeats(hall.seatingConfig.fixedLayout).length} мест, гости выбирают стулья` : `организатор расставляет столы из ${hall.seatingConfig?.tablePresets.length || 0} размеров`}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditHall({ ...hall, restaurantId: r.id })}>Настроить зал</button>}</div>)}</div>
+                  <div className="package-grid">{r.halls?.map(hall => <div className="panel package-card" key={hall.id}><strong>{hall.name}</strong><span>До {hall.capacity} гостей</span><small>{hall.windows.length} окон в неделю · {hall.seatingConfig?.type === 'fixed' ? `готовая схема: ${layoutSeats(hall.seatingConfig.fixedLayout).length} мест, режим рассадки выбирает организатор` : `организатор расставляет столы из ${hall.seatingConfig?.tablePresets.length || 0} размеров`}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditHall({ ...hall, restaurantId: r.id })}>Настроить зал</button>}</div>)}</div>
                   <div className="section-head package-section-head"><div><h2>Блюда только для пакетов</h2><p className="muted">Укажите состав, фото и КБЖУ. Эти блюда не появляются в обычном меню гостей.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackageDish({ restaurantId: r.id, name: '', category: 'Холодные закуски', nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, available: true })}><Plus size={16} /> Добавить блюдо пакета</Button>}</div>
                   <div className="package-grid">{r.packageDishes?.map(dish => <div className="panel package-card" key={dish.id}><strong>{dish.name}</strong><small>Только для пакетного предложения · {dish.category}</small>{dish.photoUrl && <img className="package-dish-photo" src={`${BASE}${dish.photoUrl}`} alt={dish.name} />}<p>{dish.description}</p><small>К {dish.nutrition.kcal} · Б {dish.nutrition.protein} · Ж {dish.nutrition.fat} · У {dish.nutrition.carbs}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditPackageDish({ ...dish, restaurantId: r.id })}>Редактировать</button>}</div>)}</div>
                   {[...new Set((r.menu || []).map(item => item.category))].map((category, index) => <details className="menu-category" key={category} open={index === 0}><summary>{category} <span>{r.menu.filter(item => item.category === category).length}</span></summary><div className="menu-grid catalog">
@@ -1752,8 +1759,15 @@ function App() {
                 <h3>Уведомления в MAX</h3>
                 <label className="switch-row">
                   <input type="checkbox" checked={session.notificationsEnabled} disabled={busy} onChange={toggleNotifications} />
-                  <span>Присылать напоминания и новости о банкетах</span>
+                  <span>Включить уведомления в MAX</span>
                 </label>
+                <div className="notification-preferences" role="group" aria-label="Категории уведомлений">
+                  {NOTIFICATION_CATEGORIES.map(category => <label className="notification-category" key={category.key}>
+                    <input type="checkbox" checked={(session.notificationPreferences || DEFAULT_NOTIFICATION_PREFERENCES)[category.key]} disabled={busy} onChange={event => setNotificationCategory(category.key, event.target.checked)} />
+                    <span><strong>{category.label}</strong><small>{category.description}</small></span>
+                  </label>)}
+                </div>
+                {!session.notificationsEnabled && <p>Выберите нужные категории, затем включите уведомления.</p>}
                 {session.notificationsEnabled && (
                   <p className={session.botConnected ? "green" : "budget-warning"}>
                     {session.botConnected ? "Чат с ботом открыт — сообщения будут приходить." : "Чтобы бот мог писать, откройте с ним чат и нажмите «Начать»."}
@@ -2407,7 +2421,7 @@ function HallEditor({ hall, busy, onClose, submit, remove }) {
     <div className="booking-windows">{windows.map((window, index) => <div className="booking-window" key={index}><select aria-label={`День ${index + 1}`} value={window.weekday} onChange={event => updateWindow(index, 'weekday', event.target.value)}>{WEEKDAYS.map((day, weekday) => <option key={day} value={weekday}>{day}</option>)}</select><input type="text" inputMode="text" maxLength={5} required pattern="([01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" aria-label={`Начало окна ${index + 1}, 24 часа`} value={window.start} onChange={event => updateWindow(index, 'start', event.target.value)} /><input type="text" inputMode="text" maxLength={5} required pattern="(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)" placeholder="24:00" aria-label={`Конец окна ${index + 1}, 24 часа`} value={window.end} onChange={event => updateWindow(index, 'end', event.target.value)} /><button type="button" className="icon-btn" aria-label="Удалить окно" onClick={() => setWindows(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}</div>
     <button type="button" className="text-button" onClick={() => setWindows(current => [...current, { weekday: 1, start: '09:00', end: '23:00' }])}>+ Добавить окно</button>
     <h3>Столы и стулья</h3><p className="muted">Настройка применяется к новым банкетам. Уже созданные сохраняют свою схему.</p>
-    <div className="hall-policy-options" role="radiogroup" aria-label="Кто расставляет столы"><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'fixed'} onChange={() => updateConfig({ type: 'fixed' })} /><span><strong>Готовая схема ресторана</strong><small>Столы и стулья стоят на заданных местах. Гости выбирают свободный стул.</small></span></label><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'flexible'} onChange={() => updateConfig({ type: 'flexible' })} /><span><strong>Столы расставляет организатор</strong><small>Он использует только разрешённые рестораном формы и размеры столов.</small></span></label></div>
+    <div className="hall-policy-options" role="radiogroup" aria-label="Кто расставляет столы"><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'fixed'} onChange={() => updateConfig({ type: 'fixed' })} /><span><strong>Готовая схема ресторана</strong><small>Столы и стулья закреплены. Организатор выбирает: гости садятся сами, места назначает он или рассадки нет.</small></span></label><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'flexible'} onChange={() => updateConfig({ type: 'flexible' })} /><span><strong>Столы расставляет организатор</strong><small>Он использует только разрешённые рестораном формы и размеры столов.</small></span></label></div>
     {seatingConfig.type === 'fixed' ? <HallLayoutDesigner layout={seatingConfig.fixedLayout} onChange={fixedLayout => updateConfig({ fixedLayout })} capacity={Number(capacity)} /> : <div className="hall-presets"><strong>Доступные столы</strong><p className="muted">Укажите, какие столы и сколько стульев за каждым можно использовать.</p><details><summary>Изменить набор · {seatingConfig.tablePresets.length} размеров</summary><div className="hall-presets-list">{seatingConfig.tablePresets.map((preset, index) => <div className="hall-preset-row" key={index}><select aria-label={`Форма стола ${index + 1}`} value={preset.shape} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, shape: event.target.value } : item) })}><option value="round">Круглый</option><option value="rect">Прямоугольный</option></select><input aria-label={`Мест за столом ${index + 1}`} type="number" min="1" max="40" value={preset.seats} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, seats: Number(event.target.value) } : item) })} /><button type="button" aria-label={`Убрать размер ${index + 1}`} onClick={() => updateConfig({ tablePresets: seatingConfig.tablePresets.filter((_, i) => i !== index) })}><X size={15} /></button></div>)}</div><button type="button" className="text-button" onClick={() => updateConfig({ tablePresets: [...seatingConfig.tablePresets, { shape: 'round', seats: 8 }] })}>+ Добавить размер</button></details></div>}
     <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить зал «${hall.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить зал</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !windows.length}>Сохранить</Button></div>
   </form></Modal>;
@@ -2443,7 +2457,7 @@ function EditPackage({ offer, dishes, busy, onError, onClose, submit, remove }) 
 }
 function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, submit }) {
   const firstHall = restaurants[0]?.halls?.[0];
-  const hallDefaultMode = entry => entry?.allowedSeating.includes('fixed') ? 'fixed' : entry?.allowedSeating.includes('choice') ? 'choice' : 'off';
+  const hallDefaultMode = entry => entry?.seatingConfig?.type === 'fixed' ? 'choice' : entry?.allowedSeating.includes('fixed') ? 'fixed' : entry?.allowedSeating.includes('choice') ? 'choice' : 'off';
   const [seatingMode, setSeatingMode] = useState(hallDefaultMode(firstHall));
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id || '');
   const [restaurantSearch, setRestaurantSearch] = useState('');
@@ -2507,7 +2521,7 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
             expectedGuests: Number(f.get("guests")),
             foodBudget: Math.round(Number(f.get("foodBudget") || 0) * 100),
             drinkBudget: Math.round(Number(f.get("drinkBudget") || 0) * 100),
-            seating: canCustomizeSeating ? { mode: seatingMode } : undefined,
+            seating: { mode: seatingMode },
           });
         }}
       >
@@ -2572,7 +2586,7 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
           </label>}
         </div>
         <BookingMiniCalendar restaurantId={restaurantId} hallId={hall?.id} durationHours={duration} value={eventDate} onChange={chooseEventDate} />
-        {hall && (canCustomizeSeating ? <div className="hall-seating-choice"><label>Кто выбирает место<select name="seatingMode" value={seatingMode} onChange={event => setSeatingMode(event.target.value)}>{Object.entries(SEATING_MODE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><small>После создания банкета вы сможете расставить столы из набора ресторана во вкладке «Рассадка».</small></div> : <div className="hall-seating-choice"><strong>Готовая схема зала · {layoutSeats(hall.seatingConfig.fixedLayout).length} мест</strong><small>Ресторан закрепил расположение столов и стульев. Гости смогут выбрать свободное место.</small><details><summary>Посмотреть схему</summary><SeatingMap layout={hall.seatingConfig.fixedLayout} /></details></div>)}
+        {hall && <div className="hall-seating-choice"><label>Рассадка<select name="seatingMode" value={seatingMode} onChange={event => setSeatingMode(event.target.value)}>{Object.entries(SEATING_MODE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>{canCustomizeSeating ? <small>После создания банкета вы сможете расставить столы из набора ресторана во вкладке «Рассадка».</small> : <><strong>Готовая схема зала · {layoutSeats(hall.seatingConfig.fixedLayout).length} мест</strong><small>Расположение столов и стульев закреплено рестораном. Режим рассадки можно изменить позже.</small><details><summary>Посмотреть схему</summary><SeatingMap layout={hall.seatingConfig.fixedLayout} /></details></>}</div>}
         <div className="modal-actions">
           <Button variant="secondary" type="button" onClick={onClose}>
             Отмена

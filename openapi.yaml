@@ -250,18 +250,22 @@ paths:
   "/api/me/notifications":
     put:
       operationId: setNotifications
-      summary: Включить или выключить уведомления в MAX
-      description: Доставка возможна только после начала личного диалога с ботом. По умолчанию выключено; bot_stopped отключает фактическую отправку.
+      summary: Включить уведомления в MAX и выбрать категории событий
+      description: Доставка возможна только после начала личного диалога с ботом. Общее разрешение по умолчанию выключено; все категории изначально включены. bot_stopped отключает фактическую отправку.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [enabled]
               properties:
                 enabled:
                   type: boolean
+                categories:
+                  "$ref": "#/components/schemas/NotificationPreferences"
+              anyOf:
+              - required: [enabled]
+              - required: [categories]
       responses:
         '200':
           description: Обновлённый профиль
@@ -1687,6 +1691,8 @@ components:
           description: Только собственный подтверждённый номер в международном формате без плюса.
         notificationsEnabled:
           type: boolean
+        notificationPreferences:
+          "$ref": "#/components/schemas/NotificationPreferences"
         access:
           type: array
           items:
@@ -1709,6 +1715,17 @@ components:
       - phoneVerified
       - phone
       - notificationsEnabled
+      - notificationPreferences
+    NotificationPreferences:
+      type: object
+      additionalProperties: false
+      properties:
+        guestJoined: { type: boolean, description: Вход гостя в мой банкет. }
+        guestSelection: { type: boolean, description: Выбор блюд гостем моего банкета. }
+        eventChanges: { type: boolean, description: Изменения даты, параметров или меню банкета. }
+        reminders: { type: boolean, description: Напоминания о сроке выбора блюд. }
+        orderApproved: { type: boolean, description: Утверждение заказа для гостя. }
+        kitchenOrders: { type: boolean, description: Утверждённый заказ для кухни ресторана. }
     Session:
       type: object
       properties:
@@ -2048,7 +2065,7 @@ components:
       required: [id, name, capacity, windows, seatingConfig, allowedSeating, defaultSeatingTemplate, allowFreeSeating]
     SeatingConfig:
       type: object
-      description: 'fixed закрепляет расположение столов и стульев за рестораном, гости выбирают места; flexible позволяет организатору расставлять столы только из tablePresets. Конфигурация копируется в банкет при его создании.'
+      description: 'fixed закрепляет расположение столов и стульев за рестораном; организатор выбирает режим рассадки, не меняя карту. flexible позволяет организатору расставлять столы только из tablePresets. Конфигурация копируется в банкет при его создании.'
       required: [type, fixedLayout, tablePresets]
       properties:
         type: { type: string, enum: [fixed, flexible] }
@@ -2825,7 +2842,7 @@ components:
             type: string
         canCustomize:
           type: boolean
-          description: Только организатору и администратору; может ли текущий пользователь менять режим и схему.
+          description: Только организатору и администратору; можно ли менять расположение и набор столов. Режим можно менять и при false.
         allowedModes:
           type: array
           description: Только организатору и администратору; варианты рассадки банкета.

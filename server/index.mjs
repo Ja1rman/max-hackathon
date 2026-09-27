@@ -159,7 +159,7 @@ export function createApp(options = {}) {
       if (path === '/api/me' && req.method === 'GET') return json(store.publicUser(user));
       if (path === '/api/me/phone' && req.method === 'PUT') return json(store.bindPhone(user, verifyMaxContact(await readBody(req), user.external_id, config.botToken)));
       if (path === '/api/me/claim-invitations' && req.method === 'POST') return json(store.transaction(() => store.claimInvitations(user)));
-      if (path === '/api/me/notifications' && req.method === 'PUT') return json(store.setNotifications(user, (await readBody(req)).enabled));
+      if (path === '/api/me/notifications' && req.method === 'PUT') return json(store.setNotifications(user, await readBody(req)));
       if (path === '/api/media' && req.method === 'POST') {
         const { bytes, extension } = await readImage(req);
         const fileName = `${randomUUID()}.${extension}`;

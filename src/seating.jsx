@@ -308,22 +308,23 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
         <div className="section-head">
           <div>
             <h2>Рассадка</h2>
-            <p className="muted">{seating.canCustomize === false ? 'Ресторан закрепил столы и стулья. Гости выбирают свободные места на этой схеме.' : 'Расположите столы из набора ресторана и выберите, кто назначает места.'}</p>
+            <p className="muted">{seating.canCustomize === false ? 'Ресторан закрепил расположение столов и стульев. Выберите, кто назначает места, или отключите рассадку.' : 'Расположите столы из набора ресторана и выберите, кто назначает места.'}</p>
           </div>
         </div>
         <div className="mode-switch" role="radiogroup" aria-label="Режим рассадки">
           {Object.entries(SEATING_MODE_NAMES).map(([key, label]) => (
-            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!editable || (key !== 'off' && seating.allowedModes && !seating.allowedModes.includes(key))} onClick={() => { setMode(key); setDirty(true); }}>
+            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!active || (key !== 'off' && seating.allowedModes && !seating.allowedModes.includes(key))} onClick={() => { setMode(key); setDirty(true); }}>
               {label}
             </button>
           ))}
         </div>
+        {mode === 'off' && seating.mode !== 'off' && <p className="muted">При сохранении рассадки «Без рассадки» ранее выбранные места освободятся.</p>}
         {mode !== "off" && editable && <p className="muted">Доступны только формы и размеры столов, которые выбрал ресторан. Всего стульев не больше {seating.hallCapacity}.</p>}
-        {(dirty || mode !== seating.mode) && editable && (
+        {(dirty || mode !== seating.mode) && active && (
           <div className="seating-save">
             <span>Есть несохранённые изменения</span>
             <button type="button" className="btn secondary" disabled={busy} onClick={() => { setMode(seating.mode); setLayout(seating.layout); setDirty(false); }}>Отменить</button>
-            <button type="button" className="btn" disabled={busy} onClick={async () => { const result = await save({ mode, layout }); if (result !== null) setDirty(false); }}>Сохранить рассадку</button>
+            <button type="button" className="btn" disabled={busy} onClick={async () => { const result = await save(editable ? { mode, layout } : { mode }); if (result !== null) setDirty(false); }}>Сохранить рассадку</button>
           </div>
         )}
       </section>
