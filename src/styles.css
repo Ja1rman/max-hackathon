@@ -525,6 +525,24 @@ main {
 .restaurant-choice-open { display: grid; gap: 10px; width: 100%; padding: 0 38px 0 0; border: 0; background: transparent; text-align: left; color: inherit; cursor: pointer; }
 .restaurant-search { display: flex; align-items: center; gap: 10px; margin: 0 0 16px; }
 .restaurant-search .search-field { flex: 1; min-width: 0; margin: 0; }
+.restaurant-picker { display: grid; gap: 10px; min-width: 0; }
+.restaurant-picker-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink); }
+.restaurant-picker-heading span { color: var(--green); font-size: 11px; text-align: right; }
+.restaurant-picker .restaurant-search { margin: 0; }
+.restaurant-picker .search-field { display: flex; flex-direction: row; align-items: center; gap: 8px; padding: 0 10px; margin: 0; border: 1px solid #dee6d6; border-radius: 8px; background: #fcfdfb; }
+.restaurant-picker .search-field input { border: 0; outline: 0; padding: 11px 0; background: transparent; }
+.restaurant-results { display: grid; gap: 6px; max-height: 240px; overflow-y: auto; padding: 2px; overscroll-behavior: contain; }
+.restaurant-result { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; min-height: 62px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); text-align: left; }
+.restaurant-result.selected { border-color: #629577; background: #edf6ec; box-shadow: inset 0 0 0 1px #629577; }
+.restaurant-result-icon { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border-radius: 9px; color: var(--green); background: var(--soft); }
+.restaurant-result-copy { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.restaurant-result-copy strong { font-size: 12px; line-height: 1.35; }
+.restaurant-result-copy small { font-size: 10px; line-height: 1.3; color: var(--muted); overflow-wrap: anywhere; }
+.restaurant-result-star { color: #ad7519; }
+.restaurant-result-check { color: var(--green); }
+.restaurant-no-results { padding: 14px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); font-size: 11px; }
+.restaurant-picker > .favorite-inline { justify-self: start; white-space: normal; text-align: left; }
+@media (max-width: 620px) { .restaurant-picker .restaurant-search { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; } .restaurant-picker .favorite-filter { padding-inline: 8px; font-size: 10px; } .restaurant-results { max-height: 210px; } }
 .favorite-filter, .favorite-inline { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .favorite-filter.active, .favorite-inline.active, .favorite-button.active { color: #ad7519; background: #fff8e9; border-color: #d8b568; }
 .favorite-button { position: absolute; top: 14px; right: 14px; display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--muted); }
@@ -2763,9 +2781,13 @@ main {
 .shared-control .stepper { min-width: 120px; }
 .event-dish-controls .text-button { margin: 0; justify-self: start; }
 .import-list { display: grid; gap: 4px; max-height: 50vh; overflow: auto; margin: 12px 0; }
-.import-list label.check { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; }
+.import-list label.check { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; }
 .import-list input { width: auto; }
-.import-list small { color: var(--muted); font-size: 10px; }
+.import-list label.check span { min-width: 0; overflow-wrap: anywhere; }
+.import-list small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
+.catalog-selection-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 7px 12px; font-size: 11px; }
+.catalog-selection-tools span { margin-right: auto; font-weight: 700; }
+.catalog-selection-tools button { border: 0; padding: 5px 0; background: transparent; color: var(--green); font-size: 11px; font-weight: 700; }
 .kitchen-board { display: grid; gap: 18px; }
 .kitchen-board .section-head h2 { margin: 8px 0 4px; }
 
@@ -2853,8 +2875,27 @@ button:not(:disabled):active { transform: scale(0.97); }
 .modal label.seating-option input { flex: 0 0 18px; width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; accent-color: var(--green); }
 .modal label.seating-option span { min-width: 0; }
 .modal .always-open-option { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--soft); }
-.booking-availability { background: var(--soft); border: 1px solid #dce5d9; border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; margin: 8px 0 16px; }
-.booking-availability small { color: var(--muted); line-height: 1.4; }
+.booking-mini-calendar { background: var(--soft); border: 1px solid #dce5d9; border-radius: 12px; padding: 14px; display: grid; gap: 12px; margin: 8px 0 16px; min-width: 0; }
+.booking-mini-calendar small { display: block; color: var(--muted); line-height: 1.4; }
+.booking-calendar-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.booking-calendar-head > div:first-child { display: grid; gap: 3px; }
+.booking-calendar-head strong, .booking-calendar-times > strong { color: var(--ink); font-size: 13px; }
+.booking-calendar-month { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 170px; }
+.booking-calendar-month span { color: var(--ink); font-size: 12px; font-weight: 700; text-align: center; text-transform: capitalize; }
+.booking-calendar-month button, .booking-calendar-days button, .booking-time-grid button { border: 1px solid #d3dfce; color: var(--ink); background: #fff; cursor: pointer; }
+.booking-calendar-month button { width: 30px; height: 30px; border-radius: 8px; font-size: 20px; line-height: 1; }
+.booking-calendar-month button:disabled, .booking-calendar-days button:disabled { opacity: .38; cursor: default; }
+.booking-calendar-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; text-align: center; }
+.booking-calendar-days > span { font-size: 10px; color: var(--muted); font-weight: 700; padding: 3px 0; }
+.booking-calendar-days button { min-width: 0; min-height: 36px; border-radius: 8px; display: grid; place-content: center; gap: 2px; font-size: 12px; }
+.booking-calendar-days button strong { font-size: inherit; }
+.booking-calendar-days button i { width: 4px; height: 4px; border-radius: 50%; background: var(--green); justify-self: center; }
+.booking-calendar-days button.selected, .booking-time-grid button.selected { border-color: var(--green); background: var(--green); color: #fff; }
+.booking-calendar-days button.selected i { background: #fff; }
+.booking-calendar-times { display: grid; gap: 8px; }
+.booking-time-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(56px, 1fr)); gap: 6px; max-height: 132px; overflow-y: auto; }
+.booking-time-grid button { min-height: 34px; border-radius: 7px; font-size: 12px; font-weight: 700; }
+.booking-calendar-error { color: #a43e35; font-size: 12px; margin: 0; }
 .package-dish-photo { display: block; width: 100%; height: 120px; object-fit: cover; border-radius: 8px; margin: 8px 0; }
 .package-photo-preview { display: flex; align-items: flex-start; gap: 10px; }
 .package-photo-preview img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers.mjs';
+import { generateLayout, validateLayout } from '../shared/seating.mjs';
 
 const atNoon = days => {
   const day = new Date(Date.now() + days * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
@@ -22,6 +23,8 @@ test('hall bookings reject overlap, allow back-to-back and parallel halls, and e
   const overlap = await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Пересечение', date: plusHours(date, 3) } });
   assert.equal(overlap.status, 409);
   assert.match(overlap.data.error, /забронирован/);
+  assert.doesNotMatch(overlap.data.error, /Первый банкет/);
+  assert.match(overlap.data.error, /\d{2}:\d{2}/);
   assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Следующий', date: plusHours(date, 4) } })).status, 201);
   const secondHall = await f.request(`/api/restaurants/${restaurant.id}/halls`, { token: admin.token, method: 'POST', body: { name: 'Малый зал', capacity: 10, windows: restaurant.halls[0].windows, allowedSeating: ['choice'] } });
   assert.equal(secondHall.status, 201);
@@ -32,6 +35,15 @@ test('hall bookings reject overlap, allow back-to-back and parallel halls, and e
   const availability = await f.request(`/api/restaurants/${restaurant.id}/availability?date=${day}&hallId=${restaurant.halls[0].id}`, { token: owner.token });
   assert.equal(availability.status, 200);
   assert.equal(availability.data[0].booked.length, 2);
+  const month = day.slice(0, 7);
+  const slots = await f.request(`/api/restaurants/${restaurant.id}/availability/month?month=${month}&hallId=${restaurant.halls[0].id}&durationHours=4`, { token: owner.token });
+  assert.equal(slots.status, 200);
+  assert.ok(!slots.data.days.find(entry => entry.date === day).slots.includes('12:00'));
+  const ownSlots = await f.request(`/api/restaurants/${restaurant.id}/availability/month?month=${month}&hallId=${restaurant.halls[0].id}&durationHours=4&excludeEventId=${first.data.id}`, { token: owner.token });
+  assert.ok(ownSlots.data.days.find(entry => entry.date === day).slots.includes('12:00'));
+  const outsider = await f.login(300);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/availability/month?month=${month}&hallId=${restaurant.halls[0].id}&durationHours=4&excludeEventId=${first.data.id}`, { token: outsider.token })).status, 403);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/availability?date=${day}&hallId=${restaurant.halls[0].id}`, { token: outsider.token })).data[0].booked[0].eventId, undefined);
   assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${restaurant.halls[0].id}`, { token: admin.token, method: 'PATCH', body: { capacity: 5 } })).status, 409);
   const shortWindow = restaurant.halls[0].windows.map(window => ({ ...window, end: '14:00' }));
   assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${restaurant.halls[0].id}`, { token: admin.token, method: 'PATCH', body: { windows: shortWindow } })).status, 409);
@@ -62,7 +74,44 @@ test('a 24/7 hall accepts a banquet across midnight and reports bookings on both
   assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Следом', date: plusHours(date, 4) } })).status, 201);
   const seatingConflict = await f.request(`/api/restaurants/${restaurant.id}/halls/${hall.id}`, { token: admin.token, method: 'PATCH', body: { allowedSeating: [] } });
   assert.equal(seatingConflict.status, 409);
-  assert.match(seatingConflict.data.error, /«Ночной банкет».*выбор места гостями/);
+  assert.match(seatingConflict.data.error, /выбор места гостями/);
+  assert.doesNotMatch(seatingConflict.data.error, /Ночной банкет/);
+});
+
+test('restaurant standard seating is applied to new banquets and free seating needs permission', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const organizer = await f.login(100);
+  const guest = await f.login(200);
+  const restaurant = (await f.request('/api/restaurants', { token: organizer.token })).data[0];
+  const createdHall = await f.request(`/api/restaurants/${restaurant.id}/halls`, { token: admin.token, method: 'POST', body: { name: 'Зал со стандартной схемой', capacity: 20, windows: restaurant.halls[0].windows, allowedSeating: ['fixed'], defaultSeatingTemplate: 'u' } });
+  assert.equal(createdHall.status, 201);
+  const hall = createdHall.data;
+  assert.equal(hall.allowFreeSeating, false);
+  assert.equal(hall.defaultSeatingTemplate, 'u');
+  const body = { title: 'Стандартная рассадка', restaurantId: restaurant.id, hallId: hall.id, date: atNoon(14), deadline: atNoon(10), expectedGuests: 8 };
+  const created = await f.request('/api/events', { token: organizer.token, method: 'POST', body });
+  assert.equal(created.status, 201);
+  const eventId = created.data.id;
+  const detail = (await f.request(`/api/events/${eventId}`, { token: organizer.token })).data;
+  assert.equal(detail.seating.mode, 'fixed');
+  assert.equal(detail.seating.canCustomize, false);
+  assert.deepEqual(detail.seating.layout, validateLayout(generateLayout('u', 8)).layout);
+  assert.equal((await f.request('/api/events', { token: organizer.token, method: 'POST', body: { ...body, title: 'Чужая схема', date: atNoon(15), seating: { mode: 'fixed', template: 'rounds' } } })).status, 403);
+  assert.equal((await f.request(`/api/events/${eventId}/seating`, { token: organizer.token, method: 'PUT', body: { mode: 'choice' } })).status, 403);
+  const invited = await f.request(`/api/events/${eventId}/guests`, { token: organizer.token, method: 'POST', body: { name: 'Гость', phone: '+79990000123' } });
+  assert.equal(invited.status, 201);
+  assert.equal((await f.request(`/api/events/${eventId}/seating/assignments`, { token: organizer.token, method: 'PUT', body: { guest: `invite:${invited.data.id}`, seatId: 't1-1' } })).status, 200);
+  const movable = await f.request('/api/events', { token: organizer.token, method: 'POST', body: { ...body, title: 'Смена зала', hallId: restaurant.halls[0].id, date: atNoon(16), seating: { mode: 'fixed', template: 'rounds' } } });
+  assert.equal(movable.status, 201);
+  const moved = await f.request(`/api/events/${movable.data.id}`, { token: organizer.token, method: 'PATCH', body: { expectedRevision: movable.data.revision, hallId: hall.id } });
+  assert.equal(moved.status, 200);
+  assert.deepEqual((await f.request(`/api/events/${movable.data.id}`, { token: organizer.token })).data.seating.layout, validateLayout(generateLayout('u', 8)).layout);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${hall.id}`, { token: guest.token, method: 'PATCH', body: { defaultSeatingTemplate: 'long' } })).status, 403);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${hall.id}`, { token: admin.token, method: 'PATCH', body: { allowedSeating: ['fixed', 'choice'] } })).status, 200);
+  const unlocked = (await f.request(`/api/events/${eventId}`, { token: organizer.token })).data;
+  assert.equal(unlocked.seating.canCustomize, true);
+  assert.equal((await f.request(`/api/events/${eventId}/seating`, { token: organizer.token, method: 'PUT', body: { mode: 'choice' } })).status, 200);
 });
 
 test('package-only dishes have their own KBJU and snapshots stay stable after editing', async t => {

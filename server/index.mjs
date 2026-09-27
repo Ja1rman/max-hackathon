@@ -176,6 +176,7 @@ export function createApp(options = {}) {
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/halls(?:\/([^/]+))?$/)) && ((req.method === 'POST' && !match[2]) || (req.method === 'PATCH' && match[2]))) return json(store.editHall(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/halls\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteHall(user, match[1], match[2]));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/availability$/)) && req.method === 'GET') return json(store.availability(user, match[1], url.searchParams.get('date'), url.searchParams.get('hallId')));
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/availability\/month$/)) && req.method === 'GET') return json(store.availabilityMonth(user, match[1], url.searchParams.get('month'), url.searchParams.get('hallId'), url.searchParams.get('durationHours'), url.searchParams.get('excludeEventId') || ''));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members$/)) && req.method === 'GET') return json(store.restaurantMembers(user, match[1]));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'PUT') return json(store.setMember(user, match[1], match[2], await readBody(req)));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'DELETE') return json(store.setMember(user, match[1], match[2], { role: 'none' }));
@@ -203,6 +204,7 @@ export function createApp(options = {}) {
       if (path === '/api/users' && req.method === 'GET') return json(store.users(user, url.searchParams.get('q') || ''));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/shared$/)) && req.method === 'PUT') return json(store.saveShared(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/import$/)) && req.method === 'POST') return json(store.importMenu(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/catalog$/)) && req.method === 'PUT') return json(store.saveCatalogMenu(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/seating$/)) && req.method === 'PUT') return json(store.saveSeating(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/seating\/assignments$/)) && req.method === 'PUT') return json(store.assignSeat(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/seating\/auto$/)) && req.method === 'POST') return json(store.autoSeat(user, match[1]));

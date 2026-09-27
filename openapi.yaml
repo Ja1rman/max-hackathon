@@ -1111,6 +1111,35 @@ paths:
               "$ref": "#/components/schemas/MenuImport"
       parameters:
       - "$ref": "#/components/parameters/eventId"
+  "/api/events/{eventId}/menu/catalog":
+    put:
+      operationId: saveEventCatalogSelection
+      summary: Выбрать блюда каталога для меню банкета
+      description: Сохраняет выбранный набор атомарно. Уже заказанные гостями и поставленные на общий стол блюда удалить нельзя. Собственные позиции банкета не затрагиваются.
+      parameters:
+      - "$ref": "#/components/parameters/eventId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { "$ref": "#/components/schemas/CatalogSelection" }
+      responses:
+        '200':
+          description: Выбор сохранён
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [added, removed, count]
+                properties:
+                  added: { type: integer, minimum: 0 }
+                  removed: { type: integer, minimum: 0 }
+                  count: { type: integer, minimum: 0 }
+        '400': { "$ref": "#/components/responses/400" }
+        '401': { "$ref": "#/components/responses/401" }
+        '403': { "$ref": "#/components/responses/403" }
+        '404': { "$ref": "#/components/responses/404" }
+        '409': { "$ref": "#/components/responses/409" }
   "/api/events/{eventId}/seating":
     put:
       operationId: saveSeating
@@ -1466,7 +1495,20 @@ paths:
       - { name: date, in: query, required: true, schema: { type: string, format: date } }
       - { name: hallId, in: query, required: false, schema: { type: string } }
       responses:
-        '200': { description: Список залов с windows и booked; booked содержит eventId, start и end }
+        '200': { description: Список залов с windows и booked; чужие брони содержат только start и end, свои также eventId }
+  "/api/restaurants/{restaurantId}/availability/month":
+    get:
+      operationId: hallAvailabilityMonth
+      summary: Свободные слоты начала банкета на месяц с шагом 30 минут
+      parameters:
+      - { "$ref": "#/components/parameters/restaurantId" }
+      - { name: month, in: query, required: true, schema: { type: string, pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$' } }
+      - { name: hallId, in: query, required: true, schema: { type: string } }
+      - { name: durationHours, in: query, required: true, schema: { type: integer, minimum: 1, maximum: 12 } }
+      - { name: excludeEventId, in: query, required: false, schema: { type: string }, description: Исключить свою бронь при редактировании; доступно только управляющему банкетом }
+      responses:
+        '200': { description: "Объект month, hallId, durationHours, days; каждый день содержит date и массив доступных часов HH:mm по Москве" }
+        '403': { "$ref": "#/components/responses/403" }
   "/api/restaurants/{restaurantId}/package-dishes":
     post:
       operationId: createPackageDish
@@ -1966,7 +2008,7 @@ components:
           type: string
           enum: [admin]
           nullable: true
-          description: Административный доступ к ресторану; все рестораны видны для создания банкета.
+          description: Административный доступ к ресторану; null у гостя или организатора без роли. Каталог всех ресторанов доступен каждому вошедшему только для чтения.
         menu:
           type: array
           items:
@@ -1976,7 +2018,7 @@ components:
           items: { type: object, description: Блюдо только для пакетного предложения с КБЖУ и фото }
         halls:
           type: array
-          items: { type: object, description: Зал, вместимость, окна бронирования и допустимая рассадка }
+          items: { "$ref": "#/components/schemas/Hall" }
         packages:
           type: array
           items:
@@ -1991,6 +2033,17 @@ components:
       - packages
       - packageDishes
       - halls
+    Hall:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        capacity: { type: integer }
+        windows: { type: array, items: { type: object } }
+        allowedSeating: { type: array, items: { type: string, enum: [choice, fixed] } }
+        defaultSeatingTemplate: { type: string, enum: [rounds, u, presidium, t, long] }
+        allowFreeSeating: { type: boolean, readOnly: true, description: Разрешено ли организатору менять схему и включать выбор места гостями. }
+      required: [id, name, capacity, windows, allowedSeating, defaultSeatingTemplate, allowFreeSeating]
     HallInput:
       type: object
       required: [name, capacity, windows, allowedSeating]
@@ -2008,7 +2061,8 @@ components:
               weekday: { type: integer, minimum: 0, maximum: 6, description: Воскресенье = 0 }
               start: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
               end: { type: string, pattern: '^(([01]\d|2[0-3]):[0-5]\d|24:00)$', description: '24:00 означает конец суток. Семь окон 00:00–24:00 задают круглосуточный режим.' }
-        allowedSeating: { type: array, uniqueItems: true, items: { type: string, enum: [choice, fixed] } }
+        allowedSeating: { type: array, uniqueItems: true, items: { type: string, enum: [choice, fixed] }, description: 'fixed — стандартная рассадка; choice разрешает организатору менять схему и отдавать выбор места гостям.' }
+        defaultSeatingTemplate: { type: string, enum: [rounds, u, presidium, t, long], default: rounds, description: Стандартная схема зала для новых банкетов. }
     PackageDishInput:
       type: object
       required: [name, category, nutrition]
@@ -2252,9 +2306,9 @@ components:
         seating:
           type: object
           properties:
-            mode: { type: string, enum: [off, choice, fixed], default: off }
-            template: { type: string, enum: [rounds, u, presidium, t, long, empty], default: rounds }
-          description: Режим и схема сохраняются вместе с банкетом в одной транзакции.
+            mode: { type: string, enum: [off, choice, fixed] }
+            template: { type: string, enum: [rounds, u, presidium, t, long, empty] }
+          description: Без объекта используется стандартная схема зала и fixed, если он разрешён. Организатор может переопределить схему, только когда зал разрешает choice.
         date:
           type: string
           format: date-time
@@ -2746,6 +2800,13 @@ components:
           description: Имена гостей на занятых местах, seatId → имя; видны всем участникам.
           additionalProperties:
             type: string
+        canCustomize:
+          type: boolean
+          description: Только организатору и администратору; может ли текущий пользователь менять режим и схему.
+        allowedModes:
+          type: array
+          description: Только организатору и администратору; варианты рассадки зала.
+          items: { type: string, enum: [choice, fixed] }
         people:
           type: array
           description: Только владелец и ресторан.
@@ -2847,6 +2908,15 @@ components:
           type: array
           minItems: 1
           maxItems: 500
+          items: { type: string }
+    CatalogSelection:
+      type: object
+      required: [itemIds]
+      properties:
+        itemIds:
+          type: array
+          maxItems: 500
+          uniqueItems: true
           items: { type: string }
     MenuImported:
       type: object

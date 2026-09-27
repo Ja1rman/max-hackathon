@@ -19,8 +19,12 @@ test('banquet organizers have full rights only for assigned events; access list 
   const restaurants = (await f.request('/api/restaurants', { token: owner.token })).data;
   const first = restaurants[0];
   assert.ok(restaurants.length >= 2);
+  const guestRestaurants = (await f.request('/api/restaurants', { token: outsider.token })).data;
+  assert.deepEqual(guestRestaurants.map(restaurant => restaurant.id), restaurants.map(restaurant => restaurant.id));
+  assert.ok(guestRestaurants.every(restaurant => restaurant.access === null));
   assert.equal(first.access, null);
   assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: owner.token, method: 'POST', body: {} })).status, 403);
+  assert.equal((await f.request(`/api/restaurants/${first.id}/menu`, { token: outsider.token, method: 'POST', body: {} })).status, 403);
   const created = await f.request('/api/events', { token: owner.token, method: 'POST', body: banquet(first.id) });
   assert.equal(created.status, 201);
   const event = created.data;
@@ -83,6 +87,27 @@ test('only a restaurant administrator may delete an approved banquet', async t =
   assert.equal(denied.status, 403);
   assert.match(denied.data.error, /После утверждения.*администратор ресторана/);
   assert.equal((await f.request(`/api/events/${created.data.id}`, { token: restaurantAdmin.token, method: 'DELETE' })).status, 200);
+});
+
+test('catalog selector can keep, remove and restore dishes atomically', async t => {
+  const f = await fixture(t);
+  const owner = await f.login(100);
+  const event = await f.event(owner.token);
+  const itemIds = event.menu.map(item => item.id);
+  const path = `/api/events/${event.id}/menu/catalog`;
+  assert.equal((await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds } })).status, 200);
+  const reduced = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds: itemIds.slice(1) } });
+  assert.equal(reduced.status, 200);
+  assert.equal(reduced.data.removed, 1);
+  assert.ok(!(await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.some(item => item.id === itemIds[0]));
+  const restored = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.data.added, 1);
+  assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: owner.token, method: 'PUT', body: { items: [{ menuItemId: itemIds[0], quantity: 1 }] } })).status, 200);
+  const blocked = await f.request(path, { token: owner.token, method: 'PUT', body: { itemIds: itemIds.slice(1) } });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.data.error, /уже выбрали гости/);
+  assert.ok((await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.some(item => item.id === itemIds[0]));
 });
 
 test('kitchen board exports CSV and a valid XLSX workbook, also through a one-use link', async t => {

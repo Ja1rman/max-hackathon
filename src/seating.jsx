@@ -217,6 +217,7 @@ export function SeatPicker({ detail, busy, canSelect, choose }) {
 export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   const seating = detail.seating;
   const active = detail.event.status === "collecting";
+  const editable = active && seating.canCustomize !== false;
   const serverKey = JSON.stringify([seating.mode, seating.layout]);
   const [mode, setMode] = useState(seating.mode);
   const [layout, setLayout] = useState(seating.layout);
@@ -252,7 +253,7 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
   const saved = !dirty;
   const nudge = (dx, dy) => updateTable(table.id, { x: table.x + dx, y: table.y + dy });
   const select = id => { setSelected(id); if (!id) setPlacing(false); };
-  const toolbar = table && active ? (
+  const toolbar = table && editable ? (
     <div className="map-toolbar" onPointerDown={event => event.stopPropagation()}>
       <strong>{tableTitle(table)}</strong>
       <div className="map-toolbar-row">
@@ -279,17 +280,17 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
         <div className="section-head">
           <div>
             <h2>Рассадка</h2>
-            <p className="muted">Можно собирать только блюда, а можно добавить схему зала и места.</p>
+            <p className="muted">{seating.canCustomize === false ? 'Ресторан закрепил стандартную схему зала. Вы можете назначать гостям места.' : 'Выберите рассадку и при необходимости настройте схему зала.'}</p>
           </div>
         </div>
         <div className="mode-switch" role="radiogroup" aria-label="Режим рассадки">
           {Object.entries(SEATING_MODE_NAMES).map(([key, label]) => (
-            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!active} onClick={() => { setMode(key); setDirty(true); }}>
+            <button key={key} type="button" role="radio" aria-checked={mode === key} className={mode === key ? "active" : ""} disabled={!editable || (key !== 'off' && seating.allowedModes && !seating.allowedModes.includes(key))} onClick={() => { setMode(key); setDirty(true); }}>
               {label}
             </button>
           ))}
         </div>
-        {mode !== "off" && active && (
+        {mode !== "off" && editable && (
           <div className="template-row">
             <label>
               Шаблон
@@ -304,8 +305,8 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
             <button type="button" className="btn secondary" onClick={applyTemplate}><Wand2 size={16} /> Сгенерировать</button>
           </div>
         )}
-        {mode !== "off" && active && <p className="muted template-hint">{SEATING_TEMPLATES.find(entry => entry.id === template)?.hint}</p>}
-        {(dirty || mode !== seating.mode) && active && (
+        {mode !== "off" && editable && <p className="muted template-hint">{SEATING_TEMPLATES.find(entry => entry.id === template)?.hint}</p>}
+        {(dirty || mode !== seating.mode) && editable && (
           <div className="seating-save">
             <span>Есть несохранённые изменения</span>
             <button type="button" className="btn secondary" disabled={busy} onClick={() => { setMode(seating.mode); setLayout(seating.layout); setDirty(false); }}>Отменить</button>
@@ -318,9 +319,9 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
           <div className="section-head">
             <div>
               <h2>Схема зала</h2>
-              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}. Нажмите на стол, чтобы выбрать его: затем двигайте пальцем, стрелками или кнопкой «Сюда».</p>
+              <p className="muted">{layout.tables.length} столов · {seats.length} мест · занято {occupied.size}.{editable ? ' Нажмите на стол, чтобы выбрать его: затем двигайте пальцем, стрелками или кнопкой «Сюда».' : ' Стандартная схема ресторана доступна для просмотра.'}</p>
             </div>
-            {active && (
+            {editable && (
               <div className="admin-actions seating-tools">
                 <button type="button" onClick={() => addTable("round")}><Circle size={15} /> Круглый</button>
                 <button type="button" onClick={() => addTable("rect")}><RectangleHorizontal size={15} /> Прямоугольный</button>
@@ -332,11 +333,11 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
               layout={layout}
               occupied={occupied}
               names={names}
-              editable={active}
+              editable={editable}
               selectedTable={selected}
-              onSelectTable={select}
-              onMoveTable={(id, x, y) => updateTable(id, { x, y })}
-              onEmptyTap={active ? point => {
+              onSelectTable={editable ? select : undefined}
+              onMoveTable={editable ? (id, x, y) => updateTable(id, { x, y }) : undefined}
+              onEmptyTap={editable ? point => {
                 if (placing && table) {
                   const snap = value => Math.round(value / 10) * 10;
                   updateTable(table.id, { x: snap(point.x - table.w / 2), y: snap(point.y - table.h / 2) });
@@ -348,7 +349,7 @@ export function SeatingAdmin({ detail, busy, save, assign, autoSeat, notify }) {
           ) : (
             <p className="muted">Выберите шаблон или добавьте столы вручную.</p>
           )}
-          {table && active && (
+          {table && editable && (
             <div className="table-editor">
               <label>
                 Название
