@@ -184,7 +184,6 @@ function RussianDateTimeInput({ name, value, defaultValue, onChange, ...props })
     autoComplete="off"
     maxLength={16}
     placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
-    aria-label={props['aria-label'] || 'Дата и время: ДД.ММ.ГГГГ ЧЧ:ММ'}
     value={display}
     onChange={event => {
       const next = event.target.value;
