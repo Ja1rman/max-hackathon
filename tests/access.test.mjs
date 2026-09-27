@@ -66,7 +66,7 @@ test('global administrator delegates restaurant roles by MAX ID; a signed invite
   const first = (await f.request('/api/restaurants', { token: root.token })).data[0];
   const second = (await f.request('/api/restaurants', { token: root.token, method: 'POST', body: { name: 'Другой ресторан' } })).data;
   assert.equal(root.user.role, 'admin');
-  assert.equal(root.user.access.length, 1);
+  assert.ok(root.user.access.length >= 1);
   assert.equal((await f.request(`/api/restaurants/${first.id}/members/200`, { token: root.token, method: 'PUT', body: { role: 'admin' } })).status, 200);
   assert.equal((await f.request(`/api/restaurants/${first.id}/members`, { token: root.token })).data[0].maxId, '200');
   const scoped = await f.login(200);
@@ -125,6 +125,9 @@ test('kitchen board exports CSV and a valid XLSX workbook, also through a one-us
   const sheet = execFileSync('unzip', ['-p', join(directory, 'k.xlsx'), 'xl/worksheets/sheet2.xml'], { encoding: 'utf8' });
   assert.match(sheet, /=Гость/, 'xlsx keeps text cells as text, formulas are not created');
   assert.match(sheet, /Без лука/);
+  const workbook = execFileSync('unzip', ['-p', join(directory, 'k.xlsx'), 'xl/workbook.xml'], { encoding: 'utf8' });
+  assert.match(workbook, /name="Рассадка"/);
+  assert.match(workbook, /name="Пакеты"/);
 });
 
 test('v8 migration turns the old organizer list and banquet owners into restaurant access', async t => {
@@ -141,9 +144,9 @@ test('v8 migration turns the old organizer list and banquet owners into restaura
   store.close();
   const migrated = new Store(config);
   t.after(() => migrated.close());
-  assert.deepEqual(migrated.db.prepare('SELECT user_id,role FROM restaurant_members ORDER BY user_id').all().map(row => ({ ...row })), [{ user_id: 'max_1', role: 'organizer' }, { user_id: 'max_2', role: 'organizer' }]);
+  assert.deepEqual(migrated.db.prepare('SELECT user_id,role FROM restaurant_members WHERE restaurant_id=? ORDER BY user_id').all(restaurant).map(row => ({ ...row })), [{ user_id: 'max_1', role: 'organizer' }, { user_id: 'max_2', role: 'organizer' }]);
   assert.equal(migrated.db.prepare("SELECT 1 FROM sqlite_master WHERE name='organizers'").get(), undefined);
-  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 9);
+  assert.equal(new DatabaseSync(config.databasePath).prepare('PRAGMA user_version').get().user_version, 10);
 });
 
 test('a live organizer orders and picks a seat at their own banquet without being on the guest list', async t => {

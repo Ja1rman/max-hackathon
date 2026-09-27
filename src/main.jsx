@@ -247,11 +247,14 @@ function App() {
     [detail, setDetail] = useState(null),
     [tab, setTab] = useState("guests"),
     [board, setBoard] = useState(null),
+    [kitchenSelection, setKitchenSelection] = useState([]),
+    [catalogRestaurant, setCatalogRestaurant] = useState(null),
     [profileOpen, setProfileOpen] = useState(false),
     [restaurantForm, setRestaurantForm] = useState(null);
   const [createOpen, setCreateOpen] = useState(false),
     [approveOpen, setApproveOpen] = useState(false),
     [editItem, setEditItem] = useState(null),
+    [editPackage, setEditPackage] = useState(null),
     [filter, setFilter] = useState("all"),
     [helpOpen, setHelpOpen] = useState(false);
   const startParam =
@@ -395,6 +398,7 @@ function App() {
   const go = (next) => {
     setScreen(next);
     setSelected(null);
+    setCatalogRestaurant(null);
     setProfileOpen(false);
   };
   const toggleNotifications = () => perform(async () => {
@@ -403,14 +407,15 @@ function App() {
     notify(updated.notificationsEnabled ? (updated.botConnected ? 'Уведомления включены' : 'Уведомления включены. Откройте чат с ботом и нажмите «Начать».') : 'Уведомления выключены');
   });
   const openBot = () => config?.botUsername && openExternal(`https://max.ru/${config.botUsername}`);
-  const exportKitchen = (format) => perform(async () => {
+  const exportKitchen = (format, eventIds) => perform(async () => {
+    if (!eventIds?.length) throw new Error('Выберите хотя бы одно мероприятие для выгрузки.');
     if (window.WebApp?.initData && window.WebApp?.downloadFile) {
-      const { url } = await api('/kitchen/export-link', { method: 'POST', body: { format } });
+      const { url } = await api('/kitchen/export-link', { method: 'POST', body: { format, eventIds } });
       await window.WebApp.downloadFile(url, `kitchen.${format}`);
       notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
       return;
     }
-    await saveDownload(await fetch(`${BASE}/api/kitchen/export?format=${format}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
+    await saveDownload(await fetch(`${BASE}/api/kitchen/export?format=${format}&eventIds=${encodeURIComponent(eventIds.join(','))}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
     notify('Файл скачан. Проверьте папку «Загрузки» браузера.');
   });
   const loadDetail = useCallback(async (id) => {
@@ -840,6 +845,11 @@ function App() {
                   notify("Доступ обновлён");
                   return true;
                 })}
+                setGlobal={(userId, enabled) => perform(async () => {
+                  await api(`/admins/${userId}`, { method: 'PUT', body: { enabled } });
+                  notify(enabled ? 'Администратор назначен' : 'Роль администратора снята');
+                  return true;
+                })}
                 onError={setError}
               />
             </>
@@ -849,31 +859,31 @@ function App() {
                 <div className="eyebrow">ВСЁ ДЛЯ ПОДГОТОВКИ</div>
                 <h1>Кухня</h1>
                 <p>Порции по каждому запланированному банкету, общий стол, пожелания и места гостей.</p>
-                <div className="heading-downloads">
-                  <Button variant="secondary" disabled={busy || !board?.length} onClick={() => exportKitchen("xlsx")}><FileSpreadsheet size={16} /> Скачать Excel</Button>
-                  <Button variant="secondary" disabled={busy || !board?.length} onClick={() => exportKitchen("csv")}><Download size={16} /> CSV</Button>
-                </div>
               </div>
-              <KitchenBoard board={board} open={(id) => { openEvent(id); setTab("kitchen"); }} />
+              {kitchenSelection.length > 0 && <div className="panel kitchen-selection"><strong>Выбрано мероприятий: {kitchenSelection.length}</strong><div className="admin-actions"><Button variant="secondary" disabled={busy} onClick={() => exportKitchen('xlsx', kitchenSelection)}><FileSpreadsheet size={16} /> Общий Excel</Button><Button variant="secondary" disabled={busy} onClick={() => exportKitchen('csv', kitchenSelection)}><Download size={16} /> Общий CSV</Button><button type="button" onClick={() => setKitchenSelection([])}>Снять выбор</button></div></div>}
+              <KitchenBoard board={board} selected={kitchenSelection} setSelected={setKitchenSelection} exportOne={exportKitchen} open={(id) => { openEvent(id); setTab("kitchen"); }} />
             </>
           ) : screen === "catalog" ? (
             <>
               <div className="page-heading">
                 <div className="eyebrow">ПОДОБРАНО СО ВКУСОМ</div>
-                <h1>
-                  {isAdminRole ? "Меню ресторана" : "Меню ресторанов"}
-                </h1>
+                <h1>{catalogRestaurant ? restaurants.find(r => r.id === catalogRestaurant)?.name || 'Меню' : 'Рестораны'}</h1>
                 <p>
-                  {isAdminRole
-                    ? "Изменения меню будут доступны в новых банкетах."
-                    : "Выберите ресторан при создании банкета. Цены сохранятся для вашего события."}
+                  {catalogRestaurant ? 'Меню и пакетные предложения ресторана. Изменения доступны для новых банкетов.' : 'Выберите ресторан, чтобы посмотреть и настроить его меню.'}
                 </p>
-                {session.superAdmin && (
+                {catalogRestaurant && <button className="back-link" type="button" onClick={() => setCatalogRestaurant(null)}><ArrowLeft size={16} /> Все рестораны</button>}
+                {session.superAdmin && !catalogRestaurant && (
                   <Button variant="secondary" onClick={() => setRestaurantForm({})}><Store size={16} /> Добавить ресторан</Button>
                 )}
               </div>
               {!restaurants.length && <Empty title="Нет доступных ресторанов">Попросите администратора ресторана выдать вам доступ.</Empty>}
-              {restaurants.map((r) => (
+              {!catalogRestaurant && <div className="restaurant-choice-grid">{restaurants.map(r => <button className="restaurant-choice panel" type="button" key={r.id} onClick={() => setCatalogRestaurant(r.id)}>
+                <span className="restaurant-choice-icon"><Store size={25} /></span>
+                <strong>{r.name}</strong>
+                <small>{r.address || r.description}</small>
+                <span>{r.menu?.length || 0} позиций · {r.packages?.length || 0} пакетов <ArrowUpRight size={16} /></span>
+              </button>)}</div>}
+              {restaurants.filter(r => r.id === catalogRestaurant).map((r) => (
                 <section key={r.id}>
                   <div className="section-head">
                     <div>
@@ -901,8 +911,8 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <div className="menu-grid catalog">
-                    {r.menu?.map((item) => (
+                  {[...new Set((r.menu || []).map(item => item.category))].map((category, index) => <details className="menu-category" key={category} open={index === 0}><summary>{category} <span>{r.menu.filter(item => item.category === category).length}</span></summary><div className="menu-grid catalog">
+                    {r.menu?.filter(item => item.category === category).map((item) => (
                       <DishCard
                         key={item.id}
                         item={item}
@@ -912,8 +922,12 @@ function App() {
                         }
                       />
                     ))}
-                    {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
+                  </div></details>)}
+                  {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
+                  <div className="section-head package-section-head"><div><h2>Пакетные предложения</h2><p className="muted">Фиксированная цена на гостя. Состав сохраняется в банкет при выборе пакета.</p></div>
+                    {r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackage({ restaurantId: r.id, name: '', price: 0, items: [] })}><Plus size={16} /> Добавить пакет</Button>}
                   </div>
+                  <div className="package-grid">{r.packages?.map(offer => <div className="panel package-card" key={offer.id}><strong>{offer.name}</strong><span>{money(offer.price)} / гость</span><small>{offer.items.length} позиций · {offer.items.reduce((sum, item) => sum + item.grams, 0)} г</small><p>{offer.description}</p>{r.access === 'admin' && <button type="button" onClick={() => setEditPackage({ ...offer, restaurantId: r.id })}>Редактировать</button>}</div>)}</div>
                 </section>
               ))}
             </>
@@ -971,9 +985,9 @@ function App() {
                   <div className="stats-row">
                     <Stat
                       icon={Users}
-                      label="Выбрали блюда"
-                      value={`${detail.event.responded} из ${detail.event.expectedGuests}`}
-                      detail="гостей за вашим столом"
+                      label={detail.event.selectionMode === 'package' ? 'Готовых пакетов' : 'Выбрали блюда'}
+                      value={detail.event.selectionMode === 'package' ? detail.event.expectedGuests : `${detail.event.responded} из ${detail.event.expectedGuests}`}
+                      detail={detail.event.selectionMode === 'package' ? 'по числу гостей' : 'гостей за вашим столом'}
                     />
                     {canManage ? (
                       <Stat
@@ -983,15 +997,15 @@ function App() {
                         detail={
                           detail.event.foodBudget || detail.event.drinkBudget
                             ? `На гостя: еда ${money(detail.event.foodBudget)}, напитки ${money(detail.event.drinkBudget)}`
-                            : "По выбору гостей"
+                            : detail.event.selectionMode === 'package' ? 'Фиксированная цена на гостя' : "По выбору гостей"
                         }
                       />
                     ) : (
                       <Stat
                         icon={Wallet}
-                        label="Ваш бюджет"
-                        value={detail.event.foodBudget ? units(detail.event.foodBudget, "pie") : "Без ограничений"}
-                        detail={detail.event.drinkBudget ? `и ${units(detail.event.drinkBudget, "bottle")} на напитки` : "Напитки без ограничения"}
+                        label={detail.event.selectionMode === 'package' ? 'Пакет на гостя' : 'Ваш бюджет'}
+                        value={detail.event.selectionMode === 'package' ? money(detail.event.package?.price) : detail.event.foodBudget ? units(detail.event.foodBudget, "pie") : "Без ограничений"}
+                        detail={detail.event.selectionMode === 'package' ? 'Блюда выбраны организатором' : detail.event.drinkBudget ? `и ${units(detail.event.drinkBudget, "bottle")} на напитки` : "Напитки без ограничения"}
                       />
                     )}
                     <Stat
@@ -1036,6 +1050,7 @@ function App() {
                         Мой выбор
                       </button>
                     )}
+                    {canManage && <button className={displayTab === 'eventMenu' ? 'active' : ''} onClick={() => setTab('eventMenu')}>Меню банкета</button>}
                     {!canManage && seatingOn && (
                       <button
                         className={displayTab === "seat" ? "active" : ""}
@@ -1064,7 +1079,7 @@ function App() {
                     )}
                   </div>
                   {displayTab === "menu" ? (
-                    <GuestMenu
+                    detail.event.selectionMode === 'package' ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} /> : <GuestMenu
                       key={selected}
                       detail={detail}
                       busy={busy}
@@ -1111,78 +1126,21 @@ function App() {
                     />
                   ) : displayTab === "guests" ? (
                     <div className="detail-columns">
-                      <section className="panel">
-                        <div className="section-head">
-                          <h2>Каждому — по вкусу</h2>
-                          <span className="muted">
-                            {detail.event.responded} ответили
-                          </span>
-                        </div>
-                        {detail.guests?.length ? (
-                          <div className="guest-list">
-                            {detail.guests.map((g, i) => (
-                              <div className="guest-row" key={g.id}>
-                                <div className={`avatar color-${i % 4}`}>
-                                  {g.name
-                                    ?.split(" ")
-                                    .map((v) => v[0])
-                                    .slice(0, 2)
-                                    .join("")}
-                                </div>
-                                <div className="guest-info">
-                                  <strong>{g.name}</strong>
-                                  {g.seat && <span className="guest-seat">{g.seat}</span>}
-                                  <small>
-                                    {g.submitted
-                                      ? g.items
-                                          ?.map(
-                                            (v) =>
-                                              `${detail.menu.find((m) => m.id === v.menuItemId)?.name || "Блюдо"}${v.quantity > 1 ? " × " + v.quantity : ""}`,
-                                          )
-                                          .join(", ")
-                                      : "Пока выбирает блюда"}
-                                  </small>
-                                  {g.notes && (
-                                    <span className="guest-note">
-                                      {g.notes}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="guest-result">
-                                  <strong>
-                                    {g.submitted ? money(g.total) : "—"}
-                                  </strong>
-                                  <small className={g.submitted ? "green" : ""}>
-                                    {g.submitted ? (
-                                      <>
-                                        <Check size={12} /> Выбор сохранён
-                                      </>
-                                    ) : (
-                                      "Ждём ответа"
-                                    )}
-                                  </small>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <Empty title="Пока никого за столом">
-                            Отправьте гостям ссылку на ваш банкет.
-                          </Empty>
-                        )}
-                      </section>
+                      <EventAdmin section="guests" detail={detail} busy={busy}
+                        addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
+                        editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
+                        deleteGuest={id => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'DELETE' }), 'Гость удалён')} />
                       <aside className="order-card">
                         <div className="order-icon">
                           <Utensils size={23} />
                         </div>
-                        <h2>Вечер складывается</h2>
+                        <h2>{detail.event.selectionMode === 'package' ? 'Пакетный заказ' : 'Вечер складывается'}</h2>
                         <p>
-                          Все предпочтения — в одном заказе. Вам остаётся
-                          проверить и утвердить.
+                          {detail.event.selectionMode === 'package' ? `${detail.event.package?.name} · ${money(detail.event.package?.price)} на гостя. Проверьте количество гостей и утвердите.` : 'Все предпочтения — в одном заказе. Вам остаётся проверить и утвердить.'}
                         </p>
                         <div className="order-line">
-                          <span>Выбрали блюда</span>
-                          <strong>{detail.event.responded} гостей</strong>
+                          <span>{detail.event.selectionMode === 'package' ? 'Пакетов' : 'Выбрали блюда'}</span>
+                          <strong>{detail.event.selectionMode === 'package' ? detail.event.expectedGuests : `${detail.event.responded} гостей`}</strong>
                         </div>
                         <div className="order-line total">
                           <span>Итого</span>
@@ -1204,7 +1162,7 @@ function App() {
                         {detail.event.isOwner &&
                           detail.event.status !== "approved" && (
                             <Button
-                              disabled={busy || !detail.event.responded}
+                              disabled={busy || (detail.event.selectionMode !== 'package' && !detail.event.responded)}
                               onClick={() =>
                                 setApproveOpen({
                                   revision: detail.event.revision,
@@ -1228,8 +1186,9 @@ function App() {
                         </small>
                       </aside>
                     </div>
-                  ) : displayTab === 'admin' ? (
+                  ) : displayTab === 'admin' || displayTab === 'eventMenu' ? (
                     <EventAdmin
+                      section={displayTab === 'admin' ? 'settings' : 'menu'}
                       detail={detail}
                       catalog={restaurants.find((r) => r.id === detail.event.restaurantId)}
                       busy={busy}
@@ -1335,7 +1294,7 @@ function App() {
                         : "Гости выбирают любимое. Вы держите всё под контролем."}
                   </p>
                 </div>
-                {role === "organizer" && !guestFirst && (
+                {role !== "guest" && !guestFirst && (
                   <Button onClick={() => setCreateOpen(true)}>
                     <Plus size={18} />
                     Создать банкет
@@ -1432,10 +1391,10 @@ function App() {
                         <div>
                           <span>
                             <Users size={14} />
-                            {event.responded} из {event.expectedGuests} выбрали
+                            {event.selectionMode === 'package' ? `${event.expectedGuests} фиксированных пакетов` : `${event.responded} из ${event.expectedGuests} выбрали`}
                           </span>
                           <strong>
-                            {Math.min(
+                            {event.selectionMode === 'package' ? 100 : Math.min(
                               100,
                               Math.round(
                                 (event.responded / event.expectedGuests) * 100,
@@ -1447,7 +1406,7 @@ function App() {
                         <div className="progress-track">
                           <span
                             style={{
-                              width: `${Math.min(100, (event.responded / event.expectedGuests) * 100)}%`,
+                              width: `${event.selectionMode === 'package' ? 100 : Math.min(100, (event.responded / event.expectedGuests) * 100)}%`,
                             }}
                           />
                         </div>
@@ -1459,7 +1418,7 @@ function App() {
                           </span>
                         ) : (
                           <span>
-                            Ваш бюджет<strong>{event.foodBudget || event.drinkBudget ? `${units(event.foodBudget, "pie")} · ${units(event.drinkBudget, "bottle")}` : "Без ограничений"}</strong>
+                            {event.selectionMode === 'package' ? 'Пакет на гостя' : 'Ваш бюджет'}<strong>{event.selectionMode === 'package' ? money(event.package?.price) : event.foodBudget || event.drinkBudget ? `${units(event.foodBudget, "pie")} · ${units(event.drinkBudget, "bottle")}` : "Без ограничений"}</strong>
                           </span>
                         )}
                         <span className="round-arrow">
@@ -1575,11 +1534,11 @@ function App() {
       {approveOpen && (
         <Modal title="Утвердить заказ?" onClose={() => setApproveOpen(false)}>
           <p>
-            В заказе — выбор {approveOpen.responded} гостей на{" "}
+            В заказе — {detail.event.selectionMode === 'package' ? `${detail.event.expectedGuests} фиксированных пакетов` : `выбор ${approveOpen.responded} гостей`} на{" "}
             <strong>{money(approveOpen.total)}</strong>. После утверждения
             изменить блюда будет нельзя.
           </p>
-          {detail.event.responded < detail.event.expectedGuests && (
+          {detail.event.selectionMode !== 'package' && detail.event.responded < detail.event.expectedGuests && (
             <div className="alert">
               Ещё{" "}
               {Math.max(
@@ -1640,6 +1599,13 @@ function App() {
           }
         />
       )}
+      {editPackage && <EditPackage offer={editPackage} busy={busy} onClose={() => setEditPackage(null)} submit={values => perform(async () => {
+        await api(`/restaurants/${editPackage.restaurantId}/packages${editPackage.id ? '/' + editPackage.id : ''}`, { method: editPackage.id ? 'PATCH' : 'POST', body: values });
+        await refresh(); setEditPackage(null); notify('Пакет сохранён');
+      })} remove={editPackage.id ? () => perform(async () => {
+        await api(`/restaurants/${editPackage.restaurantId}/packages/${editPackage.id}`, { method: 'DELETE' });
+        await refresh(); setEditPackage(null); notify('Пакет удалён');
+      }) : null} />}
       {profileOpen && (
         <Modal title="Профиль" onClose={() => setProfileOpen(false)}>
           <div className="profile-card">
@@ -1853,6 +1819,14 @@ function BudgetMeter({ foodBudget, drinkBudget, spent, guestView }) {
     </div>
   );
 }
+function PackageView({ offer, guests }) {
+  if (!offer) return <Empty title="Пакет ещё не выбран">Организатор уточняет состав заказа.</Empty>;
+  const categories = [...new Set(offer.items.map(item => item.category))];
+  return <section className="panel package-view"><div className="section-head"><div><h2>{offer.name}</h2><p className="muted">Фиксированный пакет · {money(offer.price)} на гостя · {guests} гостей</p></div></div>
+    <p className="package-notice">Организатор выбрал единый пакет для банкета. Вам не нужно выбирать блюда; ниже можно посмотреть его состав.</p>
+    {categories.map(category => <div className="package-category" key={category}><h3>{category}</h3>{offer.items.filter(item => item.category === category).map((item, index) => <div className="package-item" key={`${category}-${index}`}><span>{item.name}</span><strong>{item.grams} г</strong></div>)}</div>)}
+  </section>;
+}
 function GuestMenu({ detail, busy, save, canSelect, guestView }) {
   const selection = detail.selection;
   const [items, setItems] = useState(() =>
@@ -2038,9 +2012,11 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
     </>
   );
 }
-function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
+function EventAdmin({ section, detail, catalog, busy, saveEvent, uploadPhoto, addGuest, editGuest, deleteGuest, editDish, deleteDish, setForGuests, saveShared, importItems }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
+  const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
+  const [packageDraft, setPackageDraft] = useState(detail.event.package?.id || '');
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(null);
   const serverShared = JSON.stringify(detail.shared || []);
@@ -2048,16 +2024,24 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
   const [shared, setShared] = useState(toDraft);
   const [sharedDirty, setSharedDirty] = useState(false);
   useEffect(() => { if (!sharedDirty) setShared(toDraft()); }, [serverShared]);
+  useEffect(() => { setModeDraft(detail.event.selectionMode || 'individual'); }, [detail.event.selectionMode]);
+  useEffect(() => { setPackageDraft(detail.event.package?.id || ''); }, [detail.event.package?.id]);
   const active = detail.event.status === 'collecting';
+  const packages = [...(catalog?.packages || [])];
+  if (detail.event.package && !packages.some(offer => offer.id === detail.event.package.id)) packages.push(detail.event.package);
+  const selectedOffer = packages.find(offer => offer.id === packageDraft) || packages[0];
+  const hotChoices = selectedOffer?.items.find(item => item.category === 'Горячее на выбор')?.name.split('/').map(value => value.trim()) || [];
   const inMenu = new Set(detail.menu.map(item => item.id));
   const missing = (catalog?.menu || []).filter(item => item.available && !inMenu.has(item.id));
+  const invited = detail.invitedGuests || [];
+  const unlistedGuests = detail.guests.filter(guest => !invited.some(entry => entry.userId === guest.id));
   const orderedIds = new Set(detail.guests.flatMap(guest => guest.items.map(item => item.menuItemId)));
   const sharedTotal = detail.menu.reduce((sum, item) => sum + item.price * (shared[item.id] || 0), 0);
   const setSharedQty = (id, quantity) => { setShared(value => ({ ...value, [id]: quantity })); setSharedDirty(true); };
   return (
     <div className="admin-layout">
       {!active && <div className="alert">Заказ утверждён: параметры, гости и меню больше не меняются.</div>}
-      <section className="panel admin-panel">
+      {section === 'settings' && <section className="panel admin-panel">
         <div className="section-head"><div><h2>Параметры банкета</h2><p className="muted">Дата, срок выбора, число гостей и бюджет на одного гостя.</p></div></div>
         <form onSubmit={async event => {
           event.preventDefault();
@@ -2069,24 +2053,43 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
             if (!uploaded) return;
             photoUrl = uploaded.photoUrl;
           }
-          saveEvent({ title: form.get('title'), photoUrl, date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100) });
+          const nextMode = form.get('selectionMode');
+          const nextPackage = form.get('packageId');
+          const nextChoice = form.get('packageChoice');
+          const currentHot = detail.event.package?.items.find(item => item.category === 'Горячее')?.name;
+          const changePackage = nextMode === 'package' && (nextPackage !== detail.event.package?.id || (nextChoice && nextChoice !== currentHot));
+          saveEvent({ title: form.get('title'), photoUrl, date: new Date(form.get('date')).toISOString(), deadline: new Date(form.get('deadline')).toISOString(), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} /></label>
-          {detail.event.photoUrl && <label className="inline-check"><input type="checkbox" name="removePhoto" disabled={!active} /> Убрать текущее фото</label>}
+          {detail.event.photoUrl && <label className="remove-photo-check"><input type="checkbox" name="removePhoto" disabled={!active} /><span>Убрать текущее фото</span></label>}
+          <label>Формат заказа<select name="selectionMode" defaultValue={detail.event.selectionMode || 'individual'} disabled={!active} onChange={event => setModeDraft(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
+          {modeDraft === 'package' && <label>Пакетное предложение<select name="packageId" value={selectedOffer?.id || ''} onChange={event => setPackageDraft(event.target.value)} disabled={!active}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)}{catalog?.packages?.some(item => item.id === offer.id) ? '' : ' · сохранён в банкете'}</option>)}</select></label>}
+          {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.includes(detail.event.package?.items.find(item => item.category === 'Горячее')?.name) ? detail.event.package.items.find(item => item.category === 'Горячее').name : hotChoices[0]} disabled={!active}>{hotChoices.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select></label>}
           <div className="form-grid">
             <label>Дата мероприятия<input type="datetime-local" name="date" required defaultValue={localDateTime(detail.event.date)} disabled={!active} /></label>
             <label>Выбор блюд до<input type="datetime-local" name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
-            <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>
-            <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>
+            {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
+            {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
           </div>
-          <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>
+          {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
           {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
         </form>
-      </section>
-      <section className="panel admin-panel">
-        <div className="section-head"><div><h2>Приглашённые гости</h2><p className="muted">Гость подтвердит свой номер в MAX и сможет выбрать блюда только за себя.</p></div><span>{detail.invitedGuests?.length || 0} из {detail.event.expectedGuests}</span></div>
+      </section>}
+      {section === 'guests' && <section className="panel admin-panel">
+        <div className="section-head"><div><h2>Приглашённые гости</h2><p className="muted">Гость подтвердит свой номер в MAX; статус и место видны ниже.</p></div><span>{detail.invitedGuests?.length || 0} из {detail.event.expectedGuests}</span></div>
+        <div className="admin-guest-list">
+          {invited.length ? invited.map(guest => {
+            const person = detail.guests.find(entry => entry.id === guest.userId);
+            const seat = person?.seat || detail.seating?.people?.find(entry => entry.key === `invite:${guest.id}`)?.seatId;
+            return <div className="admin-guest" key={guest.id}>
+            <div><strong>{guest.name}</strong><small>+{guest.phone} · MAX ID: {guest.maxId || 'не привязан'}</small><small>{detail.seating?.mode === 'off' ? 'Рассадка не включена' : seat || 'Место не назначено'} · {detail.event.selectionMode === 'package' ? (guest.joined ? 'Присоединился' : 'Ожидает входа') : guest.submitted ? 'Выбор сохранён' : guest.joined ? 'Выбирает блюда' : 'Ожидает входа'}</small>{person?.submitted && <small>{person.items.map(item => `${item.name} × ${item.quantity}`).join(', ')} · {money(person.total)}</small>}{person?.notes && <small>Пожелания: {person.notes}</small>}</div>
+            {active && <div className="admin-actions"><button type="button" onClick={() => setEditing({ ...guest, phone: `+${guest.phone}` })}>Изменить</button><button type="button" disabled={busy || guest.submitted} onClick={async () => { if (await ask(`Удалить ${guest.name} из списка гостей?`, { confirmLabel: 'Удалить' })) deleteGuest(guest.id); }}>Удалить</button></div>}
+          </div>;
+          }) : <p className="muted">Добавьте гостей перед отправкой приглашения. Один номер соответствует одному гостю.</p>}
+          {unlistedGuests.map(guest => <div className="admin-guest" key={guest.id}><div><strong>{guest.name}</strong><small>{guest.phone ? `+${guest.phone}` : 'Номер не указан'} · MAX ID: {guest.maxId || 'не привязан'}</small><small>{guest.seat || 'Место не назначено'} · {detail.event.selectionMode === 'package' ? 'Фиксированный пакет' : guest.submitted ? `Выбор сохранён · ${money(guest.total)}` : 'Пока не выбрал блюда'}</small>{guest.submitted && <small>{guest.items.map(item => `${item.name} × ${item.quantity}`).join(', ')}</small>}</div></div>)}
+        </div>
         {active && <form className="admin-guest-form" onSubmit={async event => {
           event.preventDefault();
           const result = await addGuest({ name, phone });
@@ -2094,16 +2097,10 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
         }}>
           <input aria-label="Имя гостя" placeholder="Имя гостя" maxLength={100} required value={name} onChange={event => setName(event.target.value)} />
           <PhoneInput aria-label="Телефон гостя" required value={phone} onChange={setPhone} />
-          <Button type="submit" disabled={busy}><Plus size={16} /> Добавить</Button>
+          <Button type="submit" disabled={busy}><Plus size={16} /> Добавить гостя</Button>
         </form>}
-        <div className="admin-guest-list">
-          {detail.invitedGuests?.length ? detail.invitedGuests.map(guest => <div className="admin-guest" key={guest.id}>
-            <div><strong>{guest.name}</strong><small>+{guest.phone} · {guest.submitted ? 'Выбор сохранён' : guest.joined ? 'Номер подтверждён' : 'Ожидает входа'}</small></div>
-            {active && <div className="admin-actions"><button type="button" onClick={() => setEditing({ ...guest, phone: `+${guest.phone}` })}>Изменить</button><button type="button" disabled={busy || guest.submitted} onClick={async () => { if (await ask(`Удалить ${guest.name} из списка гостей?`, { confirmLabel: 'Удалить' })) deleteGuest(guest.id); }}>Удалить</button></div>}
-          </div>) : <p className="muted">Добавьте гостей перед отправкой приглашения. Один номер соответствует одному гостю.</p>}
-        </div>
-      </section>
-      <section className="panel admin-panel">
+      </section>}
+      {section === 'menu' && (detail.event.selectionMode === 'package' ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} /> : <section className="panel admin-panel">
         <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Отметьте, что могут выбрать гости, и что поставить на общий стол. Изменения действуют только для этого мероприятия.</p></div>
           {active && <div className="admin-actions">
             <button type="button" disabled={!missing.length} onClick={() => setImporting([])}><Plus size={15} /> Из каталога{missing.length ? ` (${missing.length})` : ''}</button>
@@ -2144,8 +2141,8 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
             </div>
           </div>;
         })}</div>
-      </section>
-      {importing && <Modal title="Добавить из каталога" onClose={() => setImporting(null)}>
+      </section>)}
+      {section === 'menu' && importing && <Modal title="Добавить из каталога" onClose={() => setImporting(null)}>
         <p className="muted">Позиции общего меню ресторана, которых ещё нет в этом банкете.</p>
         <div className="import-list">
           {missing.map(item => <label key={item.id} className="check">
@@ -2159,7 +2156,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
           <Button type="button" disabled={busy || !importing.length} onClick={async () => { const result = await importItems(importing); if (result !== null) setImporting(null); }}>Добавить {importing.length || ''}</Button>
         </div>
       </Modal>}
-      {editing && <Modal title="Данные гостя" onClose={() => setEditing(null)}>
+      {section === 'guests' && editing && <Modal title="Данные гостя" onClose={() => setEditing(null)}>
         <form onSubmit={async event => {
           event.preventDefault();
           const result = await editGuest(editing.id, { name: editing.name, phone: editing.phone });
@@ -2175,7 +2172,7 @@ function EventAdmin({ detail, catalog, busy, saveEvent, uploadPhoto, addGuest, e
   );
 }
 const ROLE_OPTIONS = [["none", "Нет роли"], ["organizer", "Организатор"], ["admin", "Администратор ресторана"]];
-function UsersAdmin({ session, busy, load, setRole, onError }) {
+function UsersAdmin({ session, busy, load, setRole, setGlobal, onError }) {
   const administered = (session.access || []).filter((entry) => entry.role === "admin");
   const [query, setQuery] = useState("");
   const [users, setUsers] = useState(null);
@@ -2201,16 +2198,16 @@ function UsersAdmin({ session, busy, load, setRole, onError }) {
       {!session.demo && <form className="grant-max-form" onSubmit={async event => {
         event.preventDefault();
         if (!/^[1-9][0-9]{0,18}$/.test(newMaxId)) return onError('Укажите числовой MAX ID пользователя.');
-        if (await setRole(newRestaurant, newMaxId, newRole) !== null) {
+        if (await (newRole === 'global' ? setGlobal(newMaxId, true) : setRole(newRestaurant, newMaxId, newRole)) !== null) {
           setNewMaxId('');
           setUsers(await load(query));
         }
       }}>
         <strong>Назначить роль по MAX ID</strong>
         <input aria-label="MAX ID пользователя" inputMode="numeric" pattern="[1-9][0-9]{0,18}" placeholder="MAX ID пользователя" value={newMaxId} onChange={event => setNewMaxId(event.target.value)} required />
-        <select aria-label="Ресторан для назначения" value={newRestaurant} onChange={event => setNewRestaurant(event.target.value)}>{administered.map(entry => <option key={entry.restaurantId} value={entry.restaurantId}>{entry.restaurantName}</option>)}</select>
-        <select aria-label="Назначаемая роль" value={newRole} onChange={event => setNewRole(event.target.value)}>{ROLE_OPTIONS.filter(([value]) => value !== 'none' && (session.superAdmin || value !== 'admin')).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
-        <Button type="submit" disabled={busy || !newRestaurant}>Назначить</Button>
+        {newRole !== 'global' && <select aria-label="Ресторан для назначения" value={newRestaurant} onChange={event => setNewRestaurant(event.target.value)}>{administered.map(entry => <option key={entry.restaurantId} value={entry.restaurantId}>{entry.restaurantName}</option>)}</select>}
+        <select aria-label="Назначаемая роль" value={newRole} onChange={event => setNewRole(event.target.value)}>{session.superAdmin && <option value="global">Администратор</option>}{ROLE_OPTIONS.filter(([value]) => value !== 'none' && (session.superAdmin || value !== 'admin')).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select>
+        <Button type="submit" disabled={busy || (newRole !== 'global' && !newRestaurant)}>Назначить</Button>
       </form>}
       {session.demo && <p className="muted">В демо роли переключаются вверху справа; изменения здесь действуют только на гостей демо.</p>}
       {!users ? (
@@ -2221,15 +2218,25 @@ function UsersAdmin({ session, busy, load, setRole, onError }) {
             <div className="user-row" key={user.id}>
               <div>
                 <strong>{user.name}{user.isYou ? " (вы)" : ""}</strong>
-                <small>{[user.superAdmin && "суперадминистратор", user.maxId && `MAX ID ${user.maxId}`, user.phone && `+${user.phone}`].filter(Boolean).join(" · ") || "Номер не подтверждён"}</small>
+                <small>{[user.superAdmin && "администратор", user.maxId && `MAX ID ${user.maxId}`, user.phone && `+${user.phone}`].filter(Boolean).join(" · ") || "Номер не подтверждён"}</small>
               </div>
               <div className="user-roles">
+                {session.superAdmin && !session.demo && <label>
+                  <span>Сервис</span>
+                  <select aria-label={`Глобальная роль ${user.name}`} value={user.superAdmin ? 'admin' : 'none'} disabled={busy || user.isYou || user.fixedGlobal} onChange={async event => {
+                    const previous = users;
+                    const enabled = event.target.value === 'admin';
+                    setUsers(users.map(entry => entry.id === user.id ? { ...entry, superAdmin: enabled } : entry));
+                    if ((await setGlobal(user.maxId || user.id, enabled)) === null) setUsers(previous);
+                    else setUsers(await load(query));
+                  }}><option value="none">Нет роли</option><option value="admin">Администратор</option></select>
+                </label>}
                 {administered.map((entry) => (
                   <label key={entry.restaurantId}>
                     {administered.length > 1 && <span>{entry.restaurantName}</span>}
                     <select
                       value={user.roles[entry.restaurantId] || "none"}
-                      disabled={busy || user.isYou || user.fixed || (!session.superAdmin && user.roles[entry.restaurantId] === 'admin')}
+                      disabled={busy || user.isYou || user.fixed || user.superAdmin || (!session.superAdmin && user.roles[entry.restaurantId] === 'admin')}
                       onChange={(e) => change(user, entry.restaurantId, e.target.value)}
                       aria-label={`Роль ${user.name} в ресторане ${entry.restaurantName}`}
                     >
@@ -2247,7 +2254,7 @@ function UsersAdmin({ session, busy, load, setRole, onError }) {
     </section>
   );
 }
-function KitchenBoard({ board, open }) {
+function KitchenBoard({ board, open, selected, setSelected, exportOne }) {
   if (!board) return <div className="loading-inline"><LoaderCircle className="spin" />Загружаем заказы…</div>;
   if (!board.length) return <Empty title="Запланированных банкетов нет">Когда организатор создаст банкет, он появится здесь.</Empty>;
   return (
@@ -2256,11 +2263,12 @@ function KitchenBoard({ board, open }) {
         <section className="panel kitchen" key={event.id}>
           <div className="section-head">
             <div>
+              <label className="check kitchen-pick"><input type="checkbox" checked={selected.includes(event.id)} onChange={e => setSelected(value => e.target.checked ? [...value, event.id] : value.filter(id => id !== event.id))} /> В общую выгрузку</label>
               <Tag approved={event.status === "approved"} />
               <h2>{event.title}</h2>
-              <p className="muted">{dateText(event.date, true)} · Организатор: {event.ownerName || "—"} · ответили {event.responded} из {event.expectedGuests}</p>
+              <p className="muted">{dateText(event.date, true)} · Организатор: {event.ownerName || "—"} · {event.selectionMode === 'package' ? `${event.expectedGuests} фиксированных пакетов` : `ответили ${event.responded} из ${event.expectedGuests}`}</p>
             </div>
-            <Button variant="secondary" onClick={() => open(event.id)}>Открыть</Button>
+            <div className="admin-actions"><Button variant="secondary" onClick={() => open(event.id)}>Открыть</Button><Button variant="secondary" onClick={() => exportOne('xlsx', [event.id])}><FileSpreadsheet size={16} /> Excel</Button><Button variant="secondary" onClick={() => exportOne('csv', [event.id])}><Download size={16} /> CSV</Button></div>
           </div>
           <div className="kitchen-table">
             <div className="kitchen-row table-header"><span>Блюдо</span><span>Порции</span><span>Стоимость</span></div>
@@ -2279,8 +2287,38 @@ function KitchenBoard({ board, open }) {
     </div>
   );
 }
+function EditPackage({ offer, busy, onClose, submit, remove }) {
+  const [name, setName] = useState(offer.name || '');
+  const [description, setDescription] = useState(offer.description || '');
+  const [price, setPrice] = useState((offer.price || 0) / 100);
+  const [lines, setLines] = useState((offer.items || []).map(item => `${item.category} | ${item.name} | ${item.grams}`).join('\n'));
+  const [error, setError] = useState('');
+  return <Modal title={offer.id ? 'Пакетное предложение' : 'Новый пакет'} onClose={onClose}>
+    <form onSubmit={event => { event.preventDefault();
+      const items = lines.trim().split('\n').map(line => {
+        const [category, itemName, grams] = line.split('|').map(value => value?.trim());
+        return { category, name: itemName, grams: Number(grams) };
+      });
+      if (!items.length || items.some(item => !item.category || !item.name || !Number.isInteger(item.grams) || item.grams < 1)) return setError('Каждая строка: категория | название | грамм на гостя.');
+      setError(''); submit({ name, description, price: Math.round(Number(price) * 100), items });
+    }}>
+      <label>Название<input required maxLength={120} value={name} onChange={event => setName(event.target.value)} /></label>
+      <label>Цена на гостя, ₽<input required type="number" min="0.01" step="0.01" value={price} onChange={event => setPrice(event.target.value)} /></label>
+      <label>Описание<textarea maxLength={500} value={description} onChange={event => setDescription(event.target.value)} /></label>
+      <label>Состав: категория | название | грамм на гостя<textarea className="package-lines" required value={lines} onChange={event => setLines(event.target.value)} placeholder="Холодные закуски | Лосось слабой соли | 50" /></label>
+      {error && <p className="alert">{error}</p>}
+      <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить пакет «${offer.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy}>Сохранить</Button></div>
+    </form>
+  </Modal>;
+}
 function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
   const [seatingMode, setSeatingMode] = useState("off");
+  const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id || '');
+  const [selectionMode, setSelectionMode] = useState('individual');
+  const [packageId, setPackageId] = useState('');
+  const packages = restaurants.find(restaurant => restaurant.id === restaurantId)?.packages || [];
+  const selectedOffer = packages.find(offer => offer.id === packageId) || packages[0];
+  const hotChoices = selectedOffer?.items.find(item => item.category === 'Горячее на выбор')?.name.split('/').map(value => value.trim()) || [];
   const future = (days) => {
     const d = new Date(Date.now() + days * 86400000);
     return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -2309,6 +2347,8 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
             title: f.get("title"),
             photoUrl,
             restaurantId: f.get("restaurantId"),
+            selectionMode,
+            ...(selectionMode === 'package' ? { packageId: f.get('packageId'), ...(hotChoices.length ? { packageChoice: f.get('packageChoice') } : {}) } : {}),
             date: new Date(f.get("date")).toISOString(),
             deadline: new Date(f.get("deadline")).toISOString(),
             expectedGuests: Number(f.get("guests")),
@@ -2331,7 +2371,7 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
         <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
         <label>
           Ресторан
-          <select name="restaurantId" required>
+          <select name="restaurantId" required value={restaurantId} onChange={event => { setRestaurantId(event.target.value); setPackageId(''); if (!restaurants.find(r => r.id === event.target.value)?.packages?.length) setSelectionMode('individual'); }}>
             {restaurants.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -2339,6 +2379,9 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
             ))}
           </select>
         </label>
+        <label>Формат заказа<select name="selectionMode" value={selectionMode} onChange={event => setSelectionMode(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
+        {selectionMode === 'package' && <label>Пакетное предложение<select name="packageId" required value={selectedOffer?.id || ''} onChange={event => setPackageId(event.target.value)}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)} / гость</option>)}</select><small className="muted">Гости увидят состав пакета и не смогут менять блюда.</small></label>}
+        {selectionMode === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select name="packageChoice" required>{hotChoices.map(choice => <option key={choice} value={choice}>{choice}</option>)}</select></label>}
         <div className="form-grid">
           <label>
             Когда встречаемся
@@ -2369,14 +2412,14 @@ function CreateEvent({ restaurants, busy, uploadPhoto, onClose, submit }) {
               required
             />
           </label>
-          <label>
+          {selectionMode === 'individual' && <label>
             Еда на гостя, ₽ <span className="optional">необязательно</span>
             <input type="number" name="foodBudget" min={0} max={1000000} step="1" placeholder="Например, 2 500" />
-          </label>
-          <label>
+          </label>}
+          {selectionMode === 'individual' && <label>
             Напитки на гостя, ₽ <span className="optional">необязательно</span>
             <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
-          </label>
+          </label>}
         </div>
         <div className="form-grid">
           <label>

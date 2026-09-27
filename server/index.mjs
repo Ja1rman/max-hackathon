@@ -176,6 +176,9 @@ export function createApp(options = {}) {
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members$/)) && req.method === 'GET') return json(store.restaurantMembers(user, match[1]));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'PUT') return json(store.setMember(user, match[1], match[2], await readBody(req)));
       if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/members\/([^/]+)$/)) && req.method === 'DELETE') return json(store.setMember(user, match[1], match[2], { role: 'none' }));
+      if ((match = path.match(/^\/api\/admins\/([^/]+)$/)) && req.method === 'PUT') return json(store.setGlobalAdmin(user, match[1], await readBody(req)));
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/packages(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editPackage(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
+      if ((match = path.match(/^\/api\/restaurants\/([^/]+)\/packages\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deletePackage(user, match[1], match[2]));
       if (path === '/api/events' && req.method === 'GET') return json(store.events(user));
       if (path === '/api/events' && req.method === 'POST') { const body = await readBody(req); return json(store.transaction(() => store.createEvent(user, body)), 201); }
       if ((match = path.match(/^\/api\/events\/([^/]+)$/)) && req.method === 'GET') return json(store.detail(user, match[1]));
@@ -186,8 +189,8 @@ export function createApp(options = {}) {
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu(?:\/([^/]+))?$/)) && ((req.method === 'PATCH' && match[2]) || (req.method === 'POST' && !match[2]))) return json(store.editEventMenu(user, match[1], match[2], await readBody(req)), req.method === 'POST' ? 201 : 200);
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/([^/]+)$/)) && req.method === 'DELETE') return json(store.deleteEventMenu(user, match[1], match[2]));
       if (path === '/api/kitchen' && req.method === 'GET') return json(store.kitchen(user));
-      if (path === '/api/kitchen/export' && req.method === 'GET') return sendFile(store.kitchenExport(user, url.searchParams.get('format') || 'csv'));
-      if (path === '/api/kitchen/export-link' && req.method === 'POST') return json(store.createKitchenExportLink(user, (await readBody(req)).format));
+      if (path === '/api/kitchen/export' && req.method === 'GET') return sendFile(store.kitchenExport(user, url.searchParams.get('format') || 'csv', url.searchParams.has('eventIds') ? url.searchParams.get('eventIds').split(',') : undefined));
+      if (path === '/api/kitchen/export-link' && req.method === 'POST') { const body = await readBody(req); return json(store.createKitchenExportLink(user, body.format, body.eventIds)); }
       if (path === '/api/users' && req.method === 'GET') return json(store.users(user, url.searchParams.get('q') || ''));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/shared$/)) && req.method === 'PUT') return json(store.saveShared(user, match[1], await readBody(req)));
       if ((match = path.match(/^\/api\/events\/([^/]+)\/menu\/import$/)) && req.method === 'POST') return json(store.importMenu(user, match[1], await readBody(req)));

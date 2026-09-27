@@ -1,0 +1,73 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fixture } from './helpers.mjs';
+import { PETR_MENU, PETR_PACKAGES } from '../server/petr-menu.mjs';
+
+const future = days => new Date(Date.now() + days * 86400000).toISOString();
+
+test('a service administrator can delegate the global role by MAX ID, restaurant admins cannot', async t => {
+  const f = await fixture(t, { openOrganizerSignup: false });
+  const root = await f.login(900);
+  const restaurant = (await f.request('/api/restaurants', { token: root.token })).data[0];
+  await f.request(`/api/restaurants/${restaurant.id}/members/200`, { token: root.token, method: 'PUT', body: { role: 'admin' } });
+  const scoped = await f.login(200);
+  assert.equal((await f.request('/api/admins/500', { token: scoped.token, method: 'PUT', body: { enabled: true } })).status, 403);
+  assert.equal((await f.request('/api/admins/500', { token: root.token, method: 'PUT', body: { enabled: true } })).status, 200);
+  const delegated = await f.login(500);
+  assert.equal(delegated.user.role, 'admin');
+  assert.equal(delegated.user.access.length, (await f.request('/api/restaurants', { token: root.token })).data.length);
+  assert.equal((await f.request('/api/admins/900', { token: delegated.token, method: 'PUT', body: { enabled: false } })).status, 409, 'configured administrator cannot be removed from the UI');
+  assert.equal((await f.request('/api/admins/500', { token: delegated.token, method: 'PUT', body: { enabled: false } })).status, 409, 'no self-demotion');
+  assert.equal((await f.request('/api/admins/500', { token: root.token, method: 'PUT', body: { enabled: false } })).status, 200);
+  assert.equal((await f.request('/api/me', { token: delegated.token })).data.role, 'guest', 'current sessions lose role immediately');
+});
+
+test('Petr menu and packages seed into a live restaurant with category and approximate nutrition', async t => {
+  const f = await fixture(t);
+  const root = await f.login(900);
+  const restaurants = (await f.request('/api/restaurants', { token: root.token })).data;
+  const petr = restaurants.find(restaurant => restaurant.name === 'Петръ');
+  assert.ok(petr);
+  assert.equal(petr.menu.length, PETR_MENU.length);
+  assert.equal(petr.packages.length, PETR_PACKAGES.length);
+  assert.ok(petr.menu.some(item => item.category === 'Напитки'));
+  assert.ok(petr.menu.some(item => item.category === 'Салаты'));
+  assert.ok(petr.menu.every(item => item.nutrition && item.price > 0 && item.weight));
+  assert.equal(petr.packages[0].price, 450000);
+});
+
+test('fixed banquet package needs no guest order; exports selected events with package and seating', async t => {
+  const f = await fixture(t, { openOrganizerSignup: false });
+  const root = await f.login(900);
+  const petr = (await f.request('/api/restaurants', { token: root.token })).data.find(restaurant => restaurant.name === 'Петръ');
+  const offer = petr.packages[0];
+  const hot = offer.items.find(item => item.category === 'Горячее на выбор').name.split('/')[1].trim();
+  const event = await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Пакетный вечер', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: hot, date: future(14), deadline: future(10), expectedGuests: 2 } });
+  assert.equal(event.status, 201);
+  assert.equal(event.data.total, offer.price * 2);
+  assert.equal(event.data.package.items.find(item => item.category === 'Горячее').name, hot);
+  assert.equal((await f.request('/api/events', { token: root.token, method: 'POST', body: { title: 'Ошибка', restaurantId: petr.id, selectionMode: 'package', packageId: offer.id, packageChoice: 'Не из пакета', date: future(14), deadline: future(10), expectedGuests: 2 } })).status, 400);
+  const guest = await f.login(200);
+  await f.inviteGuest(root.token, event.data, guest.token, 200, '+79990000200');
+  const detail = (await f.request(`/api/events/${event.data.id}`, { token: guest.token })).data;
+  assert.equal(detail.canSelect, false);
+  assert.equal(detail.event.package.items.find(item => item.category === 'Горячее').name, hot);
+  assert.equal((await f.request(`/api/events/${event.data.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: petr.menu[0].id, quantity: 1 }] } })).status, 409);
+  const layout = { tables: [{ id: 't1', shape: 'round', label: 'Стол 1', x: 0, y: 0, w: 120, h: 120, rotation: 0, seats: 2 }] };
+  assert.equal((await f.request(`/api/events/${event.data.id}/seating`, { token: root.token, method: 'PUT', body: { mode: 'choice', layout } })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.data.id}/seat`, { token: guest.token, method: 'PUT', body: { seatId: 't1-1' } })).status, 200);
+  const fresh = (await f.request(`/api/events/${event.data.id}`, { token: root.token })).data;
+  assert.equal((await f.request(`/api/events/${event.data.id}/approve`, { token: root.token, method: 'POST', body: { expectedRevision: fresh.event.revision } })).status, 200);
+  const csv = await f.request(`/api/kitchen/export?format=csv&eventIds=${event.data.id}`, { token: root.token });
+  assert.equal(csv.status, 200);
+  assert.match(csv.data, /Пакетное предложение 4500/);
+  assert.match(csv.data, /Рассадка|Стол 1/);
+  assert.match(csv.data, /Грамм на гостя/);
+  assert.equal((await f.request('/api/kitchen/export?format=csv&eventIds=event_unknown', { token: root.token })).status, 400);
+  const link = await f.request('/api/kitchen/export-link', { token: root.token, method: 'POST', body: { format: 'xlsx', eventIds: [event.data.id] } });
+  assert.equal(link.status, 200);
+  const file = await fetch(f.base + new URL(link.data.url).pathname);
+  const bytes = Buffer.from(await file.arrayBuffer());
+  assert.ok(bytes.includes(Buffer.from('PK')));
+  assert.equal((await fetch(f.base + new URL(link.data.url).pathname)).status, 404);
+});

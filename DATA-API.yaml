@@ -1,6 +1,6 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.6.0
+version: 1.7.0
 sources:
 - server/store.mjs
 - server/auth.mjs
@@ -12,7 +12,7 @@ api_contract: "./openapi.yaml"
 fixture: "./fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 9
+  user_version: 10
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -20,7 +20,7 @@ engine:
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
     DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
     ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
-    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. В v9 добавляется events.photo_url. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. В v9 добавляется events.photo_url. В v10 добавляются глобальные администраторы, пакетные предложения, режим заказа, снимок пакета и область выгрузки кухни; однократно импортируется меню «Петръ». Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -65,8 +65,7 @@ tables:
       description: TEXT NOT NULL
       address: TEXT NOT NULL
       sample_menu: INTEGER NOT NULL DEFAULT 1
-    purpose: Один пример при первичном создании scope; API регистрации/редактирования
-      ресторана отсутствует.
+    purpose: Демо-пример при создании demo scope; в live создаются стартовый пример и ресторан «Петръ». Администратор может создавать и редактировать рестораны через API.
   menu_items:
     columns:
       id: TEXT PRIMARY KEY
@@ -82,6 +81,8 @@ tables:
       restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
       title: TEXT NOT NULL
       photo_url: TEXT NOT NULL DEFAULT '' (путь загруженного фото мероприятия)
+      selection_mode: TEXT NOT NULL DEFAULT 'individual' (individual | package)
+      package_data: TEXT NOT NULL DEFAULT '' (JSON Package, снимок выбранного пакета)
       date: TEXT NOT NULL (ISO-8601 UTC)
       deadline: TEXT NOT NULL (ISO-8601 UTC)
       expected_guests: INTEGER NOT NULL
@@ -205,12 +206,25 @@ tables:
     - user_id
     purpose: Доступ пользователя к ресторану. Нет строки — обычный пользователь (гость).
       Суперадминистраторы из RESTAURANT_ADMIN_IDS администрируют все рестораны без строк.
+  global_admins:
+    columns:
+      user_id: TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+      granted_by: TEXT REFERENCES users(id) ON DELETE SET NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    purpose: Глобальная роль, назначаемая действующим глобальным администратором; действует для всех ресторанов.
+  restaurant_packages:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      data: TEXT NOT NULL (JSON Package)
+    purpose: Редактируемые фиксированные предложения; создание банкета копирует выбранное предложение в events.package_data.
   kitchen_download_tokens:
     columns:
       token_hash: TEXT PRIMARY KEY (SHA-256)
       user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
       format: TEXT NOT NULL (csv | xlsx)
       expires_at: INTEGER NOT NULL (Unix milliseconds, 60 секунд)
+      event_ids: TEXT NOT NULL DEFAULT '' (JSON-массив ID выбранных мероприятий)
     purpose: Одноразовые ссылки на выгрузку раздела «Кухня» для WebApp.downloadFile.
   shared_items:
     columns:
@@ -282,10 +296,10 @@ authorization:
     чтение —404.
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
-  kitchen: 'GET /api/kitchen только restaurant: банкеты scope с date >= вчера.'
+  kitchen: 'GET /api/kitchen доступен администраторам ресторана и сервиса: банкеты scope с date >= вчера; выгрузка принимает eventIds для выбранных мероприятий.'
   users: 'GET /api/users, GET /api/restaurants/{id}/members и PUT/DELETE /api/restaurants/{id}/members/{userId}: глобальный администратор назначает администратора ресторана; администратор ресторана назначает только organizer. userId также принимает числовой MAX ID до первого входа.'
   restaurants: 'POST /api/restaurants — суперадминистратор; PATCH — администратор ресторана.'
-  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: admin для глобального администратора, restaurant для администратора хотя бы одного ресторана, organizer или guest. Банкетом управляют владелец с действующей ролью и admin его ресторана; бывший владелец сохраняет только просмотр.'
+  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS и global_admins (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: admin для глобального администратора, restaurant для администратора хотя бы одного ресторана, organizer или guest. Банкетом управляют владелец с действующей ролью и admin его ресторана; бывший владелец сохраняет только просмотр.'
   manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
   create_event: organizer или restaurant.
