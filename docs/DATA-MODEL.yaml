@@ -1,0 +1,383 @@
+---
+document: За столом — модель хранения и обмена
+version: 1.7.0
+sources:
+- server/store.mjs
+- server/auth.mjs
+- server/index.mjs
+- server/max-bot.mjs
+- server/notifications.mjs
+- shared/seating.mjs
+api_contract: "../openapi.yaml"
+fixture: "../fixtures/demo.json"
+engine:
+  product: SQLite via Node.js24 node:sqlite DatabaseSync
+  user_version: 10
+  pragmas:
+    foreign_keys: 'ON'
+    journal_mode: WAL
+    busy_timeout: 5000
+  migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
+    DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
+    ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
+    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. В v9 добавляется events.photo_url. В v10 добавляются глобальные администраторы, пакетные предложения, режим заказа, снимок пакета и область выгрузки кухни; однократно импортируется меню «Петръ». Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    совместимой при откате кода.
+  indexes:
+  - events_scope_idx ON events(scope)
+  - guests_user_idx ON guests(user_id)
+  - sessions_expiry_idx ON sessions(expires_at)
+  - users_live_phone_idx UNIQUE ON users(phone) WHERE scope='live' AND phone IS NOT NULL
+  - guest_invites_event_idx ON guest_invites(event_id)
+  - notification_due_idx ON notification_jobs(due_at) WHERE sent_at IS NULL AND cancelled_at IS NULL
+tables:
+  scopes:
+    columns:
+      id: TEXT PRIMARY KEY
+      secret_hash: TEXT UNIQUE NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    purpose: live — общее рабочее пространство; demo_UUID — отдельная демонстрация.
+      SHA-256 sandbox только для демо.
+  users:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      external_id: TEXT NULL
+      name: TEXT NOT NULL
+      role: TEXT NOT NULL
+      demo: INTEGER NOT NULL DEFAULT 0
+      phone: TEXT NULL
+      phone_verified_at: INTEGER NULL (Unix milliseconds)
+      notifications_enabled: INTEGER NOT NULL DEFAULT 0
+    purpose: MAX ID хранится строкой; id=max_<MAX ID>. Роль restaurant для live пересчитывается
+      по allowlist при каждом запросе.
+  sessions:
+    columns:
+      token_hash: TEXT PRIMARY KEY
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      expires_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: SHA-256 от bearer, открытый token возвращается только при входе. Демо24ч/live7д;
+      максимум10 активных.
+  restaurants:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      description: TEXT NOT NULL
+      address: TEXT NOT NULL
+      sample_menu: INTEGER NOT NULL DEFAULT 1
+    purpose: Демо-пример при создании demo scope; в live создаются стартовый пример и ресторан «Петръ». Администратор может создавать и редактировать рестораны через API.
+  menu_items:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      data: TEXT NOT NULL (JSON MenuItem)
+    purpose: Текущий каталог. menuItem ID и доступность валидируются сервером; до500
+      блюд на ресторан.
+  events:
+    columns:
+      id: TEXT PRIMARY KEY
+      scope: TEXT NOT NULL REFERENCES scopes(id) ON DELETE CASCADE
+      owner_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      title: TEXT NOT NULL
+      photo_url: TEXT NOT NULL DEFAULT '' (путь загруженного фото мероприятия)
+      selection_mode: TEXT NOT NULL DEFAULT 'individual' (individual | package)
+      package_data: TEXT NOT NULL DEFAULT '' (JSON Package, снимок выбранного пакета)
+      date: TEXT NOT NULL (ISO-8601 UTC)
+      deadline: TEXT NOT NULL (ISO-8601 UTC)
+      expected_guests: INTEGER NOT NULL
+      budget: INTEGER NOT NULL (kopecks, плановый итог = (food_budget + drink_budget) × expected_guests)
+      guest_budget: INTEGER NOT NULL DEFAULT 0 (устарело; = food_budget + drink_budget)
+      food_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на еду, 0 — без лимита)
+      drink_budget: INTEGER NOT NULL DEFAULT 0 (kopecks на гостя на напитки, 0 — без лимита)
+      status: TEXT NOT NULL DEFAULT 'collecting'
+      invite_code: TEXT UNIQUE NOT NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+      approved_at: TEXT NULL (ISO-8601 UTC)
+      revision: INTEGER NOT NULL DEFAULT 0
+      seating_mode: TEXT NOT NULL DEFAULT 'off' (off | choice | fixed)
+      seating_layout: TEXT NOT NULL DEFAULT '{"tables":[]}' (JSON SeatingLayout)
+    purpose: Сбор либо утверждённый заказ. invite_code24base64url. Дедлайн не меняет
+      status автоматически.
+  event_menu:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      item_id: TEXT NOT NULL
+      data: TEXT NOT NULL (JSON MenuItem)
+    primary_key:
+    - event_id
+    - item_id
+    purpose: Снимок доступных блюд при создании банкета; владелец и ресторан могут
+      менять его до утверждения с защитой уже выбранной цены/названия. item_id намеренно
+      не FK на текущий каталог. КБЖУ на порцию и photoUrl хранятся в JSON MenuItem.
+  guests:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      submitted: INTEGER NOT NULL DEFAULT 0
+      notes: TEXT NOT NULL DEFAULT ''
+      updated_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - user_id
+    purpose: Членство и состояние ответа. Один пользователь — одна строка на событие,
+      максимум1000.
+  guest_invites:
+    columns:
+      id: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      phone: TEXT NOT NULL (международный формат без плюса)
+      user_id: TEXT NULL REFERENCES users(id) ON DELETE SET NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    unique:
+    - - event_id
+      - phone
+    - - event_id
+      - user_id
+    purpose: Список приглашённых; подтверждённый номер MAX связывает ровно одну запись с аккаунтом.
+  selections:
+    columns:
+      event_id: TEXT NOT NULL
+      user_id: TEXT NOT NULL
+      menu_item_id: TEXT NOT NULL
+      quantity: INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 20)
+      price: INTEGER NOT NULL CHECK(price >= 0)
+      name: TEXT NOT NULL
+    primary_key:
+    - event_id
+    - user_id
+    - menu_item_id
+    foreign_keys:
+    - columns:
+      - event_id
+      - user_id
+      references: guests(event_id,user_id)
+      on_delete: CASCADE
+    purpose: Снимок цены/названия из event_menu, полная замена выбора атомарно. В
+      одном выборе1..50 уникальных блюд.
+  max_webhook_claims:
+    columns:
+      key: TEXT PRIMARY KEY
+      created_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: SHA-256 идентичности события. INSERT OR IGNORE до API-вызова, at-most-once
+      welcome, хранение7д.
+  download_tokens:
+    columns:
+      token_hash: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      event_revision: INTEGER NOT NULL
+      expires_at: INTEGER NOT NULL (Unix milliseconds)
+    unique:
+    - - event_id
+      - user_id
+    purpose: SHA256 одноразовой capability60сек; новая ссылка заменяет предыдущую
+      для пользователя/события; consume проверяет scope, роль, status и revision.
+  bot_contacts:
+    columns:
+      external_id: TEXT PRIMARY KEY
+      active: INTEGER NOT NULL
+      updated_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: Начало/остановка диалога с ботом по подписанному webhook.
+  notification_jobs:
+    columns:
+      id: TEXT PRIMARY KEY
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      kind: TEXT NOT NULL
+      due_at: INTEGER NOT NULL (Unix milliseconds)
+      attempts: INTEGER NOT NULL DEFAULT 0
+      sent_at: INTEGER NULL (Unix milliseconds)
+      cancelled_at: INTEGER NULL (Unix milliseconds)
+    unique:
+    - - event_id
+      - user_id
+      - kind
+    purpose: Очередь уведомлений; worker отправляет только при opt-in и активном диалоге.
+  restaurant_members:
+    columns:
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      role: TEXT NOT NULL CHECK(role IN ('admin','organizer'))
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - restaurant_id
+    - user_id
+    purpose: Доступ пользователя к ресторану. Нет строки — обычный пользователь (гость).
+      Суперадминистраторы из RESTAURANT_ADMIN_IDS администрируют все рестораны без строк.
+  global_admins:
+    columns:
+      user_id: TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+      granted_by: TEXT REFERENCES users(id) ON DELETE SET NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    purpose: Глобальная роль, назначаемая действующим глобальным администратором; действует для всех ресторанов.
+  restaurant_packages:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      data: TEXT NOT NULL (JSON Package)
+    purpose: Редактируемые фиксированные предложения; создание банкета копирует выбранное предложение в events.package_data.
+  kitchen_download_tokens:
+    columns:
+      token_hash: TEXT PRIMARY KEY (SHA-256)
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      format: TEXT NOT NULL (csv | xlsx)
+      expires_at: INTEGER NOT NULL (Unix milliseconds, 60 секунд)
+      event_ids: TEXT NOT NULL DEFAULT '' (JSON-массив ID выбранных мероприятий)
+    purpose: Одноразовые ссылки на выгрузку раздела «Кухня» для WebApp.downloadFile.
+  shared_items:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      menu_item_id: TEXT NOT NULL
+      quantity: INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 1000)
+      price: INTEGER NOT NULL CHECK(price >= 0) (kopecks, снимок цены)
+      name: TEXT NOT NULL
+    primary_key:
+    - event_id
+    - menu_item_id
+    purpose: Блюда и закуски на общий стол, выбранные организатором. Входят в total и
+      сводку кухни, не входят в бюджет гостя; гости не могут заказать их сами.
+  seat_assignments:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      seat_id: TEXT NOT NULL (<tableId>-<n>, вычисляется из seating_layout)
+      invite_id: TEXT NULL REFERENCES guest_invites(id) ON DELETE CASCADE
+      user_id: TEXT NULL REFERENCES users(id) ON DELETE CASCADE
+      source: TEXT NOT NULL (guest | admin | auto)
+      assigned_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - seat_id
+    unique:
+    - - event_id
+      - invite_id
+    - - event_id
+      - user_id
+    check: Ровно одно из invite_id и user_id. Гость из списка приглашённых закрепляется
+      по invite_id (в том числе ещё не вошедший), гость по демо-ссылке без записи в
+      списке — по user_id.
+    purpose: Кто на каком месте. Первичный ключ исключает двойное бронирование одного
+      стула при одновременных запросах.
+  media_assets:
+    columns:
+      file_name: TEXT PRIMARY KEY
+      owner_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      created_at: INTEGER NOT NULL (Unix milliseconds)
+    purpose: Реестр загруженных JPEG/PNG/WebP; файлы расположены в UPLOAD_DIR рядом с SQLite.
+json_schema_references:
+  MenuItem: openapi.yaml#/components/schemas/MenuItem
+  API_event: openapi.yaml#/components/schemas/Event
+  API_event_detail: openapi.yaml#/components/schemas/EventDetail
+units:
+  money: Целые копейки RUB во всех JSON/SQLite ценах. CSV преобразует агрегированные
+    суммы в рубли с двумя знаками.
+  dates: ISO8601 UTC для событий; Unix milliseconds для sessions и webhook claims;
+    auth_date MAX в Unix seconds.
+  booleans: SQLite INTEGER0/1, публичные JSON true/false.
+derived:
+  event.total: SUM(selections.quantity * selections.price)
+  event.responded: SUM(guests.submitted)
+  event.joined: COUNT(guests)
+  guest.total: SUM(собственных selections.quantity * price)
+  summary: GROUP BY menu_item_id,name; SUM(quantity), SUM(quantity*price)
+  seats: Стулья не хранятся; id и координаты вычисляются из стола функцией tableSeats
+    (shared/seating.mjs), поэтому сервер и интерфейс нумеруют места одинаково.
+  revision: Увеличивается при новом присоединении, сохранении выбора и утверждении;
+    изменения рассадки revision не меняют;
+    seed синтетических ответов создаётся до демонстрации.
+authorization:
+  public:
+  - healthz
+  - config
+  - MAX/demo login
+  - invite preview без гостей/бюджета/суммы
+  event_read: owner или restaurant в том же scope либо участник guests; недоступное
+    чтение —404.
+  guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
+    отсутствуют. Общая сумма и счётчики банкета доступны участнику.
+  kitchen: 'GET /api/kitchen доступен администраторам ресторана и сервиса: банкеты scope с date >= вчера; выгрузка принимает eventIds для выбранных мероприятий.'
+  users: 'GET /api/users, GET /api/restaurants/{id}/members и PUT/DELETE /api/restaurants/{id}/members/{userId}: глобальный администратор назначает администратора ресторана; администратор ресторана назначает только organizer. userId также принимает числовой MAX ID до первого входа.'
+  restaurants: 'POST /api/restaurants — суперадминистратор; PATCH — администратор ресторана.'
+  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS и global_admins (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: admin для глобального администратора, restaurant для администратора хотя бы одного ресторана, organizer или guest. Банкетом управляют владелец с действующей ролью и admin его ресторана; бывший владелец сохраняет только просмотр.'
+  manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
+    URLs.'
+  create_event: organizer или restaurant.
+  live_guest: Подтверждённый MAX номер связывается со своей записью guest_invites;
+    по действительной персональной ссылке запись создаётся и для неизвестного номера. Выбор доступен только для своей записи, без userId в запросе.
+  approve: Только owner с действующим доступом к ресторану.
+  menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
+  csv: owner или restaurant, только approved.
+  seating_read: Любой участник видит схему, занятые места с именами гостей (seating.names)
+    и своё место; телефоны и полный список людей (seating.people) — только owner и restaurant.
+  seating_write: Схему, режим, ручные назначения и авторассадку меняют owner или
+    restaurant до утверждения. Гость выбирает место сам только в режиме choice и до
+    дедлайна.
+  demo_invite: Создаёт только guest; demo запрещён доступ к live. Sandbox — секрет
+    переключения ролей только собственной демонстрации.
+  export_link: 'POST /api/events/{id}/export-link: owner/restaurant approved -> {url}.
+    GET /api/downloads/{token}: без bearer, одноразовая capability60сек; проверяются
+    permissions, scope, approved, revision;404 на отозванную/использованную/истёкшую.'
+lifecycle:
+  initial: collecting
+  selection_open: status=collecting AND deadline > now
+  approve: owner, expectedRevision=current revision, >=1 submitted. Транзакция BEGIN
+    IMMEDIATE фиксирует approved_at и увеличивает revision.
+  repeat_approve: approved возвращается идемпотентно без обязательного тела.
+  approve_seating: При seating_mode choice/fixed утверждение в той же транзакции
+    рассаживает гостей без места (сначала столы, где уже кто-то сидит).
+  deadline: Запрещает новые joins, saveSelection и выбор места гостем; существующий join идемпотентен;
+    не утверждает автоматически.
+  catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
+    правке каталога.
+  not_implemented:
+  - delete_event
+  - cancel
+  - reopen
+  - payment
+  - restaurant acceptance acknowledgement
+limits:
+  json_body_bytes: 65536
+  init_data_chars: 16384
+  auth_requests_per_10_minutes_per_ip: 180
+  max_demo_scopes_default: 1000
+  max_demo_scopes_env_range:
+  - 1
+  - 100000
+  sessions_per_user: 10
+  events_per_owner_demo: 30
+  events_per_owner_live: 500
+  menu_items_per_restaurant: 500
+  guests_per_event: 1000
+  selection_unique_items:
+  - 1
+  - 50
+  quantity_per_item:
+  - 1
+  - 20
+  selection_total_kopecks_max: 10000000000
+  budget_kopecks_max: 10000000000
+  menu_price_kopecks_range:
+  - 1
+  - 100000000
+  notes_chars: 1000
+retention:
+  demo_scope_days: 7
+  demo_session_hours: 24
+  live_session_days: 7
+  webhook_claim_days: 7
+  housekeeping: 'При старте и затем раз в час: истёкшие сессии, старые demo scopes
+    с каскадными данными, старые webhook claims.'
+  live_events: Автоматический срок удаления отсутствует.
+  export_link_seconds: 60
+  demo_disabled: DEMO_ENABLED=false отзывает выданные demo sessions и скрывает demo
+    invite previews.
+operational:
+  database_default: data/banquet.sqlite
+  docker_database: "/data/banquet.sqlite in banquet_data"
+  backup: 'scripts/backup.sh: согласованный VACUUM INTO, quick_check, последние10;
+    отдельное внешнее хранение ещё требует настройки.'
+  secrets: MAX_BOT_TOKEN, MAX_WEBHOOK_SECRET, SSH key и .env вне Git; bearer и sandbox
+    в БД толькоSHA256. Invite code хранится открыто как bearer-приглашение.
+  concurrency: Один экземпляр процесса/SQLite на сервере; горизонтальное масштабирование
+    не реализовано.

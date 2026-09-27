@@ -139,3 +139,8 @@ sudo -n bash /srv/banquet/current/scripts/backup.sh
 ## Проверка первого запуска
 
 Проверьте загрузку `/banquet/`, ответ `/banquet/healthz`, сохранение заказа после перезапуска контейнера и прежнюю доступность веб-интерфейса почты. Для работы внутри MAX потребуются токен бота, настройка мини-приложения на публичный HTTPS URL и ID администраторов ресторана; до этого доступен демонстрационный сценарий.
+
+
+## Документация API на сервере
+
+После развёртывания Swagger UI доступен по адресу `https://mail.lonelycraft.ru/banquet/swagger/`, спецификация — `https://mail.lonelycraft.ru/banquet/openapi.yaml`, API — `https://mail.lonelycraft.ru/banquet/api/v1`. Swagger UI собирается вместе с фронтендом (`npm run build` копирует `swagger-ui-dist` и `openapi.yaml` в `dist/`), внешние CDN не нужны. Отдельная настройка nginx не требуется: пути проходят через существующий `location /banquet/`. Проверка релиза: `npm run api:check`.

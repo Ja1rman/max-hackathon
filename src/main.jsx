@@ -75,7 +75,7 @@ async function api(path, options = {}) {
   let response;
   for (let attempt = 0; attempt < ((options.method || 'GET') === 'GET' ? 3 : 1); attempt++) {
     try {
-      response = await fetch(`${BASE}/api${path}`, {
+      response = await fetch(`${BASE}/api/v1${path}`, {
         ...options,
         headers: { "Content-Type": "application/json", ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}), ...options.headers },
         body: options.body ? JSON.stringify(options.body) : undefined,
@@ -113,7 +113,7 @@ function bookingDurationOptions(hall, localValue, selected) {
 }
 async function uploadImage(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
-  const response = await fetch(`${BASE}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file }).catch(() => { throw new Error('Нет связи с сервисом. Попробуйте загрузить фото ещё раз.'); });
+  const response = await fetch(`${BASE}/api/v1/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file }).catch(() => { throw new Error('Нет связи с сервисом. Попробуйте загрузить фото ещё раз.'); });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
   return result;
@@ -163,7 +163,7 @@ async function saveDownload(response, fallbackName) {
 }
 async function downloadResponse(path) {
   for (let attempt = 0; attempt < 3; attempt++) {
-    try { return await fetch(`${BASE}/api${path}`, { headers: { Authorization: `Bearer ${authToken}` } }); }
+    try { return await fetch(`${BASE}/api/v1${path}`, { headers: { Authorization: `Bearer ${authToken}` } }); }
     catch {
       if (attempt === 2) throw new Error('Нет связи с сервисом. Повторите выгрузку, когда интернет восстановится.');
       await new Promise(resolve => setTimeout(resolve, 350 * (attempt + 1)));

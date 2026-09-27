@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "description": "Тестовые данные для обязательных проверок из DATA-API.yaml. Синтетические, без персональных данных. Каждый прогон входит в новое изолированное демо-пространство, поэтому данные можно отправлять повторно.",
+  "moneyUnit": "kopecks",
+  "event": {
+    "title": "Проверка API: корпоратив",
+    "date": "2027-12-20T15:00:00.000Z",
+    "deadline": "2027-12-15T15:00:00.000Z",
+    "expectedGuests": 10,
+    "foodBudget": 300000,
+    "drinkBudget": 60000
+  },
+  "eventUpdate": {
+    "title": "Проверка API: новогодний корпоратив",
+    "expectedGuests": 12,
+    "foodBudget": 250000
+  },
+  "invitedGuest": { "name": "Гость проверки", "phone": "+7 999 000-12-34" },
+  "sharedQuantity": 2,
+  "selectionQuantity": 1,
+  "overBudgetQuantity": 5,
+  "selectionNotes": "Без лука, пожалуйста",
+  "seating": {
+    "mode": "choice",
+    "layout": {
+      "tables": [
+        { "id": "t1", "shape": "round", "label": "1", "x": 60, "y": 60, "w": 120, "h": 120, "rotation": 0, "seats": 6 },
+        { "id": "t2", "shape": "rect", "label": "Президиум", "x": 260, "y": 60, "w": 300, "h": 70, "rotation": 0, "seats": 4, "sides": ["top"] }
+      ]
+    }
+  },
+  "seatId": "t1-2",
+  "menuItem": {
+    "name": "Суп дня (проверка API)",
+    "description": "Позиция, добавленная проверкой",
+    "ingredients": "Томаты, базилик, сливки",
+    "category": "Супы",
+    "price": 45000,
+    "weight": "300 г",
+    "allergens": ["Молоко"],
+    "vegetarian": true,
+    "available": true,
+    "nutrition": { "kcal": 180, "protein": 4, "fat": 9, "carbs": 18 }
+  }
+}

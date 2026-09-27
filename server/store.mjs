@@ -1522,7 +1522,7 @@ export class Store {
     const token = secret();
     this.db.prepare('DELETE FROM kitchen_download_tokens WHERE user_id=? OR expires_at<=?').run(user.id, Date.now());
     this.db.prepare('INSERT INTO kitchen_download_tokens (token_hash,user_id,format,expires_at,event_ids) VALUES (?,?,?,?,?)').run(digest(token), user.id, format, Date.now() + 60000, eventIds ? JSON.stringify(eventIds) : '');
-    return { url: `${this.config.publicUrl}/api/downloads/kitchen/${token}` };
+    return { url: `${this.config.publicUrl}/api/v1/downloads/kitchen/${token}` };
   }
   consumeKitchenExportLink(token) {
     if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new HttpError(404, 'Ссылка на выгрузку недействительна. Создайте новую.');
@@ -1699,7 +1699,7 @@ export class Store {
       const token = secret();
       this.db.prepare('DELETE FROM download_tokens WHERE expires_at <= ? OR (event_id=? AND user_id=?)').run(Date.now(), event.id, user.id);
       this.db.prepare('INSERT INTO download_tokens VALUES (?,?,?,?,?)').run(digest(token), event.id, user.id, event.revision, Date.now() + 60000);
-      return { url: `${this.config.publicUrl}/api/downloads/${token}` };
+      return { url: `${this.config.publicUrl}/api/v1/downloads/${token}` };
     });
   }
   consumeExportLink(token) {

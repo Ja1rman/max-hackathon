@@ -69,7 +69,7 @@ async function readImage(req) {
   return { bytes, extension: types[mime] };
 }
 
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
+const MIME = { '.yaml': 'application/yaml; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2' };
 
 export function createApp(options = {}) {
   const config = { ...readConfig(), ...options };
@@ -91,13 +91,22 @@ export function createApp(options = {}) {
     const json = (value, status = 200) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
     try {
       const url = new URL(req.url, 'http://localhost');
-      const path = decodeURIComponent(url.pathname);
+      let path = decodeURIComponent(url.pathname);
+      // Versioned public API: /api/v1/* is the documented surface; /api/* stays for stored media URLs and the MAX webhook.
+      if (path === '/api/v1' || path === '/api/v1/') {
+        if (req.method !== 'GET') throw new HttpError(405, 'Метод не поддерживается.');
+        return json({ name: 'За столом', version: 'v1', openapi: '../openapi.yaml', docs: '../swagger/', health: 'healthz' });
+      }
+      if (path.startsWith('/api/v1/')) path = path === '/api/v1/healthz' ? '/healthz' : `/api/${path.slice('/api/v1/'.length)}`;
       if (path === '/healthz' && req.method === 'GET') {
         store.db.prepare('SELECT 1').get();
         return json({ status: 'ok' });
       }
       if (!path.startsWith('/api/')) {
         if (req.method !== 'GET' && req.method !== 'HEAD') throw new HttpError(405, 'Метод не поддерживается.');
+        // Relative Location keeps the /banquet prefix added by nginx.
+        if (path === '/swagger') { res.writeHead(308, { Location: 'swagger/' }); return res.end(); }
+        if (path === '/swagger/') path = '/swagger/index.html';
         const staticPath = resolve(config.distPath, `.${path}`);
         if (staticPath !== config.distPath && !staticPath.startsWith(config.distPath + sep)) throw new HttpError(404, 'Страница не найдена.');
         let filePath = staticPath;
