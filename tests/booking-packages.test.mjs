@@ -1,0 +1,96 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fixture } from './helpers.mjs';
+
+const atNoon = days => {
+  const day = new Date(Date.now() + days * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' });
+  return new Date(`${day}T12:00:00+03:00`).toISOString();
+};
+const plusHours = (value, hours) => new Date(Date.parse(value) + hours * 3600000).toISOString();
+
+test('hall bookings reject overlap, allow back-to-back and parallel halls, and enforce capacity/windows', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const owner = await f.login(100);
+  const restaurant = (await f.request('/api/restaurants', { token: owner.token })).data[0];
+  const date = atNoon(14), deadline = atNoon(10);
+  const body = { title: 'Первый банкет', restaurantId: restaurant.id, hallId: restaurant.halls[0].id, date, deadline, durationHours: 4, expectedGuests: 12, seating: { mode: 'choice', template: 'rounds' } };
+  const first = await f.request('/api/events', { token: owner.token, method: 'POST', body });
+  assert.equal(first.status, 201);
+  assert.equal(first.data.seatingMode, 'choice');
+  assert.equal((await f.request(`/api/events/${first.data.id}`, { token: owner.token })).data.seating.seatCount, 12);
+  const overlap = await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Пересечение', date: plusHours(date, 3) } });
+  assert.equal(overlap.status, 409);
+  assert.match(overlap.data.error, /забронирован/);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, title: 'Следующий', date: plusHours(date, 4) } })).status, 201);
+  const secondHall = await f.request(`/api/restaurants/${restaurant.id}/halls`, { token: admin.token, method: 'POST', body: { name: 'Малый зал', capacity: 10, windows: restaurant.halls[0].windows, allowedSeating: ['choice'] } });
+  assert.equal(secondHall.status, 201);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, hallId: secondHall.data.id } })).status, 409);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, hallId: secondHall.data.id, expectedGuests: 8, seating: { mode: 'fixed', template: 'rounds' } } })).status, 400);
+  assert.equal((await f.request('/api/events', { token: owner.token, method: 'POST', body: { ...body, hallId: secondHall.data.id, expectedGuests: 8 } })).status, 201);
+  const day = date.slice(0, 10);
+  const availability = await f.request(`/api/restaurants/${restaurant.id}/availability?date=${day}&hallId=${restaurant.halls[0].id}`, { token: owner.token });
+  assert.equal(availability.status, 200);
+  assert.equal(availability.data[0].booked.length, 2);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${restaurant.halls[0].id}`, { token: admin.token, method: 'PATCH', body: { capacity: 5 } })).status, 409);
+  const shortWindow = restaurant.halls[0].windows.map(window => ({ ...window, end: '14:00' }));
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/halls/${restaurant.halls[0].id}`, { token: admin.token, method: 'PATCH', body: { windows: shortWindow } })).status, 409);
+  assert.equal((await f.request(`/api/events/${first.data.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: first.data.revision, date: plusHours(date, 2) } })).status, 409);
+});
+
+test('package-only dishes have their own KBJU and snapshots stay stable after editing', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const petr = (await f.request('/api/restaurants', { token: admin.token })).data.find(restaurant => restaurant.name === 'Петръ');
+  const temp = (await f.request('/api/restaurants', { token: admin.token })).data.find(restaurant => restaurant.name === 'Temp');
+  assert.ok(temp.menu.some(item => item.name === 'Буррата с томатами'));
+  assert.ok(!petr.menu.some(item => item.name === 'Буррата с томатами'));
+  assert.ok(petr.packageDishes.length > 0);
+  assert.ok(petr.packages.every(offer => offer.items.every(item => item.dishId && item.nutrition)));
+  const created = await f.request(`/api/restaurants/${petr.id}/package-dishes`, { token: admin.token, method: 'POST', body: { name: 'Индейка с овощами', category: 'Горячее', description: 'Для пакета', weight: '250 г', nutrition: { kcal: 330, protein: 40, fat: 9, carbs: 18 }, photoUrl: '', allergens: [], vegetarian: false, labels: ['Много белка'], available: true } });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.packageOnly, true);
+  const offer = await f.request(`/api/restaurants/${petr.id}/packages`, { token: admin.token, method: 'POST', body: { name: 'Пакет с индейкой', description: 'Ужин', price: 250000, items: [{ dishId: created.data.id, grams: 250, choiceGroup: '' }] } });
+  assert.equal(offer.status, 201);
+  assert.equal(offer.data.items[0].nutrition.protein, 40);
+  const event = await f.request('/api/events', { token: admin.token, method: 'POST', body: { title: 'Ужин', restaurantId: petr.id, date: atNoon(14), deadline: atNoon(10), expectedGuests: 3, selectionMode: 'package', packageId: offer.data.id } });
+  assert.equal(event.status, 201);
+  assert.equal(event.data.package.items[0].nutrition.protein, 40);
+  assert.equal((await f.request(`/api/restaurants/${petr.id}/package-dishes/${created.data.id}`, { token: admin.token, method: 'PATCH', body: { nutrition: { kcal: 360, protein: 45, fat: 10, carbs: 18 } } })).status, 200);
+  const detail = await f.request(`/api/events/${event.data.id}`, { token: admin.token });
+  assert.equal(detail.data.event.package.items[0].nutrition.protein, 40);
+  assert.equal((await f.request(`/api/restaurants/${petr.id}/package-dishes/${created.data.id}`, { token: admin.token, method: 'DELETE' })).status, 409);
+  const latest = (await f.request('/api/restaurants', { token: admin.token })).data.find(restaurant => restaurant.id === petr.id);
+  assert.ok(!latest.menu.some(item => item.id === created.data.id));
+});
+
+test('moving legacy test dishes from Petr to Temp keeps existing approved order prices', async t => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { Store } = await import('../server/store.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'banquet-migrate-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = { databasePath: join(directory, 'db.sqlite'), demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', maxDemoSpaces: 10 };
+  const old = new Store(config);
+  const owner = old.authenticate(old.loginMax({ id: '900', name: 'Администратор' }).token);
+  const petr = old.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").get();
+  const sample = JSON.parse(old.db.prepare("SELECT data FROM menu_items WHERE restaurant_id=(SELECT id FROM restaurants WHERE name='Тёплый вечер') AND json_extract(data,'$.name')='Буррата с томатами'").get().data);
+  const sampleId = 'legacy_sample';
+  old.db.prepare('INSERT INTO menu_items VALUES (?,?,?)').run(sampleId, petr.id, JSON.stringify({ ...sample, id: sampleId }));
+  const event = old.transaction(() => old.createEvent(owner, { title: 'Старый заказ', restaurantId: petr.id, date: atNoon(14), deadline: atNoon(10), expectedGuests: 1 }));
+  old.db.prepare('INSERT INTO guests VALUES (?,?,1,?,?)').run(event.id, owner.id, '', new Date().toISOString());
+  old.db.prepare('INSERT INTO selections VALUES (?,?,?,?,?,?)').run(event.id, owner.id, sampleId, 2, sample.price, sample.name);
+  old.db.prepare("UPDATE events SET status='approved' WHERE id=?").run(event.id);
+  const before = old.presentEvent(old.eventRow(event.id, owner), owner).total;
+  old.db.exec('PRAGMA user_version=10');
+  old.close();
+  const migrated = new Store(config);
+  t.after(() => migrated.close());
+  assert.equal(migrated.db.prepare('SELECT restaurant_id FROM menu_items WHERE id=?').get(sampleId).restaurant_id, migrated.db.prepare("SELECT id FROM restaurants WHERE name='Temp'").get().id);
+  const changed = JSON.parse(migrated.db.prepare('SELECT data FROM event_menu WHERE event_id=? AND item_id=?').get(event.id, sampleId).data);
+  assert.equal(changed.name, 'Капрезе с помидорами и базиликом');
+  assert.equal(changed.price, sample.price);
+  const currentOwner = migrated.db.prepare('SELECT * FROM users WHERE id=?').get(owner.id);
+  assert.equal(migrated.presentEvent(migrated.eventRow(event.id, currentOwner), currentOwner).total, before);
+});

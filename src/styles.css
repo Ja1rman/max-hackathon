@@ -2826,3 +2826,28 @@ button:not(:disabled):active { transform: scale(0.97); }
   .kitchen > .section-head .admin-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; width: 100%; }
   .kitchen > .section-head .admin-actions .btn { justify-content: center; min-width: 0; padding: 10px 6px; }
 }
+.toast-error { background: #a43e35; display: flex; width: min(520px, calc(100vw - 32px)); font-size: 13px; line-height: 1.4; }
+.toast-error span { flex: 1; }
+.toast-error .icon-btn { color: #fff; flex: none; }
+.booking-windows { display: grid; gap: 8px; }
+.booking-window { display: grid; grid-template-columns: minmax(65px, .8fr) minmax(0, 1fr) minmax(0, 1fr) 30px; align-items: center; gap: 7px; }
+.booking-window input, .booking-window select { width: 100%; min-width: 0; }
+.booking-availability { background: var(--soft); border: 1px solid #dce5d9; border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; margin: 8px 0 16px; }
+.booking-availability small { color: var(--muted); line-height: 1.4; }
+.package-dish-photo { width: 100%; max-height: 120px; object-fit: cover; border-radius: 8px; margin: 8px 0; }
+.package-photo-preview { display: flex; align-items: flex-start; gap: 10px; }
+.package-photo-preview img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; }
+.package-edit-row { display: grid; grid-template-columns: minmax(0, 1fr) 74px 12px auto 28px; align-items: center; gap: 7px; margin: 8px 0; }
+.package-edit-row select, .package-edit-row input { min-width: 0; width: 100%; }
+.package-edit-row .check { margin: 0; white-space: nowrap; }
+.package-item-rich { display: flex; align-items: flex-start; gap: 10px; }
+.package-item-rich img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; flex: none; }
+.package-item-rich > div { display: grid; gap: 4px; min-width: 0; }
+.package-item-rich p { margin: 0; }
+.package-item-rich small { color: var(--muted); }
+@media (max-width: 540px) {
+  .booking-window { grid-template-columns: 60px minmax(0, 1fr) minmax(0, 1fr) 24px; gap: 4px; }
+  .booking-window input, .booking-window select { padding: 9px 4px; font-size: 12px; }
+  .package-edit-row { grid-template-columns: minmax(0, 1fr) 64px 12px 28px; }
+  .package-edit-row .check { grid-column: 1 / -1; grid-row: auto; }
+}

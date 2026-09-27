@@ -29,7 +29,7 @@ test('API exposes no secrets, rejects unsigned sessions and derives restaurant r
   assert.equal((await f.request('/api/events')).status, 401);
   assert.equal((await f.request('/api/me', { token: 'max_900' })).status, 401);
   const ordinary = await f.login(101);
-  assert.equal(ordinary.user.role, 'organizer');
+  assert.equal(ordinary.user.role, 'guest');
   assert.equal(ordinary.user.demo, false);
   const admin = await f.login(900);
   assert.equal(admin.user.role, 'admin');

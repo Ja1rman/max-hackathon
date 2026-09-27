@@ -7,7 +7,7 @@ import { MENU_LABELS } from '../shared/menu-labels.mjs';
 import { PETR_MENU, PETR_PACKAGES } from './petr-menu.mjs';
 import { spentByUnit } from '../shared/currency.mjs';
 import { workbook } from './xlsx.mjs';
-import { SEATING_MODES, autoAssign, generateLayout, layoutSeats, seatTitle, tableSeats, validateLayout } from '../shared/seating.mjs';
+import { SEATING_MODES, SEATING_TEMPLATES, autoAssign, generateLayout, layoutSeats, seatTitle, tableSeats, validateLayout } from '../shared/seating.mjs';
 
 const secret = () => randomBytes(32).toString('base64url');
 const id = prefix => `${prefix}_${randomUUID()}`;
@@ -78,9 +78,42 @@ function packageOffer(value, offerId) {
     id: offerId, name: string(value.name, 'Название пакета', 120),
     description: string(value.description ?? '', 'Описание пакета', 500, true),
     price: integer(value.price, 'Цена пакета в копейках', 1, 100000000),
-    items: value.items.map(entry => ({ name: string(entry.name, 'Название позиции', 120), category: string(entry.category, 'Категория', 80), grams: integer(entry.grams, 'Граммы на гостя', 1, 10000) })),
+    items: value.items.map(entry => ({ dishId: string(entry.dishId, 'Блюдо пакета', 100), grams: integer(entry.grams, 'Граммы на гостя', 1, 10000), choiceGroup: string(entry.choiceGroup || '', 'Группа выбора', 80, true) })),
   };
 }
+function packageDish(value, dishId) {
+  const nutrition = value.nutrition || {};
+  const dish = {
+    id: dishId, name: string(value.name, 'Название блюда', 120), category: string(value.category, 'Категория', 80),
+    description: string(value.description ?? '', 'Описание', 500, true), weight: string(value.weight ?? '', 'Вес', 40, true),
+    photoUrl: value.photoUrl || '', allergens: value.allergens ?? [], vegetarian: value.vegetarian ?? false,
+    labels: value.labels ?? [], available: value.available ?? true, packageOnly: true,
+    nutrition: { kcal: integer(nutrition.kcal, 'Калории', 0, 10000), protein: grams(nutrition.protein, 'Белки'), fat: grams(nutrition.fat, 'Жиры'), carbs: grams(nutrition.carbs, 'Углеводы') },
+  };
+  if (typeof dish.photoUrl !== 'string' || (dish.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(dish.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
+  if (!Array.isArray(dish.allergens) || dish.allergens.length > 20) throw new HttpError(400, 'Аллергены: список до 20 значений.');
+  dish.allergens = dish.allergens.map(value => string(value, 'Аллерген', 80));
+  if (!Array.isArray(dish.labels) || new Set(dish.labels).size !== dish.labels.length || dish.labels.some(label => !MENU_LABELS.includes(label))) throw new HttpError(400, 'Некорректные пометки блюда.');
+  if (typeof dish.vegetarian !== 'boolean' || typeof dish.available !== 'boolean') throw new HttpError(400, 'Доступность и вегетарианское блюдо должны быть true/false.');
+  return dish;
+}
+
+const DEFAULT_WINDOWS = Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '09:00', end: '23:00' }));
+const SEATING_CHOICES = ['choice', 'fixed'];
+const SAMPLE_REPLACEMENTS = {
+  'Буррата с томатами': 'Капрезе с помидорами и базиликом',
+  'Салат с ростбифом': 'Салат Цезарь с цыплёнком',
+  'Лосось с овощами': 'Филе лосося на гриле с брокколи и цветной капустой, запечённые под Пармезаном',
+  'Цыплёнок с пюре': 'Филе индейки в сырной корочке с картофелем сотэ, салатом из рукколы и чесночным соусом',
+  'Ризотто с грибами': 'Жульен из белых грибов в кокотнице',
+  'Павлова с ягодами': 'Жасминовая панакота с вишнёвым компоте в шоте',
+  'Шоколадный фондан': 'Мини-шоколадный торт',
+  'Домашний лимонад': 'Вода в кувшине с яблоком, лимоном и мятой',
+  'Ягодный морс': 'Морс клюквенный',
+  'Чай с мятой': 'Чай заварной в ассортименте',
+  'Капучино': 'Чай заварной в ассортименте',
+  'Вода без газа': 'Вода питьевая в ассортименте (пластик)',
+};
 
 export class Store {
   constructor(config) {
@@ -110,10 +143,13 @@ export class Store {
       CREATE INDEX IF NOT EXISTS notification_due_idx ON notification_jobs(due_at) WHERE sent_at IS NULL AND cancelled_at IS NULL;
       CREATE TABLE IF NOT EXISTS media_assets (file_name TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS restaurant_members (restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, role TEXT NOT NULL CHECK(role IN ('admin','organizer')), created_at TEXT NOT NULL, PRIMARY KEY(restaurant_id,user_id));
+      CREATE TABLE IF NOT EXISTS event_organizers (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, granted_by TEXT REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL, PRIMARY KEY(event_id,user_id));
       CREATE TABLE IF NOT EXISTS global_admins (user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, granted_by TEXT REFERENCES users(id) ON DELETE SET NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS restaurant_members_user_idx ON restaurant_members(user_id);
       CREATE TABLE IF NOT EXISTS kitchen_download_tokens (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, format TEXT NOT NULL, expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS restaurant_packages (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS package_dishes (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS restaurant_halls (id TEXT PRIMARY KEY, restaurant_id TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE, name TEXT NOT NULL, capacity INTEGER NOT NULL, windows TEXT NOT NULL, allowed_seating TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS shared_items (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, menu_item_id TEXT NOT NULL, quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 1000), price INTEGER NOT NULL CHECK(price >= 0), name TEXT NOT NULL, PRIMARY KEY(event_id,menu_item_id));
       CREATE TABLE IF NOT EXISTS seat_assignments (event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE, seat_id TEXT NOT NULL, invite_id TEXT REFERENCES guest_invites(id) ON DELETE CASCADE, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, source TEXT NOT NULL, assigned_at TEXT NOT NULL, PRIMARY KEY(event_id,seat_id), UNIQUE(event_id,invite_id), UNIQUE(event_id,user_id), CHECK((invite_id IS NULL) != (user_id IS NULL)));
       `);
@@ -132,6 +168,8 @@ export class Store {
     if (!eventColumns.includes('photo_url')) this.db.exec("ALTER TABLE events ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
     if (!eventColumns.includes('selection_mode')) this.db.exec("ALTER TABLE events ADD COLUMN selection_mode TEXT NOT NULL DEFAULT 'individual'");
     if (!eventColumns.includes('package_data')) this.db.exec("ALTER TABLE events ADD COLUMN package_data TEXT NOT NULL DEFAULT ''");
+    if (!eventColumns.includes('duration_hours')) this.db.exec('ALTER TABLE events ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 4');
+    if (!eventColumns.includes('hall_id')) this.db.exec("ALTER TABLE events ADD COLUMN hall_id TEXT NOT NULL DEFAULT ''");
     const kitchenTokenColumns = this.db.prepare('PRAGMA table_info(kitchen_download_tokens)').all().map(column => column.name);
     if (!kitchenTokenColumns.includes('event_ids')) this.db.exec("ALTER TABLE kitchen_download_tokens ADD COLUMN event_ids TEXT NOT NULL DEFAULT ''");
     const userColumns = this.db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
@@ -144,7 +182,8 @@ export class Store {
     this.migrateSampleNutrition();
     if (previousVersion < 8) this.migrateAccess();
     if (previousVersion < 10) this.transaction(() => this.seedPetr());
-    this.db.exec('PRAGMA user_version = 10');
+    if (previousVersion < 11) this.transaction(() => this.migrateBookingsAndPackages());
+    this.db.exec('PRAGMA user_version = 11');
     this.cleanup();
   }
   seedPetr() {
@@ -164,6 +203,89 @@ export class Store {
       addPackage.run(offerId, restaurantId, JSON.stringify({ ...entry, id: offerId }));
     }
     this.db.prepare('UPDATE restaurants SET sample_menu=0 WHERE id=?').run(restaurantId);
+  }
+  ensureHall(restaurantId) {
+    const existing = this.db.prepare('SELECT id FROM restaurant_halls WHERE restaurant_id=? LIMIT 1').get(restaurantId);
+    if (existing) return existing.id;
+    const hallId = id('hall');
+    this.db.prepare('INSERT INTO restaurant_halls VALUES (?,?,?,?,?,?)').run(hallId, restaurantId, 'Основной зал', 1000, JSON.stringify(DEFAULT_WINDOWS), JSON.stringify(SEATING_CHOICES));
+    return hallId;
+  }
+  migrateBookingsAndPackages() {
+    for (const restaurant of this.db.prepare('SELECT id FROM restaurants').all()) this.ensureHall(restaurant.id);
+    this.db.prepare(`UPDATE events SET hall_id=(SELECT id FROM restaurant_halls WHERE restaurant_id=events.restaurant_id ORDER BY rowid LIMIT 1) WHERE hall_id=''`).run();
+    const petr = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Петръ'").get();
+    if (petr) {
+      let temp = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Temp'").get();
+      if (!temp) {
+        temp = { id: id('restaurant') };
+        this.db.prepare('INSERT INTO restaurants VALUES (?,?,?,?,?,0)').run(temp.id, 'live', 'Temp', 'Тестовый каталог, отделённый от меню ресторана «Петръ».', '');
+      }
+      this.ensureHall(temp.id);
+      const real = new Map(this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=?').all(petr.id).map(row => { const item = JSON.parse(row.data); return [item.name, item]; }));
+      for (const row of this.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(petr.id)) {
+        const item = JSON.parse(row.data);
+        if (Object.hasOwn(SAMPLE_REPLACEMENTS, item.name)) this.db.prepare('UPDATE menu_items SET restaurant_id=? WHERE id=?').run(temp.id, row.id);
+      }
+      const tempNames = new Set(this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=?').all(temp.id).map(row => JSON.parse(row.data).name));
+      for (const sample of SAMPLE_MENU) if (!tempNames.has(sample.name)) {
+        const sampleId = id('dish');
+        this.db.prepare('INSERT INTO menu_items VALUES (?,?,?)').run(sampleId, temp.id, JSON.stringify({ ...sample, id: sampleId, photoUrl: '', ingredients: '', forGuests: true, available: true, vegetarian: Boolean(sample.vegetarian), allergens: sample.allergens || [], labels: sample.labels || [] }));
+      }
+      for (const row of this.db.prepare('SELECT event_menu.event_id,event_menu.item_id,event_menu.data FROM event_menu JOIN events ON events.id=event_menu.event_id WHERE events.restaurant_id=?').all(petr.id)) {
+        const old = JSON.parse(row.data);
+        const replacement = real.get(SAMPLE_REPLACEMENTS[old.name]);
+        if (!replacement) continue;
+        // Keep the banquet's agreed price snapshot while replacing only the test dish identity and details.
+        const next = { ...replacement, id: row.item_id, price: old.price };
+        this.db.prepare('UPDATE event_menu SET data=? WHERE event_id=? AND item_id=?').run(JSON.stringify(next), row.event_id, row.item_id);
+        this.db.prepare('UPDATE selections SET name=? WHERE event_id=? AND menu_item_id=?').run(next.name, row.event_id, row.item_id);
+        this.db.prepare('UPDATE shared_items SET name=? WHERE event_id=? AND menu_item_id=?').run(next.name, row.event_id, row.item_id);
+        this.db.prepare('UPDATE events SET revision=revision+1 WHERE id=?').run(row.event_id);
+      }
+    }
+    const addDish = this.db.prepare('INSERT INTO package_dishes VALUES (?,?,?)');
+    const updatePackage = this.db.prepare('UPDATE restaurant_packages SET data=? WHERE id=?');
+    const dishByName = new Map();
+    for (const row of this.db.prepare('SELECT * FROM restaurant_packages').all()) {
+      const offer = JSON.parse(row.data);
+      if (offer.items.every(item => item.dishId)) continue;
+      const refs = [];
+      for (const item of offer.items) {
+        const alternatives = item.category === 'Горячее на выбор' ? item.name.split('/').map(name => name.trim()) : [item.name];
+        for (const name of alternatives) {
+          const category = item.category === 'Горячее на выбор' ? 'Горячее' : item.category;
+          const key = `${row.restaurant_id}|${category}|${name}`;
+          let dishId = dishByName.get(key);
+          if (!dishId) {
+            dishId = id('package_dish');
+            const source = PETR_MENU.find(entry => entry.name === name || entry.name.startsWith(`${name} `) || name.startsWith(entry.name));
+            const grams = item.grams;
+            const factor = source ? grams / (Number.parseInt(source.weight, 10) || 100) : 1;
+            const nutrition = source ? Object.fromEntries(Object.entries(source.nutrition).map(([k, v]) => [k, Math.round(v * factor * 10) / 10])) : { kcal: Math.round(grams * 1.8), protein: Math.round(grams * .1 * 10) / 10, fat: Math.round(grams * .08 * 10) / 10, carbs: Math.round(grams * .12 * 10) / 10 };
+            addDish.run(dishId, row.restaurant_id, JSON.stringify({ id: dishId, name, category, description: 'Блюдо пакетного предложения. КБЖУ ориентировочное — уточните у ресторана.', weight: `${grams} г`, nutrition, photoUrl: '', allergens: source?.allergens || [], vegetarian: source?.vegetarian || false, labels: [], available: true, packageOnly: true }));
+            dishByName.set(key, dishId);
+          }
+          refs.push({ dishId, grams: item.grams, choiceGroup: item.category === 'Горячее на выбор' ? 'Горячее' : '' });
+        }
+      }
+      updatePackage.run(JSON.stringify({ ...offer, items: refs }), row.id);
+    }
+    for (const event of this.db.prepare("SELECT id,restaurant_id,package_data FROM events WHERE selection_mode='package'").all()) {
+      if (!event.package_data) continue;
+      const snapshot = JSON.parse(event.package_data);
+      if (snapshot.items.every(item => item.dishId)) continue;
+      const dishes = this.db.prepare('SELECT data FROM package_dishes WHERE restaurant_id=?').all(event.restaurant_id).map(row => JSON.parse(row.data));
+      const items = snapshot.items.map(item => {
+        const dish = dishes.find(entry => entry.name === item.name && (entry.category === item.category || item.category === 'Горячее на выбор'));
+        return dish ? { ...dish, dishId: dish.id, grams: item.grams, choiceGroup: '' } : item;
+      });
+      this.db.prepare('UPDATE events SET package_data=? WHERE id=?').run(JSON.stringify({ ...snapshot, items }), event.id);
+    }
+    const legacy = this.db.prepare("SELECT restaurant_id,user_id FROM restaurant_members WHERE role='organizer'").all();
+    const grantOrganizer = this.db.prepare('INSERT OR IGNORE INTO event_organizers VALUES (?,?,NULL,?)');
+    for (const member of legacy) for (const event of this.db.prepare('SELECT id FROM events WHERE restaurant_id=?').all(member.restaurant_id)) grantOrganizer.run(event.id, member.user_id, iso(Date.now()));
+    this.db.prepare("DELETE FROM restaurant_members WHERE role='organizer'").run();
   }
   /** v8: per-restaurant access replaces the phone-based organizer list. */
   migrateAccess() {
@@ -227,27 +349,27 @@ export class Store {
       const itemId = id('dish');
       add.run(itemId, restaurantId, JSON.stringify({ ...entry, id: itemId, available: true }));
     }
+    this.ensureHall(restaurantId);
     return restaurantId;
   }
   isSuperAdmin(user) {
     return user.demo ? user.role === 'restaurant' : this.config.restaurantAdminIds.includes(user.external_id) || Boolean(this.db.prepare('SELECT 1 FROM global_admins WHERE user_id=?').get(user.id));
   }
-  /** restaurantId → 'admin' | 'organizer'. Superadmins administer every restaurant; demo roles apply to the whole demo space. */
+  /** restaurantId → 'admin'. Organizer rights belong to a banquet, not a restaurant. */
   accessOf(user) {
     const access = new Map();
     const all = this.db.prepare('SELECT id FROM restaurants WHERE scope=?').all(user.scope).map(row => row.id);
     if (this.isSuperAdmin(user)) { for (const restaurantId of all) access.set(restaurantId, 'admin'); return access; }
-    if (user.demo && user.role === 'organizer') { for (const restaurantId of all) access.set(restaurantId, 'organizer'); return access; }
-    for (const row of this.db.prepare('SELECT restaurant_id,role FROM restaurant_members WHERE user_id=?').all(user.id)) access.set(row.restaurant_id, row.role);
-    if (this.config.openOrganizerSignup && !user.demo) for (const restaurantId of all) if (!access.has(restaurantId)) access.set(restaurantId, 'organizer');
+    for (const row of this.db.prepare("SELECT restaurant_id FROM restaurant_members WHERE user_id=? AND role='admin'").all(user.id)) access.set(row.restaurant_id, 'admin');
     return access;
   }
-  /** Attach access and the coarse UI role: administrator somewhere → restaurant, organizer somewhere → organizer, else guest. */
+  /** Attach access and the coarse UI role. Event ownership and grants confer organizer status. */
   hydrate(user) {
     user.access = this.accessOf(user);
     user.superAdmin = this.isSuperAdmin(user);
     const roles = [...user.access.values()];
-    user.role = user.superAdmin || roles.includes('admin') ? 'restaurant' : roles.includes('organizer') ? 'organizer' : 'guest';
+    const organizer = Boolean(this.db.prepare('SELECT 1 FROM events WHERE owner_id=? UNION SELECT 1 FROM event_organizers WHERE user_id=? LIMIT 1').get(user.id, user.id));
+    user.role = user.superAdmin || roles.includes('admin') ? 'restaurant' : organizer || (user.demo && user.role === 'organizer') ? 'organizer' : 'guest';
     return user;
   }
   adminOf(user, restaurantId) { return (user.access || this.accessOf(user)).get(restaurantId) === 'admin'; }
@@ -267,14 +389,44 @@ export class Store {
   bindPhone(user, phone) {
     if (user.demo || !user.external_id) throw new HttpError(403, 'Подтверждение номера доступно только в MAX.');
     return this.transaction(() => {
-      const existing = this.db.prepare("SELECT id FROM users WHERE scope='live' AND phone=? AND id!=?").get(phone, user.id);
-      if (existing) throw new HttpError(409, 'Этот номер уже привязан к другому аккаунту MAX.');
+      const existing = this.db.prepare("SELECT * FROM users WHERE scope='live' AND phone=? AND id!=?").get(phone, user.id);
+      if (existing && (existing.external_id || existing.phone_verified_at)) throw new HttpError(409, 'Этот номер уже привязан к другому аккаунту MAX.');
       if (user.phone && user.phone !== phone && this.db.prepare('SELECT 1 FROM guest_invites WHERE user_id=?').get(user.id)) {
         throw new HttpError(409, 'Номер уже связан с приглашением. Обратитесь к организатору.');
+      }
+      if (existing) {
+        for (const row of this.db.prepare('SELECT restaurant_id,role,created_at FROM restaurant_members WHERE user_id=?').all(existing.id)) this.db.prepare('INSERT OR IGNORE INTO restaurant_members VALUES (?,?,?,?)').run(row.restaurant_id, user.id, row.role, row.created_at);
+        for (const row of this.db.prepare('SELECT event_id,granted_by,created_at FROM event_organizers WHERE user_id=?').all(existing.id)) this.db.prepare('INSERT OR IGNORE INTO event_organizers VALUES (?,?,?,?)').run(row.event_id, user.id, row.granted_by, row.created_at);
+        const global = this.db.prepare('SELECT granted_by,created_at FROM global_admins WHERE user_id=?').get(existing.id);
+        if (global) this.db.prepare('INSERT OR IGNORE INTO global_admins VALUES (?,?,?)').run(user.id, global.granted_by, global.created_at);
+        this.db.prepare('DELETE FROM users WHERE id=?').run(existing.id);
       }
       this.db.prepare('UPDATE users SET phone=?,phone_verified_at=? WHERE id=?').run(phone, Date.now(), user.id);
       return this.publicUser(this.db.prepare('SELECT * FROM users WHERE id=?').get(user.id));
     });
+  }
+  resolveIdentity(scope, targetId) {
+    try { targetId = decodeURIComponent(targetId); }
+    catch { throw new HttpError(400, 'Некорректный идентификатор пользователя.'); }
+    if (scope !== 'live' && /^(?:phone:|max:)/.test(targetId)) throw new HttpError(403, 'Демо не назначает реальные MAX-аккаунты.');
+    if (/^phone:/.test(targetId)) {
+      const phone = normalizePhone(targetId.slice(6));
+      let target = this.db.prepare('SELECT * FROM users WHERE scope=? AND phone=?').get(scope, phone);
+      if (!target) {
+        const pendingId = id('pending');
+        this.db.prepare('INSERT INTO users (id,scope,external_id,name,role,demo,phone) VALUES (?, ?, NULL, ?, ?, 0, ?)').run(pendingId, scope, `Телефон +${phone}`, 'guest', phone);
+        target = this.db.prepare('SELECT * FROM users WHERE id=?').get(pendingId);
+      }
+      return target;
+    }
+    const maxId = targetId.startsWith('max:') ? targetId.slice(4) : targetId;
+    if (/^[1-9][0-9]{0,18}$/.test(maxId)) {
+      this.db.prepare("INSERT OR IGNORE INTO users (id,scope,external_id,name,role,demo) VALUES (?,'live',?,?,'guest',0)").run(`max_${maxId}`, maxId, `MAX ${maxId}`);
+      targetId = `max_${maxId}`;
+    }
+    const target = this.db.prepare('SELECT * FROM users WHERE id=? AND scope=?').get(targetId, scope);
+    if (!target) throw new HttpError(404, 'Пользователь не найден. Укажите телефон или MAX ID.');
+    return target;
   }
   setNotifications(user, enabled) {
     if (typeof enabled !== 'boolean') throw new HttpError(400, 'Укажите true или false.');
@@ -307,7 +459,6 @@ export class Store {
   }
   cancelNotice(jobId) { this.db.prepare('UPDATE notification_jobs SET cancelled_at=? WHERE id=?').run(Date.now(), jobId); }
   registerMedia(user, fileName) {
-    if (user.role === 'guest') throw new HttpError(403, 'Загружать фото может организатор или ресторан.');
     if (this.db.prepare('SELECT COUNT(*) AS count FROM media_assets WHERE owner_id=?').get(user.id).count >= 500) throw new HttpError(429, 'Достигнут предел фотографий.');
     this.db.prepare('INSERT INTO media_assets VALUES (?,?,?)').run(fileName, user.id, Date.now());
   }
@@ -399,11 +550,81 @@ export class Store {
   }
   restaurants(user) {
     const access = user.access || this.accessOf(user);
-    return this.db.prepare('SELECT * FROM restaurants WHERE scope=? ORDER BY sample_menu DESC,name').all(user.scope).filter(row => access.has(row.id)).map(row => ({
-      id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu), access: access.get(row.id),
+    return this.db.prepare('SELECT * FROM restaurants WHERE scope=? ORDER BY sample_menu DESC,name').all(user.scope).map(row => ({
+      id: row.id, name: row.name, description: row.description, address: row.address, sampleMenu: Boolean(row.sample_menu), access: access.get(row.id) || null,
       menu: this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => presentMenuItem(item.data)),
-      packages: this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => JSON.parse(item.data)),
+      packageDishes: this.db.prepare('SELECT data FROM package_dishes WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => JSON.parse(item.data)),
+      packages: this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=? ORDER BY rowid').all(row.id).map(item => this.presentPackage(JSON.parse(item.data), row.id)),
+      halls: this.halls(row.id),
     }));
+  }
+  halls(restaurantId) {
+    return this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurantId).map(row => ({ id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: JSON.parse(row.allowed_seating) }));
+  }
+  editHall(user, restaurantId, hallId, body) {
+    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Настройки зала меняет администратор ресторана.');
+    const restaurant = this.db.prepare('SELECT id FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+    const old = hallId ? this.halls(restaurantId).find(hall => hall.id === hallId) : null;
+    if (hallId && !old) throw new HttpError(404, 'Зал не найден.');
+    if (!hallId && this.halls(restaurantId).length >= 20) throw new HttpError(429, 'Достигнут предел залов.');
+    const name = string(body.name ?? old?.name, 'Название зала', 100);
+    const capacity = integer(body.capacity ?? old?.capacity, 'Вместимость', 1, 1000);
+    const windows = body.windows ?? old?.windows;
+    if (!Array.isArray(windows) || !windows.length || windows.length > 28) throw new HttpError(400, 'Укажите окна бронирования до 28 интервалов в неделю.');
+    const validTime = value => typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+    const normalized = windows.map(window => {
+      if (!Number.isInteger(window.weekday) || window.weekday < 0 || window.weekday > 6 || !validTime(window.start) || !validTime(window.end) || window.start >= window.end) throw new HttpError(400, 'Окно бронирования: день недели 0–6 и время HH:MM с началом до конца.');
+      return { weekday: window.weekday, start: window.start, end: window.end };
+    });
+    for (const [index, first] of normalized.entries()) if (normalized.some((second, next) => next > index && second.weekday === first.weekday && first.start < second.end && first.end > second.start)) throw new HttpError(400, 'Окна бронирования не должны пересекаться.');
+    const allowedSeating = body.allowedSeating ?? old?.allowedSeating;
+    if (!Array.isArray(allowedSeating) || new Set(allowedSeating).size !== allowedSeating.length || allowedSeating.some(mode => !SEATING_CHOICES.includes(mode))) throw new HttpError(400, 'Допустимые рассадки: choice и fixed.');
+    const value = { id: hallId || id('hall'), name, capacity, windows: normalized, allowedSeating };
+    if (old) {
+      for (const event of this.db.prepare('SELECT * FROM events WHERE hall_id=? AND date>?').all(old.id, iso(Date.now()))) {
+        if (event.expected_guests > capacity || (event.seating_mode !== 'off' && !allowedSeating.includes(event.seating_mode)) || !this.hallWindow(value, event.date, event.duration_hours)) throw new HttpError(409, 'Настройки противоречат уже забронированному банкету. Сначала измените банкет.');
+      }
+    }
+    this.db.prepare('INSERT INTO restaurant_halls VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,capacity=excluded.capacity,windows=excluded.windows,allowed_seating=excluded.allowed_seating').run(value.id, restaurantId, name, capacity, JSON.stringify(normalized), JSON.stringify(allowedSeating));
+    return value;
+  }
+  deleteHall(user, restaurantId, hallId) {
+    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Зал удаляет администратор ресторана.');
+    if (this.halls(restaurantId).length <= 1) throw new HttpError(409, 'У ресторана должен оставаться хотя бы один зал.');
+    if (this.db.prepare('SELECT 1 FROM events WHERE hall_id=?').get(hallId)) throw new HttpError(409, 'Зал уже используется в банкетах.');
+    if (this.db.prepare('DELETE FROM restaurant_halls WHERE id=? AND restaurant_id=?').run(hallId, restaurantId).changes !== 1) throw new HttpError(404, 'Зал не найден.');
+    return { success: true };
+  }
+  hallWindow(hall, dateValue, durationHours) {
+    const start = new Date(dateValue);
+    const end = new Date(start.getTime() + durationHours * 3600000);
+    const parts = value => Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Moscow', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(value).map(part => [part.type, part.value]));
+    const a = parts(start), b = parts(end);
+    if (`${a.year}-${a.month}-${a.day}` !== `${b.year}-${b.month}-${b.day}`) return false;
+    const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(a.weekday);
+    const startTime = `${a.hour}:${a.minute}`, endTime = `${b.hour}:${b.minute}`;
+    return hall.windows.some(window => window.weekday === weekday && window.start <= startTime && endTime <= window.end);
+  }
+  reserveHall(restaurantId, hallId, dateValue, durationHours, expectedGuests, excludeEventId = '') {
+    const hall = this.halls(restaurantId).find(entry => entry.id === hallId);
+    if (!hall) throw new HttpError(400, 'Выберите зал этого ресторана.');
+    if (expectedGuests > hall.capacity) throw new HttpError(409, `Зал «${hall.name}» вмещает не более ${hall.capacity} гостей.`);
+    if (!this.hallWindow(hall, dateValue, durationHours)) throw new HttpError(409, 'Время банкета с учётом длительности выходит за окно бронирования зала.');
+    const start = Date.parse(dateValue), end = start + durationHours * 3600000;
+    for (const event of this.db.prepare("SELECT id,title,date,duration_hours FROM events WHERE hall_id=? AND status IN ('collecting','approved') AND id!=?").all(hallId, excludeEventId)) {
+      if (start < Date.parse(event.date) + event.duration_hours * 3600000 && end > Date.parse(event.date)) throw new HttpError(409, `Зал «${hall.name}» уже забронирован на это время: ${event.title}.`);
+    }
+    return hall;
+  }
+  availability(user, restaurantId, day, hallId) {
+    const restaurant = this.db.prepare('SELECT id FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '') || Number.isNaN(Date.parse(`${day}T12:00:00+03:00`))) throw new HttpError(400, 'Укажите дату YYYY-MM-DD.');
+    const halls = this.halls(restaurantId).filter(hall => !hallId || hall.id === hallId);
+    if (!halls.length) throw new HttpError(404, 'Зал не найден.');
+    const weekday = new Date(`${day}T12:00:00+03:00`).getUTCDay();
+    return halls.map(hall => ({ ...hall, windows: hall.windows.filter(window => window.weekday === weekday), booked: this.db.prepare("SELECT id,date,duration_hours FROM events WHERE hall_id=? AND status IN ('collecting','approved')").all(hall.id).filter(event => new Date(event.date).toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }) === day).map(event => ({ eventId: event.id, start: event.date, end: iso(Date.parse(event.date) + event.duration_hours * 3600000) })) }));
   }
   editPackage(user, restaurantId, offerId, body) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Пакеты редактирует администратор ресторана.');
@@ -412,8 +633,37 @@ export class Store {
     const existing = offerId ? this.db.prepare('SELECT data FROM restaurant_packages WHERE id=? AND restaurant_id=?').get(offerId, restaurantId) : null;
     if (offerId && !existing) throw new HttpError(404, 'Пакет не найден.');
     const offer = packageOffer({ ...(existing ? JSON.parse(existing.data) : {}), ...body }, offerId || id('package'));
+    const choices = new Set(offer.items.map(item => item.choiceGroup).filter(Boolean));
+    if (choices.size > 1) throw new HttpError(400, 'В пакете допускается одна группа выбора горячего.');
+    for (const item of offer.items) {
+      const dish = this.db.prepare('SELECT data FROM package_dishes WHERE id=? AND restaurant_id=?').get(item.dishId, restaurantId);
+      if (!dish || !JSON.parse(dish.data).available) throw new HttpError(400, 'Выберите доступные блюда этого ресторана, помеченные «только для пакета».');
+    }
     this.db.prepare('INSERT INTO restaurant_packages VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(offer.id, restaurantId, JSON.stringify(offer));
-    return offer;
+    return this.presentPackage(offer, restaurantId);
+  }
+  presentPackage(offer, restaurantId) {
+    return { ...offer, items: offer.items.map(item => {
+      if (!item.dishId) return item;
+      const row = this.db.prepare('SELECT data FROM package_dishes WHERE id=? AND restaurant_id=?').get(item.dishId, restaurantId);
+      return { ...item, ...(row ? JSON.parse(row.data) : { name: 'Удалённое блюдо', category: 'Прочее' }), dishId: item.dishId, grams: item.grams, choiceGroup: item.choiceGroup || '' };
+    }) };
+  }
+  editPackageDish(user, restaurantId, dishId, body) {
+    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Блюда пакетов редактирует администратор ресторана.');
+    if (!this.db.prepare('SELECT 1 FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope)) throw new HttpError(404, 'Ресторан не найден.');
+    if (!dishId && this.db.prepare('SELECT COUNT(*) AS count FROM package_dishes WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд пакетов.');
+    const old = dishId ? this.db.prepare('SELECT data FROM package_dishes WHERE id=? AND restaurant_id=?').get(dishId, restaurantId) : null;
+    if (dishId && !old) throw new HttpError(404, 'Блюдо пакета не найдено.');
+    const dish = packageDish({ ...(old ? JSON.parse(old.data) : {}), ...body }, dishId || id('package_dish'));
+    this.db.prepare('INSERT INTO package_dishes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(dish.id, restaurantId, JSON.stringify(dish));
+    return dish;
+  }
+  deletePackageDish(user, restaurantId, dishId) {
+    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Блюда пакетов редактирует администратор ресторана.');
+    for (const row of this.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=?').all(restaurantId)) if (JSON.parse(row.data).items.some(item => item.dishId === dishId)) throw new HttpError(409, 'Блюдо входит в пакет. Сначала уберите его из пакета.');
+    if (this.db.prepare('DELETE FROM package_dishes WHERE id=? AND restaurant_id=?').run(dishId, restaurantId).changes !== 1) throw new HttpError(404, 'Блюдо пакета не найдено.');
+    return { success: true };
   }
   deletePackage(user, restaurantId, offerId) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Пакеты редактирует администратор ресторана.');
@@ -424,20 +674,20 @@ export class Store {
   selectedPackage(restaurantId, packageId, choice) {
     const row = this.db.prepare('SELECT data FROM restaurant_packages WHERE id=? AND restaurant_id=?').get(packageId, restaurantId);
     if (!row) throw new HttpError(400, 'Выберите пакетное предложение этого ресторана.');
-    const offer = JSON.parse(row.data);
-    const variants = offer.items.filter(item => item.category === 'Горячее на выбор');
+    const offer = this.presentPackage(JSON.parse(row.data), restaurantId);
+    const variants = offer.items.filter(item => item.choiceGroup);
     if (!variants.length) return offer;
-    if (variants.length > 1) throw new HttpError(400, 'Пакет должен содержать только один выбор горячего.');
-    const options = variants[0].name.split('/').map(value => value.trim());
-    if (!options.includes(choice)) throw new HttpError(400, 'Выберите горячее блюдо для фиксированного пакета.');
-    return { ...offer, items: offer.items.map(item => item === variants[0] ? { ...item, category: 'Горячее', name: choice } : item) };
+    const selected = variants.find(item => item.dishId === choice || item.name === choice);
+    if (!selected) throw new HttpError(400, 'Выберите горячее блюдо для фиксированного пакета.');
+    return { ...offer, items: offer.items.filter(item => !item.choiceGroup || item.dishId === selected.dishId).map(item => ({ ...item, choiceGroup: '' })) };
   }
   eventRow(eventId, user) {
     const row = this.db.prepare('SELECT * FROM events WHERE id=? AND scope=?').get(eventId, user.scope);
     if (!row) throw new HttpError(404, 'Банкет не найден.');
     return row;
   }
-  isManager(user, event) { return event.scope === user.scope && (this.adminOf(user, event.restaurant_id) || (event.owner_id === user.id && (user.access || this.accessOf(user)).has(event.restaurant_id))); }
+  isOrganizer(user, event) { return event.owner_id === user.id || Boolean(this.db.prepare('SELECT 1 FROM event_organizers WHERE event_id=? AND user_id=?').get(event.id, user.id)); }
+  isManager(user, event) { return event.scope === user.scope && (this.adminOf(user, event.restaurant_id) || this.isOrganizer(user, event)); }
   canRead(user, event) {
     if (this.isManager(user, event)) return true;
     if (event.owner_id === user.id) return true;
@@ -451,7 +701,8 @@ export class Store {
     const total = this.db.prepare('SELECT COALESCE(SUM(quantity*price),0) AS total FROM selections WHERE event_id=?').get(row.id).total + sharedTotal + (selectedPackage?.price || 0) * row.expected_guests;
     const counts = this.db.prepare('SELECT COUNT(*) AS joined, COALESCE(SUM(submitted),0) AS responded FROM guests WHERE event_id=?').get(row.id);
     const restaurant = this.db.prepare('SELECT name,sample_menu FROM restaurants WHERE id=?').get(row.restaurant_id);
-    const event = { id: row.id, title: row.title, photoUrl: row.photo_url || '', date: row.date, deadline: row.deadline, status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true, seatingMode: row.seating_mode, selectionMode: row.selection_mode, package: selectedPackage };
+    const hall = this.halls(row.restaurant_id).find(entry => entry.id === row.hall_id);
+    const event = { id: row.id, title: row.title, photoUrl: row.photo_url || '', date: row.date, deadline: row.deadline, durationHours: row.duration_hours, hallId: row.hall_id, hallName: hall?.name || '', status: row.status, restaurantId: row.restaurant_id, restaurantName: restaurant.name, demo: row.scope !== 'live', sampleMenu: Boolean(restaurant.sample_menu), menuSnapshot: true, seatingMode: row.seating_mode, selectionMode: row.selection_mode, package: selectedPackage };
     if (!publicOnly) Object.assign(event, { expectedGuests: row.expected_guests, total, responded: counts.responded, joined: counts.joined, approvedAt: row.approved_at, isOwner: user?.id === row.owner_id, revision: row.revision, foodBudget: row.food_budget, drinkBudget: row.drink_budget });
     if (!publicOnly) event.canManage = Boolean(user && this.isManager(user, row));
     if (!publicOnly && event.canManage) {
@@ -468,7 +719,7 @@ export class Store {
     if (count >= (user.demo ? 30 : 500)) throw new HttpError(429, 'Достигнут предел банкетов для этого организатора.');
     const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(body.restaurantId, user.scope);
     if (!restaurant) throw new HttpError(400, 'Выберите доступный ресторан.');
-    if (!(user.access || this.accessOf(user)).has(restaurant.id)) throw new HttpError(403, 'Создать банкет в этом ресторане может его организатор или администратор.');
+    if (!user.demo && !user.external_id) throw new HttpError(403, 'Создать банкет можно после входа через MAX.');
     const title = string(body.title, 'Название', 120);
     const eventDate = date(body.date, 'Дата банкета');
     const deadline = date(body.deadline, 'Срок выбора');
@@ -476,14 +727,25 @@ export class Store {
     const expected = integer(body.expectedGuests, 'Число гостей', 1, 1000);
     const foodBudget = integer(body.foodBudget ?? 0, 'Бюджет на еду');
     const drinkBudget = integer(body.drinkBudget ?? 0, 'Бюджет на напитки');
+    const durationHours = integer(body.durationHours ?? 4, 'Длительность в часах', 1, 12);
+    const hallId = body.hallId || this.ensureHall(restaurant.id);
     const photoUrl = this.eventPhoto(body.photoUrl || '');
     const selectionMode = body.selectionMode || 'individual';
     if (!['individual', 'package'].includes(selectionMode)) throw new HttpError(400, 'Режим заказа: individual или package.');
     const selectedPackage = selectionMode === 'package' ? this.selectedPackage(restaurant.id, body.packageId, body.packageChoice) : null;
+    const hall = this.reserveHall(restaurant.id, hallId, eventDate, durationHours, expected);
+    const seatingMode = body.seating?.mode || 'off';
+    if (!SEATING_MODES.includes(seatingMode) || (seatingMode !== 'off' && !hall.allowedSeating.includes(seatingMode))) throw new HttpError(400, 'Этот вариант рассадки недоступен для выбранного зала.');
+    const template = body.seating?.template || 'rounds';
+    if (seatingMode !== 'off' && !SEATING_TEMPLATES.some(entry => entry.id === template)) throw new HttpError(400, 'Неизвестная схема зала.');
+    const seatingLayout = seatingMode === 'off' ? { tables: [] } : generateLayout(template, expected);
+    const checkedLayout = validateLayout(seatingLayout);
+    if (checkedLayout.error) throw new HttpError(400, checkedLayout.error);
     const menu = this.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(restaurant.id).filter(row => JSON.parse(row.data).available);
     if (!menu.length && !selectedPackage) throw new HttpError(409, 'В ресторане пока нет доступных блюд.');
     const eventId = id('event');
-    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,guest_budget,food_budget,drink_budget,status,invite_code,created_at,approved_at,photo_url,selection_mode,package_data) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?,?,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, secret().slice(0, 24), iso(Date.now()), photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '');
+    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,guest_budget,food_budget,drink_budget,status,invite_code,created_at,approved_at,photo_url,selection_mode,package_data,duration_hours,hall_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?,?,?,?,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, secret().slice(0, 24), iso(Date.now()), photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId);
+    if (seatingMode !== 'off') this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(seatingMode, JSON.stringify(checkedLayout.layout), eventId);
     const add = this.db.prepare('INSERT INTO event_menu VALUES (?,?,?)');
     for (const item of menu) add.run(eventId, item.id, item.data);
     return this.presentEvent(this.eventRow(eventId, user), user);
@@ -502,6 +764,9 @@ export class Store {
       const expected = body.expectedGuests === undefined ? event.expected_guests : integer(body.expectedGuests, 'Число гостей', Math.max(1, count), 1000);
       const foodBudget = body.foodBudget === undefined ? event.food_budget : integer(body.foodBudget, 'Бюджет на еду');
       const drinkBudget = body.drinkBudget === undefined ? event.drink_budget : integer(body.drinkBudget, 'Бюджет на напитки');
+      const durationHours = body.durationHours === undefined ? event.duration_hours : integer(body.durationHours, 'Длительность в часах', 1, 12);
+      const hallId = body.hallId === undefined ? event.hall_id : body.hallId;
+      this.reserveHall(event.restaurant_id, hallId, eventDate, durationHours, expected, event.id);
       const photoUrl = body.photoUrl === undefined ? event.photo_url : this.eventPhoto(body.photoUrl);
       const selectionMode = body.selectionMode === undefined ? event.selection_mode : body.selectionMode;
       if (!['individual', 'package'].includes(selectionMode)) throw new HttpError(400, 'Режим заказа: individual или package.');
@@ -509,7 +774,7 @@ export class Store {
       if (changingMode && this.db.prepare('SELECT 1 FROM selections WHERE event_id=?').get(event.id)) throw new HttpError(409, 'Нельзя менять режим заказа после выбора блюд гостями.');
       const selectedPackage = selectionMode === 'package' ? (body.packageId ? this.selectedPackage(event.restaurant_id, body.packageId, body.packageChoice) : JSON.parse(event.package_data || 'null')) : null;
       if (selectionMode === 'package' && !selectedPackage) throw new HttpError(400, 'Выберите пакетное предложение.');
-      this.db.prepare('UPDATE events SET title=?,date=?,deadline=?,expected_guests=?,budget=?,guest_budget=?,food_budget=?,drink_budget=?,photo_url=?,selection_mode=?,package_data=?,revision=revision+1 WHERE id=?').run(title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', event.id);
+      this.db.prepare('UPDATE events SET title=?,date=?,deadline=?,expected_guests=?,budget=?,guest_budget=?,food_budget=?,drink_budget=?,photo_url=?,selection_mode=?,package_data=?,duration_hours=?,hall_id=?,revision=revision+1 WHERE id=?').run(title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId, event.id);
       if (deadline !== event.deadline) {
         const reminderAt = Math.max(Date.now() + 120_000, Date.parse(deadline) - 24 * 3600_000);
         this.db.prepare("UPDATE notification_jobs SET due_at=?,sent_at=NULL,cancelled_at=NULL,attempts=0 WHERE event_id=? AND kind='reminder'").run(reminderAt, event.id);
@@ -526,6 +791,7 @@ export class Store {
       if (event.status !== 'collecting') throw new HttpError(409, 'Список гостей закрыт после утверждения.');
       const count = this.db.prepare('SELECT COUNT(*) AS count FROM guest_invites WHERE event_id=?').get(event.id).count;
       if (count >= 1000) throw new HttpError(429, 'Достигнут предел гостей.');
+      if (count + 1 > event.expected_guests) this.reserveHall(event.restaurant_id, event.hall_id, event.date, event.duration_hours, count + 1, event.id);
       const name = string(body.name, 'Имя гостя', 100);
       const phone = normalizePhone(body.phone);
       if (this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND phone=?').get(event.id, phone)) throw new HttpError(409, 'Гость с таким номером уже добавлен.');
@@ -693,8 +959,8 @@ export class Store {
     }
     const sharedIds = new Set(shared.map(item => item.menuItemId));
     const menu = this.eventMenu(event.id).filter(item => manager || item.forGuests || sharedIds.has(item.id));
-    const selfAuthorized = event.scope !== 'live' || (event.owner_id === user.id && manager) || Boolean(user.phone_verified_at && user.phone && this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone));
-    const result = { event: this.presentEvent(event, user), menu, guests, canSelect: event.selection_mode === 'individual' && (Boolean(own) || (event.owner_id === user.id && manager)) && selfAuthorized, selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary, shared, seating };
+    const selfAuthorized = event.scope !== 'live' || this.isOrganizer(user, event) || Boolean(user.phone_verified_at && user.phone && this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone));
+    const result = { event: this.presentEvent(event, user), menu, guests, canSelect: event.selection_mode === 'individual' && (Boolean(own) || this.isOrganizer(user, event)) && selfAuthorized, selection: own ? { submitted: own.submitted, notes: own.notes, items: own.items, total: own.total } : { submitted: false, notes: '', items: [], total: 0 }, summary, shared, seating };
     if (manager) {
       const invitedGuests = this.db.prepare(`SELECT guest_invites.id,guest_invites.name,guest_invites.phone,guest_invites.user_id AS userId,users.external_id AS maxId,
         COALESCE(guests.submitted,0) AS submitted FROM guest_invites LEFT JOIN guests ON guests.event_id=guest_invites.event_id AND guests.user_id=guest_invites.user_id
@@ -711,12 +977,12 @@ export class Store {
       if (event.selection_mode === 'package') throw new HttpError(409, 'Для этого банкета выбран фиксированный пакет. Гости не выбирают блюда.');
       let guest = this.db.prepare('SELECT * FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id);
       // The organizer can order for themselves without being on their own guest list.
-      if (!guest && event.owner_id === user.id && this.isManager(user, event)) {
+      if (!guest && this.isOrganizer(user, event)) {
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, user.id, '', iso(Date.now()));
         guest = true;
       }
       if (!guest) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
-      if (event.scope === 'live' && !(event.owner_id === user.id && this.isManager(user, event)) && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
+      if (event.scope === 'live' && !this.isOrganizer(user, event) && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
         throw new HttpError(403, 'Выбор доступен только гостю с подтверждённым номером MAX из списка приглашённых.');
       }
       if (!Array.isArray(body.items) || body.items.length < 1 || body.items.length > 50) throw new HttpError(400, 'Выберите от 1 до 50 блюд.');
@@ -752,8 +1018,7 @@ export class Store {
   approve(user, eventId, body = {}) {
     return this.transaction(() => {
       const event = this.eventRow(eventId, user);
-      if (event.owner_id !== user.id) throw new HttpError(403, 'Утвердить заказ может только организатор.');
-      if (!this.isManager(user, event)) throw new HttpError(403, 'Роль организатора в этом ресторане снята.');
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Утвердить заказ может организатор банкета или администратор ресторана.');
       if (event.status === 'approved') return this.presentEvent(event, user);
       if (body.expectedRevision === undefined) throw new HttpError(400, 'Перед утверждением откройте актуальную версию заказа.');
       if (integer(body.expectedRevision, 'Версия заказа') !== event.revision) {
@@ -801,11 +1066,23 @@ export class Store {
   /** People who have opened the app, with their roles in the restaurants the requester administers. */
   users(user, query = '') {
     const administered = [...(user.access || this.accessOf(user))].filter(([, role]) => role === 'admin').map(([restaurantId]) => restaurantId);
-    if (!administered.length) throw new HttpError(403, 'Список пользователей доступен администратору ресторана.');
+    const managed = this.db.prepare('SELECT * FROM events WHERE scope=?').all(user.scope).filter(event => this.isManager(user, event));
+    if (!administered.length && !managed.length) throw new HttpError(403, 'Доступы видны организаторам и администраторам.');
     const q = string(query, 'Поиск', 80, true).toLowerCase();
-    const members = this.db.prepare(`SELECT user_id,restaurant_id,role FROM restaurant_members WHERE restaurant_id IN (${administered.map(() => '?').join(',')})`).all(...administered);
+    const members = administered.length ? this.db.prepare(`SELECT user_id,restaurant_id,role FROM restaurant_members WHERE role='admin' AND restaurant_id IN (${administered.map(() => '?').join(',')})`).all(...administered) : [];
+    const visible = new Set(members.map(row => row.user_id));
+    for (const event of managed) {
+      visible.add(event.owner_id);
+      for (const row of this.db.prepare('SELECT user_id FROM event_organizers WHERE event_id=?').all(event.id)) visible.add(row.user_id);
+      for (const row of this.db.prepare('SELECT user_id FROM guests WHERE event_id=?').all(event.id)) visible.add(row.user_id);
+    }
+    if (this.isSuperAdmin(user)) {
+      for (const row of this.db.prepare('SELECT user_id FROM global_admins').all()) visible.add(row.user_id);
+      for (const configured of this.config.restaurantAdminIds) { const row = this.db.prepare("SELECT id FROM users WHERE scope='live' AND external_id=?").get(configured); if (row) visible.add(row.id); }
+    }
+    visible.add(user.id);
     return this.db.prepare('SELECT * FROM users WHERE scope=? AND demo=? ORDER BY name').all(user.scope, user.demo ? 1 : 0)
-      .filter(row => !q || row.name.toLowerCase().includes(q) || (row.phone_verified_at && row.phone?.includes(q.replace(/\D/g, '') || '\u0000')) || row.external_id === q)
+      .filter(row => visible.has(row.id) && (!q || row.name.toLowerCase().includes(q) || row.phone?.includes(q.replace(/\D/g, '') || '\u0000') || row.external_id === q))
       .slice(0, 200)
       .map(row => {
         const superAdmin = this.isSuperAdmin(row);
@@ -813,8 +1090,10 @@ export class Store {
         const fixed = (superAdmin && !this.isSuperAdmin(user)) || (Boolean(row.demo) && row.role === 'organizer');
         const effective = superAdmin || fixed ? this.accessOf(row) : null;
         return {
-          id: row.id, name: row.name, maxId: row.external_id || null, phone: row.phone_verified_at ? row.phone : null, superAdmin, fixedGlobal: this.config.restaurantAdminIds.includes(row.external_id), fixed, isYou: row.id === user.id,
+          id: row.id, name: row.name, maxId: row.external_id || null, phone: row.phone || null, superAdmin, fixedGlobal: this.config.restaurantAdminIds.includes(row.external_id), fixed, isYou: row.id === user.id,
           roles: Object.fromEntries(administered.map(restaurantId => [restaurantId, effective ? effective.get(restaurantId) || 'none' : members.find(member => member.user_id === row.id && member.restaurant_id === restaurantId)?.role || 'none'])),
+          eventRoles: Object.fromEntries(managed.map(event => [event.id, row.id === event.owner_id || Boolean(this.db.prepare('SELECT 1 FROM event_organizers WHERE event_id=? AND user_id=?').get(event.id, row.id))])),
+          eventOwned: Object.fromEntries(managed.map(event => [event.id, row.id === event.owner_id])),
         };
       });
   }
@@ -822,12 +1101,7 @@ export class Store {
     return this.transaction(() => {
       if (!this.isSuperAdmin(user) || user.demo) throw new HttpError(403, 'Назначить администратора сервиса может только действующий администратор.');
       if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'Укажите enabled: true или false.');
-      if (/^[1-9][0-9]{0,18}$/.test(targetId)) {
-        this.db.prepare("INSERT OR IGNORE INTO users (id,scope,external_id,name,role,demo) VALUES (?,'live',?,?,'guest',0)").run(`max_${targetId}`, targetId, `MAX ${targetId}`);
-        targetId = `max_${targetId}`;
-      }
-      const target = this.db.prepare("SELECT * FROM users WHERE id=? AND scope='live' AND demo=0").get(targetId);
-      if (!target) throw new HttpError(404, 'Пользователь не найден.');
+      const target = this.resolveIdentity('live', targetId);
       if (!body.enabled && target.id === user.id) throw new HttpError(409, 'Снимите роль через другого администратора.');
       if (!body.enabled && this.config.restaurantAdminIds.includes(target.external_id)) throw new HttpError(409, 'Роль этого пользователя задана на сервере.');
       if (body.enabled) this.db.prepare('INSERT OR IGNORE INTO global_admins VALUES (?,?,?)').run(target.id, user.id, iso(Date.now()));
@@ -839,16 +1113,10 @@ export class Store {
     return this.transaction(() => {
       if (!this.db.prepare('SELECT 1 FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope)) throw new HttpError(404, 'Ресторан не найден.');
       if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Выдавать доступ может администратор этого ресторана.');
-      if (/^[1-9][0-9]{0,18}$/.test(targetId)) {
-        this.db.prepare("INSERT OR IGNORE INTO users (id,scope,external_id,name,role,demo) VALUES (?,'live',?,?,'guest',0)").run(`max_${targetId}`, targetId, `MAX ${targetId}`);
-        targetId = `max_${targetId}`;
-      }
-      const target = this.db.prepare('SELECT * FROM users WHERE id=? AND scope=?').get(targetId, user.scope);
-      if (!target) throw new HttpError(404, 'Пользователь не найден.');
+      const target = this.resolveIdentity(user.scope, targetId);
       if (this.isSuperAdmin(target)) throw new HttpError(409, 'У суперадминистратора уже есть доступ ко всем ресторанам.');
-      if (target.demo && target.role === 'organizer') throw new HttpError(409, 'Роль демо-организатора фиксирована.');
       if (target.id === user.id) throw new HttpError(409, 'Свою роль может изменить другой администратор.');
-      if (!['admin', 'organizer', 'none'].includes(body.role)) throw new HttpError(400, 'Роль: admin, organizer или none.');
+      if (!['admin', 'none'].includes(body.role)) throw new HttpError(400, 'Роль ресторана: admin или none. Организатор назначается на банкет.');
       if (body.role === 'admin' && !this.isSuperAdmin(user)) throw new HttpError(403, 'Назначить администратора ресторана может только администратор сервиса.');
       const previous = this.db.prepare('SELECT role FROM restaurant_members WHERE restaurant_id=? AND user_id=?').get(restaurantId, target.id)?.role;
       if (previous === 'admin' && body.role !== 'admin' && !this.isSuperAdmin(user)) throw new HttpError(403, 'Изменить администратора ресторана может только администратор сервиса.');
@@ -860,13 +1128,34 @@ export class Store {
   restaurantMembers(user, restaurantId) {
     if (!this.db.prepare('SELECT 1 FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope)) throw new HttpError(404, 'Ресторан не найден.');
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Нет доступа к ролям ресторана.');
-    return this.db.prepare('SELECT users.id AS userId,users.external_id AS maxId,users.name,restaurant_members.role FROM restaurant_members JOIN users ON users.id=restaurant_members.user_id WHERE restaurant_members.restaurant_id=? ORDER BY restaurant_members.role,users.name').all(restaurantId);
+    return this.db.prepare("SELECT users.id AS userId,users.external_id AS maxId,users.name,restaurant_members.role FROM restaurant_members JOIN users ON users.id=restaurant_members.user_id WHERE restaurant_members.restaurant_id=? AND restaurant_members.role='admin' ORDER BY users.name").all(restaurantId);
+  }
+  setEventOrganizer(user, eventId, targetId, body) {
+    return this.transaction(() => {
+      const event = this.eventRow(eventId, user);
+      if (!this.isManager(user, event)) throw new HttpError(403, 'Назначить организатора может организатор банкета или администратор ресторана.');
+      if (typeof body.enabled !== 'boolean') throw new HttpError(400, 'Укажите enabled: true или false.');
+      const target = this.resolveIdentity(user.scope, targetId);
+      if (target.id === event.owner_id && !body.enabled) throw new HttpError(409, 'Создатель банкета сохраняет роль организатора.');
+      if (body.enabled) {
+        if (this.db.prepare('SELECT COUNT(*) AS count FROM event_organizers WHERE event_id=?').get(event.id).count >= 30) throw new HttpError(429, 'Достигнут предел организаторов банкета.');
+        this.db.prepare('INSERT OR IGNORE INTO event_organizers VALUES (?,?,?,?)').run(event.id, target.id, user.id, iso(Date.now()));
+      } else this.db.prepare('DELETE FROM event_organizers WHERE event_id=? AND user_id=?').run(event.id, target.id);
+      return { eventId, userId: target.id, organizer: body.enabled };
+    });
+  }
+  eventOrganizers(user, eventId) {
+    const event = this.eventRow(eventId, user);
+    if (!this.isManager(user, event)) throw new HttpError(403, 'Организаторы видны только команде банкета.');
+    return this.db.prepare(`SELECT users.id AS userId,users.name,users.phone,users.external_id AS maxId,users.id=? AS owner FROM users
+      WHERE users.id=? OR users.id IN (SELECT user_id FROM event_organizers WHERE event_id=?) ORDER BY owner DESC,users.name`).all(event.owner_id, event.owner_id, eventId).map(row => ({ ...row, owner: Boolean(row.owner) }));
   }
   createRestaurant(user, body) {
     if (!user.superAdmin && !this.isSuperAdmin(user)) throw new HttpError(403, 'Добавлять рестораны может суперадминистратор.');
     if (this.db.prepare('SELECT COUNT(*) AS count FROM restaurants WHERE scope=?').get(user.scope).count >= 100) throw new HttpError(429, 'Достигнут предел ресторанов.');
     const restaurantId = id('restaurant');
     this.db.prepare('INSERT INTO restaurants VALUES (?,?,?,?,?,0)').run(restaurantId, user.scope, string(body.name, 'Название ресторана', 120), string(body.description, 'Описание', 500, true), string(body.address, 'Адрес', 200, true));
+    this.ensureHall(restaurantId);
     return this.restaurants(this.hydrate(user)).find(entry => entry.id === restaurantId);
   }
   editRestaurant(user, restaurantId, body) {
@@ -1029,6 +1318,7 @@ export class Store {
       if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
       const mode = body.mode === undefined ? event.seating_mode : body.mode;
       if (!SEATING_MODES.includes(mode)) throw new HttpError(400, 'Режим рассадки: off, choice или fixed.');
+      if (mode !== 'off' && !this.halls(event.restaurant_id).find(hall => hall.id === event.hall_id)?.allowedSeating.includes(mode)) throw new HttpError(409, 'Этот вариант рассадки недоступен для выбранного зала.');
       let layout = this.layoutOf(event);
       if (body.layout !== undefined) {
         const checked = validateLayout(body.layout);
@@ -1049,12 +1339,12 @@ export class Store {
     return this.transaction(() => {
       const event = this.eventRow(eventId, user);
       if (event.seating_mode !== 'choice') throw new HttpError(409, 'В этом банкете места распределяет организатор.');
-      this.assertOpen(event);
+      if (event.status !== 'collecting' || Date.parse(event.date) <= Date.now()) throw new HttpError(409, 'Выбор места для этого банкета закрыт.');
       if (!this.db.prepare('SELECT 1 FROM guests WHERE event_id=? AND user_id=?').get(event.id, user.id)) {
-        if (event.owner_id !== user.id || !this.isManager(user, event)) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
+        if (!this.isOrganizer(user, event)) throw new HttpError(403, 'Сначала присоединитесь к банкету по приглашению.');
         this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(event.id, user.id, '', iso(Date.now()));
       }
-      if (event.scope === 'live' && !(event.owner_id === user.id && this.isManager(user, event)) && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
+      if (event.scope === 'live' && !this.isOrganizer(user, event) && (!user.phone_verified_at || !user.phone || !this.db.prepare('SELECT 1 FROM guest_invites WHERE event_id=? AND user_id=? AND phone=?').get(event.id, user.id, user.phone))) {
         throw new HttpError(403, 'Выбор места доступен только гостю с подтверждённым номером MAX из списка приглашённых.');
       }
       const key = this.personKey(user, event);

@@ -164,7 +164,7 @@ export function SeatPicker({ detail, busy, canSelect, choose }) {
   const seating = detail.seating;
   const occupied = useMemo(() => new Set(seating.occupied), [seating.occupied]);
   const names = useMemo(() => new Map(Object.entries(seating.names || {})), [seating.names]);
-  const locked = detail.event.status === "approved" || new Date(detail.event.deadline).getTime() < Date.now() || !canSelect;
+  const locked = detail.event.status === "approved" || new Date(detail.event.date).getTime() < Date.now() || !canSelect;
   const choice = seating.mode === "choice";
   const pickable = choice && !locked;
   return (
