@@ -68,7 +68,7 @@ const roleNames = {
 };
 let authToken = sessionStorage.getItem("banquet-token") || "";
 async function api(path, options = {}) {
-  const response = await fetch(`${BASE}/api${path}`, {
+  const response = await fetch(`${BASE}/api/v1${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -84,7 +84,7 @@ async function api(path, options = {}) {
 }
 async function uploadImage(file) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
-  const response = await fetch(`${BASE}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file });
+  const response = await fetch(`${BASE}/api/v1/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file });
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
   return result;
@@ -415,7 +415,7 @@ function App() {
       notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
       return;
     }
-    await saveDownload(await fetch(`${BASE}/api/kitchen/export?format=${format}&eventIds=${encodeURIComponent(eventIds.join(','))}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
+    await saveDownload(await fetch(`${BASE}/api/v1/kitchen/export?format=${format}&eventIds=${encodeURIComponent(eventIds.join(','))}`, { headers: { Authorization: `Bearer ${authToken}` } }), `kitchen.${format}`);
     notify('Файл скачан. Проверьте папку «Загрузки» браузера.');
   });
   const loadDetail = useCallback(async (id) => {
@@ -568,7 +568,7 @@ function App() {
         notify('Скачивание запущено. Файл появится в «Загрузках» MAX.');
         return;
       }
-      const res = await fetch(`${BASE}/api/events/${selected}/export.csv`, {
+      const res = await fetch(`${BASE}/api/v1/events/${selected}/export.csv`, {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (!res.ok) throw new Error("Экспорт доступен после утверждения заказа");

@@ -4,6 +4,19 @@
 
 Репозиторий: [Ja1rman/max-hackathon](https://github.com/Ja1rman/max-hackathon). Опубликованная демонстрация: [mail.lonelycraft.ru/banquet/](https://mail.lonelycraft.ru/banquet/). HTTPS-демонстрация развёрнута и проверена 16 сентября 2026 года; токен бота @t266_hakaton_max_bot проверен через официальный MAX API. Для проверки настоящего входа внутри MAX владелец должен привязать URL Mini App в настройках бота.
 
+## API для проверки
+
+| Что | Адрес |
+| --- | --- |
+| Базовый адрес API | `https://mail.lonelycraft.ru/banquet/api/v1` |
+| Swagger UI | [mail.lonelycraft.ru/banquet/swagger/](https://mail.lonelycraft.ru/banquet/swagger/) |
+| OpenAPI 3.1 | [openapi.yaml](openapi.yaml), опубликован: `https://mail.lonelycraft.ru/banquet/openapi.yaml` |
+| Сценарий обязательных проверок | [DATA-API.yaml](DATA-API.yaml) |
+| Тестовые данные | [fixtures/api-checks.json](fixtures/api-checks.json) |
+| Тестовые учётные записи и пошаговая проверка | [docs/TESTING.md](docs/TESTING.md) |
+
+Тестовые учётные записи для всех трёх ролей выдаёт `POST /auth/demo` в изолированном демо-пространстве, без доступа к реальным данным.
+
 ## Возможности
 
 Во вкладке «Доступы» глобальный администратор может назначить ещё одного глобального администратора по MAX ID. Вкладка «Меню» сначала показывает доступные рестораны; после выбора ресторана открываются каталог по категориям и пакетные предложения. Каталог «Петръ» перенесён из предоставленных фотографий с ориентировочными КБЖУ. Организатор выбирает индивидуальный заказ гостей или фиксированный пакет на гостя. В карточке банкета разделены «Гости», «Меню банкета» и «Управление». В «Кухне» можно выгрузить один или несколько выбранных банкетов; Excel содержит отдельные листы с порциями, заказами гостей, рассадкой и составом пакетов.
@@ -128,8 +141,8 @@ GitHub Actions проверяет pull request и выполняет те же �
 
 API отдаёт CSV после утверждения. Для загрузки через MAX Bridge предусмотрена отдельная одноразовая HTTPS-ссылка сроком 60 секунд; её использование на настоящем устройстве нужно проверить после подключения бота. Сервис развёртывается одним экземпляром с SQLite: масштабирование на несколько серверов требует отдельной архитектуры хранения. Резервные копии в том же Docker-томе не защищают от потери диска; внешнее хранение нужно настроить отдельно.
 
-Документы: [продукт и гипотезы](docs/PRODUCT.md), [руководство API](docs/API.md), [OpenAPI](openapi.yaml), [модель данных](DATA-API.yaml), [MAX](docs/MAX.md), [эксплуатация](docs/DEPLOYMENT.md).
+Документы: [продукт и гипотезы](docs/PRODUCT.md), [руководство API](docs/API.md), [OpenAPI](openapi.yaml), [сценарий проверки API](DATA-API.yaml), [проверка API и тестовые учётные записи](docs/TESTING.md), [модель данных](docs/DATA-MODEL.yaml), [MAX](docs/MAX.md), [эксплуатация](docs/DEPLOYMENT.md).
 
 ## Проверка опубликованного релиза
 
-`SMOKE_BASE_URL=https://mail.lonelycraft.ru/banquet node scripts/smoke.mjs` проверяет полный API-сценарий только в новом изолированном демо-пространстве. Нужен `DEMO_ENABLED=true`; реальные данные не затрагиваются.
+`npm run api:check` выполняет все обязательные проверки из [DATA-API.yaml](DATA-API.yaml) против production (`https://mail.lonelycraft.ru/banquet/api/v1`); для другого адреса передайте его аргументом: `node scripts/api-check.mjs http://localhost:3000/api/v1`. `SMOKE_BASE_URL=https://mail.lonelycraft.ru/banquet node scripts/smoke.mjs` проверяет короткий сквозной сценарий. Оба скрипта работают только в новом изолированном демо-пространстве. Нужен `DEMO_ENABLED=true`; реальные данные не затрагиваются.

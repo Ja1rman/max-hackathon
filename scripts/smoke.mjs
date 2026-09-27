@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 const base = (process.env.SMOKE_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 async function request(path, { method = 'GET', body, token } = {}) {
-  const response = await fetch(`${base}/api${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const response = await fetch(`${base}/api/v1${path}`, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) });
   assert.ok(response.ok, `${method} ${path}: HTTP ${response.status}`);
   return response.json();
 }
@@ -23,7 +23,7 @@ detail = await request(`/events/${event.id}`, { token: kitchen.token });
 assert.equal(detail.event.status, 'approved');
 assert.equal(detail.summary[0].quantity, 2);
 assert.equal(detail.guests[0].notes, 'Тест: соус отдельно');
-const denied = await fetch(`${base}/api/events/${event.id}/selection`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guest.token}` }, body: JSON.stringify({ items: [{ menuItemId: selected.id, quantity: 3 }], notes: '' }) });
+const denied = await fetch(`${base}/api/v1/events/${event.id}/selection`, { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${guest.token}` }, body: JSON.stringify({ items: [{ menuItemId: selected.id, quantity: 3 }], notes: '' }) });
 assert.equal(denied.status, 409);
 const { url } = await request(`/events/${event.id}/export-link`, { method: 'POST', token: kitchen.token, body: {} });
 const csv = await fetch(url);

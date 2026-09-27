@@ -2,26 +2,66 @@
 openapi: 3.1.0
 info:
   title: За столом — API
-  version: 1.7.0
-  description: 'Контракт server/index.mjs и server/store.mjs. JSON без envelope: списки
-    — массивы; ошибки — {error:string}. Все деньги JSON API в целых копейках. JSON-тела
-    <=65536 байт. POST /api/auth/*: максимум 180 запросов за 10 минут на IP; TRUST_PROXY=true
-    доверяет X-Real-IP только за настроенным reverse proxy. Неизвестные JSON-поля
-    не назначают роли, цену или scope. Отсутствуют отмена, reopen, оплата
-    и интеграции POS. Публичный server URL — назначение развёртывания, не заявление
-    о его готовности.'
+  version: 1.8.0
+  summary: Банкет, где каждый гость выбирает блюда сам — Mini App для MAX.
+  description: |
+    Базовый адрес: `https://mail.lonelycraft.ru/banquet/api/v1`. Все пути ниже указаны относительно него.
+    Документация в браузере: `https://mail.lonelycraft.ru/banquet/swagger/`.
+
+    **Как начать.** Получите токен тестовой учётной записи через `POST /auth/demo`
+    (`{"role":"organizer"}`; для гостя и администратора того же демо-пространства передайте
+    полученный `sandbox`), затем нажмите «Authorize» и вставьте токен. Все защищённые методы
+    принимают заголовок `Authorization: Bearer <token>`. Пошаговый сценарий проверки описан
+    в `DATA-API.yaml`, тестовые данные — в `fixtures/api-checks.json`.
+
+    **Формат.** JSON без обёртки: списки — массивы, ошибки — `{"error": "текст"}`. Деньги —
+    целые копейки. JSON-тела не больше 65 536 байт (`Content-Type: application/json`).
+    `POST /auth/*`: не больше 180 запросов за 10 минут с одного IP. Неизвестные поля JSON
+    игнорируются и не назначают роли, цены или пространство данных.
+
+    **Роли.** `organizer` — создаёт банкеты и управляет ими; `guest` — присоединяется по
+    приглашению и выбирает блюда; `restaurant` — администратор ресторана (меню,
+    кухня, доступы). В живом режиме вход выполняется через подпись MAX (`POST /auth/max`),
+    в демо — через `POST /auth/demo` в изолированном пространстве.
+  contact:
+    name: Команда «За столом»
+    url: https://github.com/m-melgizin/max-hackathon
+  license:
+    name: Proprietary (hackathon project)
+    identifier: LicenseRef-Proprietary
 servers:
-- url: https://mail.lonelycraft.ru/banquet
-  description: Назначение production через nginx, который удаляет /banquet
-- url: http://localhost:3100
-  description: Локальный Docker Compose
-- url: http://localhost:3000
-  description: Прямой Node.js backend
+- url: api/v1
+  description: Тот же сервер, что и эта документация (Swagger)
+- url: https://mail.lonelycraft.ru/banquet/api/v1
+  description: Production
+- url: http://localhost:3000/api/v1
+  description: Локальный запуск (npm start)
 security:
 - SessionBearer: []
+tags:
+- name: Сервис
+  description: Доступность сервиса и публичная конфигурация.
+- name: Вход и профиль
+  description: Тестовые учётные записи (POST /auth/demo), вход через MAX, профиль, телефон, уведомления, загрузка фото.
+- name: Мероприятие (организатор)
+  description: Создание и настройка банкета, список гостей, меню и общий стол, утверждение, выгрузка заказа.
+- name: Гость
+  description: Приглашение, присоединение, выбор блюд и места.
+- name: Рассадка
+  description: Схема зала, режимы рассадки, ручное и автоматическое распределение мест.
+- name: Ресторан и меню
+  description: Рестораны, каталог блюд (стоимость, состав, КБЖУ, аллергены), пакетные предложения.
+- name: Кухня и выгрузки
+  description: Сводка для кухни по банкетам и выгрузка в Excel/CSV.
+- name: Доступы
+  description: Пользователи, роли в ресторанах, глобальные администраторы.
+- name: MAX
+  description: Вебхук бота MAX (вызывается платформой MAX, не клиентом).
 paths:
   "/healthz":
     get:
+      tags:
+      - Сервис
       operationId: health
       summary: Проверка процесса и SQLite
       description: ''
@@ -35,8 +75,10 @@ paths:
         '500':
           "$ref": "#/components/responses/500"
       security: []
-  "/api/config":
+  "/config":
     get:
+      tags:
+      - Сервис
       operationId: config
       summary: Публичная конфигурация интерфейса
       description: ''
@@ -50,8 +92,10 @@ paths:
         '500':
           "$ref": "#/components/responses/500"
       security: []
-  "/api/auth/max":
+  "/auth/max":
     post:
+      tags:
+      - Вход и профиль
       operationId: loginMax
       summary: Обмен подписанных данных MAX на сессию
       description: HMAC-SHA256 по алгоритму MAX; auth_date не старше часа и не более
@@ -86,8 +130,10 @@ paths:
             schema:
               "$ref": "#/components/schemas/MaxLogin"
       security: []
-  "/api/auth/demo":
+  "/auth/demo":
     post:
+      tags:
+      - Вход и профиль
       operationId: loginDemo
       summary: Создать демо, сменить роль или войти по демо-приглашению
       description: Без sandbox создаётся отдельный scope с синтетическими данными.
@@ -128,8 +174,10 @@ paths:
             schema:
               "$ref": "#/components/schemas/DemoLogin"
       security: []
-  "/api/max/webhook":
+  "/max/webhook":
     post:
+      tags:
+      - MAX
       operationId: maxWebhook
       summary: Принять событие MAX и ответить ссылкой Mini App
       description: Проверка секрета до чтения тела. Persistent claim перед ответом
@@ -163,8 +211,10 @@ paths:
               "$ref": "#/components/schemas/MaxUpdate"
       security:
       - MaxWebhookSecret: []
-  "/api/invites/{code}":
+  "/invites/{code}":
     get:
+      tags:
+      - Гость
       operationId: previewInvite
       summary: Посмотреть сведения и снимок меню по приглашению
       description: 'Публично: основные сведения мероприятия и меню. Имена, пожелания,
@@ -184,8 +234,10 @@ paths:
       security: []
       parameters:
       - "$ref": "#/components/parameters/code"
-  "/api/me":
+  "/me":
     get:
+      tags:
+      - Вход и профиль
       operationId: me
       summary: Текущий пользователь
       description: ''
@@ -200,8 +252,10 @@ paths:
           "$ref": "#/components/responses/401"
         '500':
           "$ref": "#/components/responses/500"
-  "/api/me/phone":
+  "/me/phone":
     put:
+      tags:
+      - Вход и профиль
       operationId: verifyPhone
       summary: Привязать подтверждённый номер телефона MAX к текущей сессии
       description: Тело — результат window.WebApp.requestContact(). Сервер проверяет HMAC-SHA256 токеном бота, свежесть authDate и userId из подписанной MAX-сессии; присланный клиентом userId не принимается. Номер нормализуется в международный формат без плюса. Демо-сессии запрещены.
@@ -226,11 +280,13 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/me/claim-invitations":
+  "/me/claim-invitations":
     post:
+      tags:
+      - Вход и профиль
       operationId: claimMyInvitations
       summary: Найти и принять приглашения по подтверждённому номеру MAX
-      description: Для общей кнопки бота, которая не передаёт код банкета. Требует подпись MAX для номера через PUT /api/me/phone. Находит только записи текущего номера, закрепляет их за текущим MAX ID и возвращает доступные eventId. Повторный вызов безопасен. Закрытые банкеты без ранее принятого приглашения пропускаются.
+      description: Для общей кнопки бота, которая не передаёт код банкета. Требует подпись MAX для номера через PUT /me/phone. Находит только записи текущего номера, закрепляет их за текущим MAX ID и возвращает доступные eventId. Повторный вызов безопасен. Закрытые банкеты без ранее принятого приглашения пропускаются.
       responses:
         '200':
           description: Доступные банкеты гостя
@@ -247,8 +303,10 @@ paths:
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-  "/api/me/notifications":
+  "/me/notifications":
     put:
+      tags:
+      - Вход и профиль
       operationId: setNotifications
       summary: Включить или выключить уведомления в MAX
       description: Доставка возможна только после начала личного диалога с ботом. По умолчанию выключено; bot_stopped отключает фактическую отправку.
@@ -275,8 +333,10 @@ paths:
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-  "/api/media":
+  "/media":
     post:
+      tags:
+      - Вход и профиль
       operationId: uploadPhoto
       summary: Загрузить фото для блюда или напитка
       description: Организатор или администратор ресторана. Бинарное тело до 3 МиБ, проверяется сигнатура формата. Возвращённый photoUrl передаётся при создании или правке блюда или банкета.
@@ -304,8 +364,10 @@ paths:
           "$ref": "#/components/responses/413"
         '415':
           "$ref": "#/components/responses/415"
-  "/api/media/{fileName}":
+  "/media/{fileName}":
     get:
+      tags:
+      - Вход и профиль
       operationId: getPhoto
       summary: Получить публичное фото блюда
       security: []
@@ -316,8 +378,10 @@ paths:
           description: JPEG, PNG или WebP
         '404':
           "$ref": "#/components/responses/404"
-  "/api/restaurants":
+  "/restaurants":
     get:
+      tags:
+      - Ресторан и меню
       operationId: restaurants
       summary: Рестораны и текущий каталог своего scope
       description: Все роли видят каталог только своего scope. sampleMenu обозначает
@@ -336,6 +400,8 @@ paths:
         '500':
           "$ref": "#/components/responses/500"
     post:
+      tags:
+      - Ресторан и меню
       operationId: createRestaurant
       summary: Добавить ресторан
       description: Только суперадминистратор (RESTAURANT_ADMIN_IDS). Меню нового ресторана пустое.
@@ -360,8 +426,10 @@ paths:
           "$ref": "#/components/responses/403"
         '429':
           "$ref": "#/components/responses/429"
-  "/api/restaurants/{restaurantId}":
+  "/restaurants/{restaurantId}":
     patch:
+      tags:
+      - Ресторан и меню
       operationId: editRestaurant
       summary: Изменить название, адрес или описание ресторана
       description: Администратор этого ресторана.
@@ -388,8 +456,10 @@ paths:
           "$ref": "#/components/responses/403"
         '404':
           "$ref": "#/components/responses/404"
-  "/api/restaurants/{restaurantId}/members":
+  "/restaurants/{restaurantId}/members":
     get:
+      tags:
+      - Доступы
       operationId: listRestaurantMembers
       summary: Назначенные роли в ресторане
       description: Доступно глобальному администратору и администратору этого ресторана.
@@ -404,11 +474,13 @@ paths:
                 type: array
                 items: { "$ref": "#/components/schemas/RestaurantMember" }
         '403': { "$ref": "#/components/responses/403" }
-  "/api/admins/{userId}":
+  "/admins/{userId}":
     put:
+      tags:
+      - Доступы
       operationId: setGlobalAdmin
       summary: Назначить или снять глобального администратора
-      description: Только действующий глобальный администратор. userId из /api/users либо числовой MAX ID. Нельзя снять собственную или закреплённую на сервере роль.
+      description: Только действующий глобальный администратор. userId из GET /users либо числовой MAX ID. Нельзя снять собственную или закреплённую на сервере роль.
       parameters:
       - name: userId
         in: path
@@ -427,8 +499,10 @@ paths:
         '200': { description: Текущая глобальная роль пользователя }
         '403': { "$ref": "#/components/responses/403" }
         '409': { "$ref": "#/components/responses/409" }
-  "/api/restaurants/{restaurantId}/packages":
+  "/restaurants/{restaurantId}/packages":
     post:
+      tags:
+      - Ресторан и меню
       operationId: createRestaurantPackage
       summary: Создать фиксированный пакет ресторана
       parameters:
@@ -445,8 +519,10 @@ paths:
             application/json:
               schema: { "$ref": "#/components/schemas/Package" }
         '403': { "$ref": "#/components/responses/403" }
-  "/api/restaurants/{restaurantId}/packages/{packageId}":
+  "/restaurants/{restaurantId}/packages/{packageId}":
     patch:
+      tags:
+      - Ресторан и меню
       operationId: updateRestaurantPackage
       summary: Изменить пакет ресторана
       parameters:
@@ -468,6 +544,8 @@ paths:
               schema: { "$ref": "#/components/schemas/Package" }
         '403': { "$ref": "#/components/responses/403" }
     delete:
+      tags:
+      - Ресторан и меню
       operationId: deleteRestaurantPackage
       summary: Удалить пакет из каталога ресторана
       parameters:
@@ -479,11 +557,13 @@ paths:
       responses:
         '200': { description: Пакет удалён }
         '403': { "$ref": "#/components/responses/403" }
-  "/api/restaurants/{restaurantId}/members/{userId}":
+  "/restaurants/{restaurantId}/members/{userId}":
     put:
+      tags:
+      - Доступы
       operationId: setRestaurantMember
       summary: Выдать пользователю роль в ресторане
-      description: userId из /api/users либо числовой MAX ID. Глобальный администратор
+      description: userId из GET /users либо числовой MAX ID. Глобальный администратор
         может назначить администратора или организатора; администратор ресторана
         назначает только организатора. none убирает доступ. Свою роль изменить
         нельзя (409).
@@ -519,6 +599,8 @@ paths:
         '409':
           "$ref": "#/components/responses/409"
     delete:
+      tags:
+      - Доступы
       operationId: deleteRestaurantMember
       summary: Снять роль в ресторане
       description: Эквивалент PUT с {role:none}; администратор ресторана не может снять другого администратора.
@@ -531,8 +613,10 @@ paths:
       responses:
         '200': { description: Роль снята }
         '403': { "$ref": "#/components/responses/403" }
-  "/api/users":
+  "/users":
     get:
+      tags:
+      - Доступы
       operationId: listUsers
       summary: Пользователи, открывавшие приложение, и их роли в ваших ресторанах
       description: Администратор хотя бы одного ресторана. Роли возвращаются только для
@@ -558,8 +642,10 @@ paths:
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-  "/api/events":
+  "/events":
     get:
+      tags:
+      - Мероприятие (организатор)
       operationId: events
       summary: Доступные текущему пользователю банкеты
       description: Владелец, участник или ресторанная роль в том же scope. Сортировка
@@ -578,6 +664,8 @@ paths:
         '500':
           "$ref": "#/components/responses/500"
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: createEvent
       summary: Создать банкет и снимок доступного меню
       description: Organizer или restaurant. Создание события и event_menu в транзакции. Не
@@ -611,8 +699,10 @@ paths:
           application/json:
             schema:
               "$ref": "#/components/schemas/EventCreate"
-  "/api/events/{eventId}":
+  "/events/{eventId}":
     get:
+      tags:
+      - Мероприятие (организатор)
       operationId: event
       summary: Банкет, персональный выбор и разрешённая сводка
       description: ''
@@ -632,6 +722,8 @@ paths:
       parameters:
       - "$ref": "#/components/parameters/eventId"
     patch:
+      tags:
+      - Мероприятие (организатор)
       operationId: editEvent
       summary: Изменить дату, дедлайн, название, число гостей или бюджет
       description: Владелец или ресторан, пока заказ collecting. expectedRevision обязателен; при конкурирующем изменении возвращается 409. Число гостей не может быть меньше длины списка приглашённых.
@@ -658,8 +750,10 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/events/{eventId}/guests":
+  "/events/{eventId}/guests":
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: addInvitedGuest
       summary: Добавить приглашённого по имени и телефону
       description: Владелец или ресторан. Номер уникален в рамках банкета; ожидаемое число гостей увеличится автоматически, если нужно.
@@ -686,8 +780,10 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/events/{eventId}/guests/{guestId}":
+  "/events/{eventId}/guests/{guestId}":
     patch:
+      tags:
+      - Мероприятие (организатор)
       operationId: editInvitedGuest
       summary: Изменить имя или ещё не подтверждённый номер гостя
       parameters:
@@ -713,6 +809,8 @@ paths:
         '409':
           "$ref": "#/components/responses/409"
     delete:
+      tags:
+      - Мероприятие (организатор)
       operationId: deleteInvitedGuest
       summary: Удалить приглашённого, если он ещё не выбрал блюда
       parameters:
@@ -727,8 +825,10 @@ paths:
           "$ref": "#/components/responses/404"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/events/{eventId}/menu":
+  "/events/{eventId}/menu":
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: addEventMenuItem
       summary: Добавить блюдо или напиток только в этот банкет
       description: Владелец или ресторан. Не меняет общий каталог ресторана. КБЖУ на одну порцию обязательны.
@@ -753,8 +853,10 @@ paths:
           "$ref": "#/components/responses/403"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/events/{eventId}/menu/{itemId}":
+  "/events/{eventId}/menu/{itemId}":
     patch:
+      tags:
+      - Мероприятие (организатор)
       operationId: editEventMenuItem
       summary: Изменить позицию меню этого банкета
       description: Если блюдо уже выбрано, цена, название и доступность заблокированы; описание, КБЖУ и фото можно обновить.
@@ -781,6 +883,8 @@ paths:
         '409':
           "$ref": "#/components/responses/409"
     delete:
+      tags:
+      - Мероприятие (организатор)
       operationId: deleteEventMenuItem
       summary: Удалить позицию, если гости её ещё не выбрали
       parameters:
@@ -795,8 +899,10 @@ paths:
           "$ref": "#/components/responses/404"
         '409':
           "$ref": "#/components/responses/409"
-  "/api/invites/{code}/join":
+  "/invites/{code}/join":
     post:
+      tags:
+      - Гость
       operationId: joinInvite
       summary: Присоединить текущего пользователя к банкету
       description: Тело не требуется и не обрабатывается. Повтор для уже присоединившегося
@@ -823,8 +929,10 @@ paths:
           "$ref": "#/components/responses/500"
       parameters:
       - "$ref": "#/components/parameters/code"
-  "/api/events/{eventId}/selection":
+  "/events/{eventId}/selection":
     put:
+      tags:
+      - Гость
       operationId: saveSelection
       summary: Полностью заменить собственный выбор
       description: До дедлайна, только collecting. В live нужен свой подтверждённый
@@ -865,8 +973,10 @@ paths:
               "$ref": "#/components/schemas/SelectionPut"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/approve":
+  "/events/{eventId}/approve":
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: approveEvent
       summary: Утвердить заказ от имени владельца
       description: Только owner. Для collecting необходима текущая expectedRevision
@@ -904,8 +1014,10 @@ paths:
               "$ref": "#/components/schemas/Approve"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/kitchen/export":
+  "/kitchen/export":
     get:
+      tags:
+      - Кухня и выгрузки
       operationId: exportKitchen
       summary: Выгрузить раздел «Кухня» в Excel или CSV
       description: Администратор. XLSX содержит листы «Порции», «Гости», «Рассадка» и «Пакеты»; CSV — те же блоки подряд, с защитой от формул. Без eventIds выгружаются все доступные банкеты.
@@ -939,8 +1051,10 @@ paths:
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-  "/api/kitchen/export-link":
+  "/kitchen/export-link":
     post:
+      tags:
+      - Кухня и выгрузки
       operationId: kitchenExportLink
       summary: Одноразовая ссылка на выгрузку «Кухни» для WebApp.downloadFile
       requestBody:
@@ -973,8 +1087,10 @@ paths:
           "$ref": "#/components/responses/401"
         '403':
           "$ref": "#/components/responses/403"
-  "/api/downloads/kitchen/{downloadToken}":
+  "/downloads/kitchen/{downloadToken}":
     get:
+      tags:
+      - Кухня и выгрузки
       operationId: downloadKitchen
       summary: Скачать выгрузку «Кухни» по одноразовой ссылке
       security: []
@@ -985,8 +1101,10 @@ paths:
           description: Файл XLSX или CSV
         '404':
           "$ref": "#/components/responses/404"
-  "/api/kitchen":
+  "/kitchen":
     get:
+      tags:
+      - Кухня и выгрузки
       operationId: kitchenBoard
       summary: Раздел «Кухня» администратора
       description: Администратор. Банкеты ресторанов, где пользователь — администратор,
@@ -1006,8 +1124,10 @@ paths:
           "$ref": "#/components/responses/403"
         '500':
           "$ref": "#/components/responses/500"
-  "/api/events/{eventId}/shared":
+  "/events/{eventId}/shared":
     put:
+      tags:
+      - Мероприятие (организатор)
       operationId: saveSharedTable
       summary: Задать блюда и закуски на общий стол
       description: Владелец или администратор, только collecting. Список заменяется
@@ -1045,8 +1165,10 @@ paths:
               "$ref": "#/components/schemas/SharedPut"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/menu/import":
+  "/events/{eventId}/menu/import":
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: importEventMenu
       summary: Добавить позиции общего каталога в меню банкета
       description: Владелец или администратор, только collecting. Копирует доступные
@@ -1084,8 +1206,10 @@ paths:
               "$ref": "#/components/schemas/MenuImport"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/seating":
+  "/events/{eventId}/seating":
     put:
+      tags:
+      - Рассадка
       operationId: saveSeating
       summary: Включить рассадку и сохранить схему зала
       description: Только владелец или ресторан, только collecting. mode и layout
@@ -1122,8 +1246,10 @@ paths:
               "$ref": "#/components/schemas/SeatingPut"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/seat":
+  "/events/{eventId}/seat":
     put:
+      tags:
+      - Гость
       operationId: chooseSeat
       summary: Занять или освободить собственное место
       description: Только режим choice, до дедлайна и утверждения. Требования к гостю
@@ -1160,8 +1286,10 @@ paths:
               "$ref": "#/components/schemas/SeatChoice"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/seating/assignments":
+  "/events/{eventId}/seating/assignments":
     put:
+      tags:
+      - Рассадка
       operationId: assignSeat
       summary: Назначить место гостю вручную
       description: Только владелец или ресторан, только collecting. Если место занято,
@@ -1198,8 +1326,10 @@ paths:
               "$ref": "#/components/schemas/SeatAssignment"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/seating/auto":
+  "/events/{eventId}/seating/auto":
     post:
+      tags:
+      - Рассадка
       operationId: autoSeat
       summary: Рассадить гостей без места
       description: Только владелец или ресторан, режим choice или fixed. Сначала
@@ -1224,8 +1354,10 @@ paths:
           "$ref": "#/components/responses/500"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/restaurants/{restaurantId}/menu":
+  "/restaurants/{restaurantId}/menu":
     post:
+      tags:
+      - Ресторан и меню
       operationId: createMenuItem
       summary: Добавить блюдо в каталог
       description: Только restaurant в своём scope; максимум 500 блюд. Это изменение
@@ -1261,8 +1393,10 @@ paths:
               "$ref": "#/components/schemas/MenuItemCreate"
       parameters:
       - "$ref": "#/components/parameters/restaurantId"
-  "/api/restaurants/{restaurantId}/menu/{itemId}":
+  "/restaurants/{restaurantId}/menu/{itemId}":
     patch:
+      tags:
+      - Ресторан и меню
       operationId: patchMenuItem
       summary: Изменить блюдо в каталоге
       description: ''
@@ -1297,6 +1431,8 @@ paths:
       - "$ref": "#/components/parameters/restaurantId"
       - "$ref": "#/components/parameters/itemId"
     delete:
+      tags:
+      - Ресторан и меню
       operationId: deleteCatalogMenuItem
       summary: Удалить позицию общего каталога ресторана
       description: Только restaurant. Меню уже созданных банкетов не меняется.
@@ -1310,8 +1446,10 @@ paths:
           "$ref": "#/components/responses/403"
         '404':
           "$ref": "#/components/responses/404"
-  "/api/events/{eventId}/export.csv":
+  "/events/{eventId}/export.csv":
     get:
+      tags:
+      - Мероприятие (организатор)
       operationId: exportCsv
       summary: Скачать утверждённый заказ для кухни
       description: 'Только owner или restaurant того же scope, статус approved. UTF-8
@@ -1342,8 +1480,10 @@ paths:
           "$ref": "#/components/responses/500"
       parameters:
       - "$ref": "#/components/parameters/eventId"
-  "/api/events/{eventId}/export-link":
+  "/events/{eventId}/export-link":
     post:
+      tags:
+      - Мероприятие (организатор)
       operationId: createExportLink
       summary: Создать одноразовую ссылку CSV для MAX Bridge
       description: Bearer owner/restaurant, только approved. Тело не требуется. TTL60
@@ -1368,8 +1508,10 @@ paths:
           "$ref": "#/components/responses/409"
         '500':
           "$ref": "#/components/responses/500"
-  "/api/downloads/{downloadToken}":
+  "/downloads/{downloadToken}":
     get:
+      tags:
+      - Кухня и выгрузки
       operationId: consumeExportLink
       summary: Однократно скачать CSV по короткоживущей ссылке
       description: 'Без Bearer: token в пути является capability. Проверяются срок,
@@ -1400,7 +1542,7 @@ components:
     SessionBearer:
       type: http
       scheme: bearer
-      description: Токен приложения из /api/auth/max или /api/auth/demo, не MAX_BOT_TOKEN.
+      description: Токен приложения из POST /auth/max или POST /auth/demo, не MAX_BOT_TOKEN.
     MaxWebhookSecret:
       type: apiKey
       in: header
@@ -1595,6 +1737,7 @@ components:
       required: [photoUrl]
     DemoLogin:
       type: object
+      example: {"role": "organizer"}
       properties:
         role:
           type: string
@@ -1667,7 +1810,7 @@ components:
           type: boolean
         photoUrl:
           type: string
-          description: Пустая строка либо URL из POST /api/media.
+          description: Пустая строка либо URL из POST /media.
         nutrition:
           "$ref": "#/components/schemas/Nutrition"
       required:
@@ -1701,6 +1844,7 @@ components:
       required: [kcal, protein, fat, carbs]
     MenuItemCreate:
       type: object
+      example: {"name": "Суп дня", "description": "Томатный суп", "ingredients": "Томаты, базилик, сливки", "category": "Супы", "price": 45000, "weight": "300 г", "allergens": ["Молоко"], "vegetarian": true, "available": true, "nutrition": {"kcal": 180, "protein": 4, "fat": 9, "carbs": 18}}
       properties:
         name:
           type: string
@@ -2045,6 +2189,7 @@ components:
         роли. total/responded/joined доступны также присоединившемуся гостю.
     EventCreate:
       type: object
+      example: {"restaurantId": "restaurant_...", "title": "Корпоратив", "date": "2027-12-20T15:00:00.000Z", "deadline": "2027-12-15T15:00:00.000Z", "expectedGuests": 10, "foodBudget": 300000, "drinkBudget": 60000}
       properties:
         restaurantId:
           type: string
@@ -2056,7 +2201,7 @@ components:
           maxLength: 120
         photoUrl:
           type: string
-          description: Путь из POST /api/media; необязательно.
+          description: Путь из POST /media; необязательно.
         selectionMode: { type: string, enum: [individual, package], default: individual }
         packageId: { type: string, description: Обязателен при selectionMode=package }
         packageChoice: { type: string, description: Выбор горячего для пакета с альтернативами }
@@ -2092,11 +2237,12 @@ components:
         Выбранный ресторан должен иметь хотя бы одно доступное блюдо.
     EventPatch:
       type: object
+      example: {"expectedRevision": 3, "title": "Новогодний корпоратив", "foodBudget": 250000}
       required: [expectedRevision]
       properties:
         expectedRevision: { type: integer, minimum: 0 }
         title: { type: string, minLength: 1, maxLength: 120 }
-        photoUrl: { type: string, description: Путь из POST /api/media; пустая строка убирает фото. }
+        photoUrl: { type: string, description: Путь из POST /media; пустая строка убирает фото. }
         selectionMode: { type: string, enum: [individual, package] }
         packageId: { type: string }
         packageChoice: { type: string }
@@ -2107,6 +2253,7 @@ components:
         drinkBudget: { type: integer, minimum: 0, maximum: 10000000000 }
     InvitedGuestCreate:
       type: object
+      example: {"name": "Анна", "phone": "+7 999 123-45-67"}
       required: [name, phone]
       properties:
         name: { type: string, minLength: 1, maxLength: 100 }
@@ -2308,6 +2455,7 @@ components:
       - eventId
     SelectionPut:
       type: object
+      example: {"items": [{"menuItemId": "dish_...", "quantity": 1}], "notes": "Без лука"}
       properties:
         items:
           type: array
@@ -2350,6 +2498,7 @@ components:
       - total
     Approve:
       type: object
+      example: {"expectedRevision": 7}
       properties:
         expectedRevision:
           type: integer
@@ -2562,6 +2711,7 @@ components:
       - names
     SeatingPut:
       type: object
+      example: {"mode": "choice", "layout": {"tables": [{"id": "t1", "shape": "round", "label": "1", "x": 60, "y": 60, "w": 120, "h": 120, "rotation": 0, "seats": 6}]}}
       properties:
         mode:
           "$ref": "#/components/schemas/SeatingMode"
@@ -2569,6 +2719,7 @@ components:
           "$ref": "#/components/schemas/SeatingLayout"
     SeatChoice:
       type: object
+      example: {"seatId": "t1-2"}
       properties:
         seatId:
           type:
@@ -2578,6 +2729,7 @@ components:
       - seatId
     SeatAssignment:
       type: object
+      example: {"guest": "invite:invite_...", "seatId": "t1-1"}
       properties:
         guest:
           type: string
@@ -2622,6 +2774,7 @@ components:
       required: [menuItemId, name, quantity, price, total]
     SharedPut:
       type: object
+      example: {"items": [{"menuItemId": "dish_...", "quantity": 2}]}
       required: [items]
       properties:
         items:
@@ -2688,6 +2841,7 @@ components:
                     quantity: { type: integer }
     RestaurantInput:
       type: object
+      example: {"name": "Тёплый вечер", "address": "Москва, ул. Примерная, 1", "description": "Банкетный зал на 80 гостей"}
       properties:
         name: { type: string, minLength: 1, maxLength: 120 }
         address: { type: string, maxLength: 200 }
