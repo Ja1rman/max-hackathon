@@ -100,6 +100,33 @@ function packageDish(value, dishId) {
 
 const DEFAULT_WINDOWS = Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '09:00', end: '23:00' }));
 const SEATING_CHOICES = ['choice', 'fixed'];
+const DEFAULT_TABLE_PRESETS = [
+  ...Array.from({ length: 12 }, (_, index) => ({ shape: 'round', seats: index + 1 })),
+  ...Array.from({ length: 12 }, (_, index) => ({ shape: 'rect', seats: index + 1 })),
+  { shape: 'rect', seats: 16 }, { shape: 'rect', seats: 20 },
+];
+const defaultSeatingConfig = (capacity, template = 'rounds', type = 'flexible') => ({ type, fixedLayout: generateLayout(template, Math.min(capacity, 40)), tablePresets: DEFAULT_TABLE_PRESETS });
+function validTablePresets(value) {
+  if (!Array.isArray(value) || !value.length || value.length > 40) throw new HttpError(400, 'Укажите от 1 до 40 доступных размеров столов.');
+  const presets = value.map(preset => {
+    if (!preset || !['round', 'rect'].includes(preset.shape) || !Number.isSafeInteger(preset.seats) || preset.seats < 1 || preset.seats > 40) throw new HttpError(400, 'Укажите форму стола и число стульев от 1 до 40.');
+    return { shape: preset.shape, seats: preset.seats };
+  });
+  if (new Set(presets.map(preset => `${preset.shape}:${preset.seats}`)).size !== presets.length) throw new HttpError(400, 'Размеры столов не должны повторяться.');
+  return presets;
+}
+function validSeatingConfig(value, capacity) {
+  if (!value || !['fixed', 'flexible'].includes(value.type)) throw new HttpError(400, 'Выберите фиксированную или свободную схему зала.');
+  const checked = validateLayout(value.fixedLayout || generateLayout('rounds', Math.min(capacity, 20)));
+  if (checked.error) throw new HttpError(400, checked.error);
+  const seatCount = layoutSeats(checked.layout).length;
+  if (!seatCount || (value.type === 'fixed' && seatCount > capacity)) throw new HttpError(400, 'В готовой схеме должно быть от 1 места до вместимости зала.');
+  return { type: value.type, fixedLayout: checked.layout, tablePresets: validTablePresets(value.tablePresets || DEFAULT_TABLE_PRESETS) };
+}
+function layoutMatchesPresets(layout, presets) {
+  const allowed = new Set(presets.map(preset => `${preset.shape}:${preset.seats}`));
+  return layout.tables.every(table => allowed.has(`${table.shape}:${table.seats}`));
+}
 const SAMPLE_REPLACEMENTS = {
   'Буррата с томатами': 'Капрезе с помидорами и базиликом',
   'Салат с ростбифом': 'Салат Цезарь с цыплёнком',
@@ -171,8 +198,10 @@ export class Store {
     if (!eventColumns.includes('package_data')) this.db.exec("ALTER TABLE events ADD COLUMN package_data TEXT NOT NULL DEFAULT ''");
     if (!eventColumns.includes('duration_hours')) this.db.exec('ALTER TABLE events ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 4');
     if (!eventColumns.includes('hall_id')) this.db.exec("ALTER TABLE events ADD COLUMN hall_id TEXT NOT NULL DEFAULT ''");
+    if (!eventColumns.includes('seating_config')) this.db.exec("ALTER TABLE events ADD COLUMN seating_config TEXT NOT NULL DEFAULT ''");
     const hallColumns = this.db.prepare('PRAGMA table_info(restaurant_halls)').all().map(column => column.name);
     if (!hallColumns.includes('default_seating_template')) this.db.exec("ALTER TABLE restaurant_halls ADD COLUMN default_seating_template TEXT NOT NULL DEFAULT 'rounds'");
+    if (!hallColumns.includes('seating_config')) this.db.exec("ALTER TABLE restaurant_halls ADD COLUMN seating_config TEXT NOT NULL DEFAULT ''");
     const kitchenTokenColumns = this.db.prepare('PRAGMA table_info(kitchen_download_tokens)').all().map(column => column.name);
     if (!kitchenTokenColumns.includes('event_ids')) this.db.exec("ALTER TABLE kitchen_download_tokens ADD COLUMN event_ids TEXT NOT NULL DEFAULT ''");
     const userColumns = this.db.prepare('PRAGMA table_info(users)').all().map(column => column.name);
@@ -187,7 +216,15 @@ export class Store {
     if (previousVersion < 10) this.transaction(() => this.seedPetr());
     if (previousVersion < 11) this.transaction(() => this.migrateBookingsAndPackages());
     if (previousVersion < 12) this.transaction(() => this.migratePetrPhotos());
-    this.db.exec('PRAGMA user_version = 12');
+    if (previousVersion < 13) this.transaction(() => {
+      const update = this.db.prepare('UPDATE restaurant_halls SET seating_config=? WHERE id=?');
+      for (const hall of this.db.prepare("SELECT * FROM restaurant_halls WHERE seating_config=''").all()) {
+        const type = JSON.parse(hall.allowed_seating).includes('choice') ? 'flexible' : 'fixed';
+        update.run(JSON.stringify(defaultSeatingConfig(hall.capacity, hall.default_seating_template, type)), hall.id);
+      }
+    });
+    this.db.prepare("UPDATE events SET seating_config=(SELECT seating_config FROM restaurant_halls WHERE restaurant_halls.id=events.hall_id) WHERE seating_config='' AND hall_id!=''").run();
+    this.db.exec('PRAGMA user_version = 13');
     this.cleanup();
   }
   seedPetr() {
@@ -212,7 +249,7 @@ export class Store {
     const existing = this.db.prepare('SELECT id FROM restaurant_halls WHERE restaurant_id=? LIMIT 1').get(restaurantId);
     if (existing) return existing.id;
     const hallId = id('hall');
-    this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating) VALUES (?,?,?,?,?,?)').run(hallId, restaurantId, 'Основной зал', 1000, JSON.stringify(DEFAULT_WINDOWS), JSON.stringify(SEATING_CHOICES));
+    this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,seating_config) VALUES (?,?,?,?,?,?,?)').run(hallId, restaurantId, 'Основной зал', 1000, JSON.stringify(DEFAULT_WINDOWS), JSON.stringify(SEATING_CHOICES), JSON.stringify(defaultSeatingConfig(1000)));
     return hallId;
   }
   migrateBookingsAndPackages() {
@@ -651,7 +688,10 @@ export class Store {
     return { restaurantId, favorite: enabled };
   }
   halls(restaurantId) {
-    return this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurantId).map(row => ({ id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: JSON.parse(row.allowed_seating), defaultSeatingTemplate: row.default_seating_template, allowFreeSeating: JSON.parse(row.allowed_seating).includes('choice') }));
+    return this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurantId).map(row => {
+      const seatingConfig = row.seating_config ? JSON.parse(row.seating_config) : defaultSeatingConfig(row.capacity, row.default_seating_template, JSON.parse(row.allowed_seating).includes('choice') ? 'flexible' : 'fixed');
+      return { id: row.id, name: row.name, capacity: row.capacity, windows: JSON.parse(row.windows), allowedSeating: seatingConfig.type === 'fixed' ? ['choice'] : SEATING_CHOICES, defaultSeatingTemplate: row.default_seating_template, allowFreeSeating: seatingConfig.type === 'flexible', seatingConfig };
+    });
   }
   editHall(user, restaurantId, hallId, body) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Настройки зала меняет администратор ресторана.');
@@ -671,19 +711,21 @@ export class Store {
       return { weekday: window.weekday, start: window.start, end: window.end };
     });
     for (const [index, first] of normalized.entries()) if (normalized.some((second, next) => next > index && second.weekday === first.weekday && first.start < second.end && first.end > second.start)) throw new HttpError(400, 'Окна бронирования не должны пересекаться.');
-    const allowedSeating = body.allowedSeating ?? old?.allowedSeating;
-    if (!Array.isArray(allowedSeating) || new Set(allowedSeating).size !== allowedSeating.length || allowedSeating.some(mode => !SEATING_CHOICES.includes(mode))) throw new HttpError(400, 'Допустимые рассадки: choice и fixed.');
+    const requestedModes = body.allowedSeating ?? old?.allowedSeating ?? SEATING_CHOICES;
+    if (!Array.isArray(requestedModes) || new Set(requestedModes).size !== requestedModes.length || requestedModes.some(mode => !SEATING_CHOICES.includes(mode))) throw new HttpError(400, 'Допустимые рассадки: choice и fixed.');
     const defaultSeatingTemplate = body.defaultSeatingTemplate ?? old?.defaultSeatingTemplate ?? 'rounds';
     if (!SEATING_TEMPLATES.some(entry => entry.id === defaultSeatingTemplate && entry.id !== 'empty')) throw new HttpError(400, 'Выберите стандартную схему рассадки зала.');
-    const value = { id: hallId || id('hall'), name, capacity, windows: normalized, allowedSeating, defaultSeatingTemplate, allowFreeSeating: allowedSeating.includes('choice') };
+    const requestedConfig = body.seatingConfig ?? (body.allowedSeating !== undefined ? { ...(old?.seatingConfig || defaultSeatingConfig(capacity, defaultSeatingTemplate)), type: requestedModes.includes('choice') ? 'flexible' : 'fixed' } : old?.seatingConfig || defaultSeatingConfig(capacity, defaultSeatingTemplate));
+    const seatingConfig = validSeatingConfig(requestedConfig, capacity);
+    const allowedSeating = seatingConfig.type === 'fixed' ? ['choice'] : SEATING_CHOICES;
+    const value = { id: hallId || id('hall'), name, capacity, windows: normalized, allowedSeating, defaultSeatingTemplate, allowFreeSeating: seatingConfig.type === 'flexible', seatingConfig };
     if (old) {
       for (const event of this.db.prepare('SELECT * FROM events WHERE hall_id=? AND date>?').all(old.id, iso(Date.now()))) {
         if (event.expected_guests > capacity) throw new HttpError(409, 'Новая вместимость меньше числа гостей уже забронированного банкета.');
-        if (event.seating_mode !== 'off' && !allowedSeating.includes(event.seating_mode)) throw new HttpError(409, `В уже забронированном банкете используется ${event.seating_mode === 'choice' ? 'выбор места гостями' : 'фиксированная рассадка'}. Оставьте этот вариант в допустимой рассадке зала.`);
         if (!this.hallWindow(value, event.date, event.duration_hours)) throw new HttpError(409, 'Новые часы работы противоречат уже забронированному времени. Сохраните прежнее окно или сначала измените время банкета.');
       }
     }
-    this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,default_seating_template) VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,capacity=excluded.capacity,windows=excluded.windows,allowed_seating=excluded.allowed_seating,default_seating_template=excluded.default_seating_template').run(value.id, restaurantId, name, capacity, JSON.stringify(normalized), JSON.stringify(allowedSeating), defaultSeatingTemplate);
+    this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,default_seating_template,seating_config) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,capacity=excluded.capacity,windows=excluded.windows,allowed_seating=excluded.allowed_seating,default_seating_template=excluded.default_seating_template,seating_config=excluded.seating_config').run(value.id, restaurantId, name, capacity, JSON.stringify(normalized), JSON.stringify(allowedSeating), defaultSeatingTemplate, JSON.stringify(seatingConfig));
     return value;
   }
   deleteHall(user, restaurantId, hallId) {
@@ -870,18 +912,24 @@ export class Store {
     if (!['individual', 'package'].includes(selectionMode)) throw new HttpError(400, 'Режим заказа: individual или package.');
     const selectedPackage = selectionMode === 'package' ? this.selectedPackage(restaurant.id, body.packageId, body.packageChoice) : null;
     const hall = this.reserveHall(restaurant.id, hallId, eventDate, durationHours, expected);
-    const seatingMode = body.seating?.mode ?? (hall.allowedSeating.includes('fixed') ? 'fixed' : hall.allowedSeating.includes('choice') ? 'choice' : 'off');
+    const fixedHall = hall.seatingConfig.type === 'fixed';
+    const seatingMode = fixedHall ? 'choice' : body.seating?.mode ?? 'fixed';
+    if (fixedHall && body.seating && (body.seating.mode && body.seating.mode !== 'choice' || body.seating.template && body.seating.template !== hall.defaultSeatingTemplate)) throw new HttpError(403, 'Для этого зала ресторан закрепил расположение столов и выбор мест гостями.');
     if (!SEATING_MODES.includes(seatingMode) || (seatingMode !== 'off' && !hall.allowedSeating.includes(seatingMode))) throw new HttpError(400, 'Этот вариант рассадки недоступен для выбранного зала.');
     const template = body.seating?.template || hall.defaultSeatingTemplate;
-    if (seatingMode !== 'off' && !SEATING_TEMPLATES.some(entry => entry.id === template)) throw new HttpError(400, 'Неизвестная схема зала.');
-    if (!this.adminOf(user, restaurant.id) && !hall.allowFreeSeating && (seatingMode !== (hall.allowedSeating.includes('fixed') ? 'fixed' : 'off') || (seatingMode !== 'off' && template !== hall.defaultSeatingTemplate))) throw new HttpError(403, 'Для этого зала доступна только стандартная рассадка ресторана.');
-    const seatingLayout = seatingMode === 'off' ? { tables: [] } : generateLayout(template, expected);
+    if (!fixedHall && seatingMode !== 'off' && !SEATING_TEMPLATES.some(entry => entry.id === template)) throw new HttpError(400, 'Неизвестная схема зала.');
+    let seatingLayout = fixedHall ? hall.seatingConfig.fixedLayout : seatingMode === 'off' ? { tables: [] } : generateLayout(template, expected);
+    if (!fixedHall && !layoutMatchesPresets(seatingLayout, hall.seatingConfig.tablePresets)) {
+      if (body.seating?.template) throw new HttpError(409, 'Шаблон содержит столы, которых нет в наборе ресторана. Выберите другие размеры.');
+      seatingLayout = { tables: [] };
+    }
     const checkedLayout = validateLayout(seatingLayout);
     if (checkedLayout.error) throw new HttpError(400, checkedLayout.error);
+    if (fixedHall && layoutSeats(checkedLayout.layout).length < expected) throw new HttpError(409, `В готовой схеме зала только ${layoutSeats(checkedLayout.layout).length} мест. Выберите другой зал или уменьшите число гостей.`);
     const menu = this.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=? ORDER BY rowid').all(restaurant.id).filter(row => JSON.parse(row.data).available);
     if (!menu.length && !selectedPackage) throw new HttpError(409, 'В ресторане пока нет доступных блюд.');
     const eventId = id('event');
-    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,guest_budget,food_budget,drink_budget,status,invite_code,created_at,approved_at,photo_url,selection_mode,package_data,duration_hours,hall_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?,?,?,?,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, secret().slice(0, 24), iso(Date.now()), photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId);
+    this.db.prepare(`INSERT INTO events (id,scope,owner_id,restaurant_id,title,date,deadline,expected_guests,budget,guest_budget,food_budget,drink_budget,status,invite_code,created_at,approved_at,photo_url,selection_mode,package_data,duration_hours,hall_id,seating_config) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'collecting',?,?,NULL,?,?,?,?,?,?)`).run(eventId, user.scope, user.id, restaurant.id, title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, secret().slice(0, 24), iso(Date.now()), photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId, JSON.stringify(hall.seatingConfig));
     if (seatingMode !== 'off') this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=? WHERE id=?').run(seatingMode, JSON.stringify(checkedLayout.layout), eventId);
     const add = this.db.prepare('INSERT INTO event_menu VALUES (?,?,?)');
     for (const item of menu) add.run(eventId, item.id, item.data);
@@ -904,13 +952,18 @@ export class Store {
       const durationHours = body.durationHours === undefined ? event.duration_hours : integer(body.durationHours, 'Длительность в часах', 1, 12);
       const hallId = body.hallId === undefined ? event.hall_id : body.hallId;
       const hall = this.reserveHall(event.restaurant_id, hallId, eventDate, durationHours, expected, event.id);
-      if (hallId !== event.hall_id && event.seating_mode !== 'off' && !hall.allowedSeating.includes(event.seating_mode)) throw new HttpError(409, 'Текущая рассадка банкета недоступна в выбранном зале. Сначала измените режим рассадки.');
-      if (hallId !== event.hall_id && !this.adminOf(user, event.restaurant_id) && !hall.allowFreeSeating && event.seating_mode !== 'fixed') throw new HttpError(409, 'В выбранном зале ресторан требует стандартную рассадку.');
-      let standardLayout = null;
-      if (hallId !== event.hall_id && !this.adminOf(user, event.restaurant_id) && !hall.allowFreeSeating && event.seating_mode === 'fixed') {
-        if (this.db.prepare('SELECT 1 FROM seat_assignments WHERE event_id=? LIMIT 1').get(event.id)) throw new HttpError(409, 'Перед сменой зала снимите назначенные гостям места: у нового зала другая стандартная схема.');
-        standardLayout = validateLayout(generateLayout(hall.defaultSeatingTemplate, expected)).layout;
-      }
+      let nextSeating = null;
+      if (hallId !== event.hall_id) {
+        if (this.db.prepare('SELECT 1 FROM seat_assignments WHERE event_id=? LIMIT 1').get(event.id)) throw new HttpError(409, 'Перед сменой зала снимите назначенные гостям места.');
+        if (hall.seatingConfig.type === 'fixed') {
+          const layout = hall.seatingConfig.fixedLayout;
+          if (layoutSeats(layout).length < expected) throw new HttpError(409, 'В готовой схеме выбранного зала недостаточно мест для гостей.');
+          nextSeating = { mode: 'choice', layout };
+        } else {
+          const generated = generateLayout(hall.defaultSeatingTemplate, expected);
+          nextSeating = { mode: event.seating_mode === 'off' ? 'off' : event.seating_mode, layout: layoutMatchesPresets(generated, hall.seatingConfig.tablePresets) ? generated : { tables: [] } };
+        }
+      } else if (JSON.parse(event.seating_config || '{}').type === 'fixed' && expected > layoutSeats(this.layoutOf(event)).length) throw new HttpError(409, 'В готовой схеме зала недостаточно мест для гостей.');
       const photoUrl = body.photoUrl === undefined ? event.photo_url : this.eventPhoto(body.photoUrl);
       const selectionMode = body.selectionMode === undefined ? event.selection_mode : body.selectionMode;
       if (!['individual', 'package'].includes(selectionMode)) throw new HttpError(400, 'Режим заказа: individual или package.');
@@ -919,7 +972,7 @@ export class Store {
       const selectedPackage = selectionMode === 'package' ? (body.packageId ? this.selectedPackage(event.restaurant_id, body.packageId, body.packageChoice) : JSON.parse(event.package_data || 'null')) : null;
       if (selectionMode === 'package' && !selectedPackage) throw new HttpError(400, 'Выберите пакетное предложение.');
       this.db.prepare('UPDATE events SET title=?,date=?,deadline=?,expected_guests=?,budget=?,guest_budget=?,food_budget=?,drink_budget=?,photo_url=?,selection_mode=?,package_data=?,duration_hours=?,hall_id=?,revision=revision+1 WHERE id=?').run(title, eventDate, deadline, expected, (foodBudget + drinkBudget) * expected, foodBudget + drinkBudget, foodBudget, drinkBudget, photoUrl, selectionMode, selectedPackage ? JSON.stringify(selectedPackage) : '', durationHours, hallId, event.id);
-      if (standardLayout) this.db.prepare('UPDATE events SET seating_layout=? WHERE id=?').run(JSON.stringify(standardLayout), event.id);
+      if (nextSeating) this.db.prepare('UPDATE events SET seating_mode=?,seating_layout=?,seating_config=? WHERE id=?').run(nextSeating.mode, JSON.stringify(nextSeating.layout), JSON.stringify(hall.seatingConfig), event.id);
       if (deadline !== event.deadline) {
         const reminderAt = Math.max(Date.now() + 120_000, Date.parse(deadline) - 24 * 3600_000);
         this.db.prepare("UPDATE notification_jobs SET due_at=?,sent_at=NULL,cancelled_at=NULL,attempts=0 WHERE event_id=? AND kind='reminder'").run(reminderAt, event.id);
@@ -945,6 +998,7 @@ export class Store {
       if (event.status !== 'collecting') throw new HttpError(409, 'Список гостей закрыт после утверждения.');
       const count = this.db.prepare('SELECT COUNT(*) AS count FROM guest_invites WHERE event_id=?').get(event.id).count;
       if (count >= 1000) throw new HttpError(429, 'Достигнут предел гостей.');
+      if (event.seating_config && JSON.parse(event.seating_config).type === 'fixed' && count >= layoutSeats(this.layoutOf(event)).length) throw new HttpError(409, 'В готовой схеме зала больше нет мест для гостей.');
       if (count + 1 > event.expected_guests) this.reserveHall(event.restaurant_id, event.hall_id, event.date, event.duration_hours, count + 1, event.id);
       const name = string(body.name, 'Имя гостя', 100);
       const phone = normalizePhone(body.phone);
@@ -1048,6 +1102,7 @@ export class Store {
         this.assertOpen(event);
         const count = this.db.prepare('SELECT COUNT(*) AS count FROM guest_invites WHERE event_id=?').get(event.id).count;
         if (count >= 1000) throw new HttpError(409, 'Достигнут предел гостей.');
+        if (event.seating_config && JSON.parse(event.seating_config).type === 'fixed' && count >= layoutSeats(this.layoutOf(event)).length) throw new HttpError(409, 'В готовой схеме зала больше нет мест для гостей.');
         const inviteId = id('invite');
         this.db.prepare('INSERT INTO guest_invites (id,event_id,name,phone,user_id,created_at) VALUES (?,?,?,?,?,?)').run(inviteId, event.id, user.name, user.phone, user.id, iso(Date.now()));
         if (count >= event.expected_guests) this.db.prepare('UPDATE events SET expected_guests=expected_guests+1,revision=revision+1 WHERE id=?').run(event.id);
@@ -1493,7 +1548,8 @@ export class Store {
     const key = this.personKey(user, event);
     const hall = this.halls(event.restaurant_id).find(entry => entry.id === event.hall_id);
     const result = { mode: event.seating_mode, layout, seatCount: layoutSeats(layout).length, mySeat: people.find(person => person.key === key)?.seatId || null, occupied: people.filter(person => person.seatId).map(person => person.seatId), names: Object.fromEntries(people.filter(person => person.seatId).map(person => [person.seatId, person.name])) };
-    if (manager) { result.canCustomize = this.adminOf(user, event.restaurant_id) || Boolean(hall?.allowFreeSeating); result.allowedModes = hall?.allowedSeating || []; }
+    const config = event.seating_config ? JSON.parse(event.seating_config) : hall?.seatingConfig;
+    if (manager) { result.canCustomize = config?.type === 'flexible'; result.allowedModes = config?.type === 'fixed' ? ['choice'] : SEATING_CHOICES; result.tablePresets = config?.tablePresets || []; result.layoutPolicy = config?.type || 'fixed'; result.hallCapacity = hall?.capacity || 0; }
     if (manager) result.people = people;
     return result;
   }
@@ -1503,7 +1559,8 @@ export class Store {
       if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к рассадке банкета.');
       if (event.status !== 'collecting') throw new HttpError(409, 'Рассадка закрыта после утверждения.');
       const hall = this.halls(event.restaurant_id).find(entry => entry.id === event.hall_id);
-      if (!this.adminOf(user, event.restaurant_id) && !hall?.allowFreeSeating) throw new HttpError(403, 'Ресторан закрепил стандартную схему зала. Места гостям можно назначать без изменения схемы.');
+      const config = event.seating_config ? JSON.parse(event.seating_config) : hall?.seatingConfig;
+      if (config?.type !== 'flexible') throw new HttpError(403, 'Ресторан закрепил расположение столов. Гости выбирают места на готовой схеме.');
       const mode = body.mode === undefined ? event.seating_mode : body.mode;
       if (!SEATING_MODES.includes(mode)) throw new HttpError(400, 'Режим рассадки: off, choice или fixed.');
       if (mode !== 'off' && !hall?.allowedSeating.includes(mode)) throw new HttpError(409, 'Этот вариант рассадки недоступен для выбранного зала.');
@@ -1513,6 +1570,8 @@ export class Store {
         if (checked.error) throw new HttpError(400, checked.error);
         layout = checked.layout;
       }
+      if (!layoutMatchesPresets(layout, config.tablePresets)) throw new HttpError(400, 'В схеме есть столы вне разрешённого рестораном набора размеров.');
+      if (layoutSeats(layout).length > hall.capacity) throw new HttpError(400, 'Число стульев превышает вместимость зала.');
       const seatIds = new Set(layoutSeats(layout).map(seat => seat.id));
       const lost = this.db.prepare('SELECT seat_id FROM seat_assignments WHERE event_id=?').all(event.id).filter(row => !seatIds.has(row.seat_id));
       if (lost.length) {

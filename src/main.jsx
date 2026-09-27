@@ -39,11 +39,11 @@ import {
 } from "lucide-react";
 import "./styles.css";
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
-import { SEATING_TEMPLATES } from '../shared/seating.mjs';
+import { generateLayout, layoutSeats } from '../shared/seating.mjs';
 import { formatRussianDateTime, parseRussianDateTime, moscowDateTimeIso } from '../shared/moscow-date.mjs';
 import { formatUnits, spentByUnit, unitOf } from '../shared/currency.mjs';
 const units = (kopecks, unit) => formatUnits(kopecks, unit, { short: true });
-import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview } from './seating.jsx';
+import { SEATING_MODE_NAMES, SeatPicker, SeatingAdmin, SeatingOverview, SeatingMap, HallLayoutDesigner } from './seating.jsx';
 import { ConfirmHost, ask } from './confirm.jsx';
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -180,6 +180,10 @@ const localDateTime = value => {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow', hour12: false }).replace(' ', 'T').slice(0, 16);
 };
 const moscowIso = moscowDateTimeIso;
+const deadlineBefore = eventDate => {
+  const eventTime = Date.parse(moscowIso(eventDate));
+  return localDateTime(new Date(Math.min(eventTime - 60_000, Math.max(Date.now() + 60_000, eventTime - 3600_000))).toISOString());
+};
 function RussianDateTimeInput({ name, value, defaultValue, onChange, ...props }) {
   const [display, setDisplay] = useState(formatRussianDateTime(value ?? defaultValue));
   useEffect(() => { if (value) setDisplay(formatRussianDateTime(value)); }, [value]);
@@ -223,6 +227,8 @@ function BookingMiniCalendar({ restaurantId, hallId, durationHours, value, onCha
   const currentMonth = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }).slice(0, 7);
   const moveMonth = step => { const date = new Date(Date.UTC(year, monthNumber - 1 + step, 1)); setMonth(date.toISOString().slice(0, 7)); setFocusedDay(''); };
   const slots = calendar?.days.find(entry => entry.date === focusedDay)?.slots || [];
+  const selectedSlot = value && calendar?.month === value.slice(0, 7) && calendar.days.some(entry => entry.date === value.slice(0, 10) && entry.slots.includes(value.slice(11, 16)));
+  useEffect(() => { if (calendar && value && calendar.month === value.slice(0, 7) && !selectedSlot) onChange(''); }, [calendar, value, selectedSlot]);
   const slotCount = count => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'свободный слот' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'свободных слота' : 'свободных слотов'}`;
   return <div className="booking-mini-calendar" aria-label="Свободное время зала">
     <div className="booking-calendar-head"><div><strong>Свободное время</strong><small>Выберите день и начало банкета на {durationHours} ч.</small></div><div className="booking-calendar-month"><button type="button" aria-label="Предыдущий месяц" disabled={month <= currentMonth} onClick={() => moveMonth(-1)}>‹</button><span>{new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(year, monthNumber - 1, 1)))}</span><button type="button" aria-label="Следующий месяц" onClick={() => moveMonth(1)}>›</button></div></div>
@@ -230,7 +236,7 @@ function BookingMiniCalendar({ restaurantId, hallId, durationHours, value, onCha
     {!calendar && !error && <p className="muted">{restaurantId && hallId && durationHours ? 'Загружаем свободные слоты…' : 'Выберите зал и длительность, чтобы увидеть свободные слоты.'}</p>}
     {error && <p className="booking-calendar-error">{error}</p>}
     {calendar && <div className="booking-calendar-times"><strong>{focusedDay && focusedDay.slice(0, 7) === month ? `Начало · ${new Date(`${focusedDay}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : 'Выберите доступный день'}</strong>{focusedDay && focusedDay.slice(0, 7) === month && (slots.length ? <div className="booking-time-grid">{slots.map(time => <button key={time} type="button" className={value === `${focusedDay}T${time}` ? 'selected' : ''} onClick={() => onChange(`${focusedDay}T${time}`)}>{time}</button>)}</div> : <small>На этот день свободного времени для выбранной длительности нет.</small>)}</div>}
-    <small className="booking-calendar-hint">Время по Москве. Другое время можно указать вручную в поле даты.</small>
+    <div className={value ? 'booking-calendar-selected' : 'booking-calendar-selected empty'}>{value ? `Выбрано: ${formatRussianDateTime(value)} · время по Москве` : 'Дата банкета не выбрана. Нажмите на день и свободное время.'}</div>
   </div>;
 }
 function Brand({ small = false }) {
@@ -1003,8 +1009,8 @@ function App() {
                       </div>
                     )}
                   </div>
-                  <div className="section-head package-section-head"><div><h2>Залы и бронирование</h2><p className="muted">Каждый зал бронируется отдельно. Время банкета вместе с длительностью должно входить в доступное окно.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditHall({ restaurantId: r.id, name: '', capacity: 100, windows: [{ weekday: 1, start: '09:00', end: '23:00' }], allowedSeating: ['choice', 'fixed'], defaultSeatingTemplate: 'rounds', allowFreeSeating: true })}><Plus size={16} /> Добавить зал</Button>}</div>
-                  <div className="package-grid">{r.halls?.map(hall => <div className="panel package-card" key={hall.id}><strong>{hall.name}</strong><span>До {hall.capacity} гостей</span><small>{hall.windows.length} окон в неделю · стандартная рассадка: {SEATING_TEMPLATES.find(entry => entry.id === hall.defaultSeatingTemplate)?.name || 'Круглые столы'}</small><small>Свободная рассадка: {hall.allowFreeSeating ? 'организатор может выбрать' : 'недоступна'}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditHall({ ...hall, restaurantId: r.id })}>Настроить зал</button>}</div>)}</div>
+                  <div className="section-head package-section-head"><div><h2>Залы и бронирование</h2><p className="muted">Каждый зал бронируется отдельно. Ресторан задаёт готовую схему со стульями или размеры столов для расстановки организатором.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditHall({ restaurantId: r.id, name: '', capacity: 100, windows: [{ weekday: 1, start: '09:00', end: '23:00' }], seatingConfig: { type: 'fixed', fixedLayout: generateLayout('rounds', 20), tablePresets: [{ shape: 'round', seats: 6 }, { shape: 'round', seats: 8 }, { shape: 'rect', seats: 6 }, { shape: 'rect', seats: 10 }] } })}><Plus size={16} /> Добавить зал</Button>}</div>
+                  <div className="package-grid">{r.halls?.map(hall => <div className="panel package-card" key={hall.id}><strong>{hall.name}</strong><span>До {hall.capacity} гостей</span><small>{hall.windows.length} окон в неделю · {hall.seatingConfig?.type === 'fixed' ? `готовая схема: ${layoutSeats(hall.seatingConfig.fixedLayout).length} мест, гости выбирают стулья` : `организатор расставляет столы из ${hall.seatingConfig?.tablePresets.length || 0} размеров`}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditHall({ ...hall, restaurantId: r.id })}>Настроить зал</button>}</div>)}</div>
                   <div className="section-head package-section-head"><div><h2>Блюда только для пакетов</h2><p className="muted">Укажите состав, фото и КБЖУ. Эти блюда не появляются в обычном меню гостей.</p></div>{r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackageDish({ restaurantId: r.id, name: '', category: 'Холодные закуски', nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 }, available: true })}><Plus size={16} /> Добавить блюдо пакета</Button>}</div>
                   <div className="package-grid">{r.packageDishes?.map(dish => <div className="panel package-card" key={dish.id}><strong>{dish.name}</strong><small>Только для пакетного предложения · {dish.category}</small>{dish.photoUrl && <img className="package-dish-photo" src={`${BASE}${dish.photoUrl}`} alt={dish.name} />}<p>{dish.description}</p><small>К {dish.nutrition.kcal} · Б {dish.nutrition.protein} · Ж {dish.nutrition.fat} · У {dish.nutrition.carbs}</small>{r.access === 'admin' && <button type="button" onClick={() => setEditPackageDish({ ...dish, restaurantId: r.id })}>Редактировать</button>}</div>)}</div>
                   {[...new Set((r.menu || []).map(item => item.category))].map((category, index) => <details className="menu-category" key={category} open={index === 0}><summary>{category} <span>{r.menu.filter(item => item.category === category).length}</span></summary><div className="menu-grid catalog">
@@ -2128,6 +2134,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
   const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
   const [packageDraft, setPackageDraft] = useState(detail.event.package?.id || '');
   const [dateDraft, setDateDraft] = useState(localDateTime(detail.event.date));
+  const [deadlineDraft, setDeadlineDraft] = useState(localDateTime(detail.event.deadline));
   const [hallDraft, setHallDraft] = useState(detail.event.hallId);
   const [durationDraft, setDurationDraft] = useState(detail.event.durationHours || 4);
   const [editing, setEditing] = useState(null);
@@ -2140,7 +2147,11 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
   useEffect(() => { if (!sharedDirty) setShared(toDraft()); }, [serverShared]);
   useEffect(() => { setModeDraft(detail.event.selectionMode || 'individual'); }, [detail.event.selectionMode]);
   useEffect(() => { setPackageDraft(detail.event.package?.id || ''); }, [detail.event.package?.id]);
-  useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setHallDraft(detail.event.hallId); setDurationDraft(detail.event.durationHours || 4); }, [detail.event.id, detail.event.date, detail.event.hallId, detail.event.durationHours]);
+  useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setDeadlineDraft(localDateTime(detail.event.deadline)); setHallDraft(detail.event.hallId); setDurationDraft(detail.event.durationHours || 4); }, [detail.event.id, detail.event.date, detail.event.deadline, detail.event.hallId, detail.event.durationHours]);
+  const chooseEventDate = selected => {
+    setDateDraft(selected);
+    if (selected && (!deadlineDraft || moscowIso(deadlineDraft) >= moscowIso(selected))) setDeadlineDraft(deadlineBefore(selected));
+  };
   const active = detail.event.status === 'collecting';
   const durations = bookingDurationOptions(catalog?.halls?.find(hall => hall.id === hallDraft), dateDraft, durationDraft);
   const validDurations = durationOptions(catalog?.halls?.find(hall => hall.id === hallDraft), dateDraft);
@@ -2177,7 +2188,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
           const nextChoice = form.get('packageChoice');
           const currentHot = detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId;
           const changePackage = nextMode === 'package' && (nextPackage !== detail.event.package?.id || (nextChoice && nextChoice !== currentHot));
-          saveEvent({ title: form.get('title'), photoUrl, date: moscowIso(form.get('date')), deadline: moscowIso(form.get('deadline')), durationHours: durationDraft, hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
+          saveEvent({ title: form.get('title'), photoUrl, date: moscowIso(dateDraft), deadline: moscowIso(deadlineDraft), durationHours: durationDraft, hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
           <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} /></label>
@@ -2186,17 +2197,17 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
           {modeDraft === 'package' && <label>Пакетное предложение<select name="packageId" value={selectedOffer?.id || ''} onChange={event => setPackageDraft(event.target.value)} disabled={!active}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)}{catalog?.packages?.some(item => item.id === offer.id) ? '' : ' · сохранён в банкете'}</option>)}</select></label>}
           {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.some(item => item.dishId === detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId) ? detail.event.package.items.find(item => item.category === 'Горячее').dishId : hotChoices[0].dishId} disabled={!active}>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
           <div className="form-grid">
-            <label>Дата мероприятия<RussianDateTimeInput key={`${detail.event.id}-date-${detail.event.date}`} name="date" required value={dateDraft} onChange={setDateDraft} disabled={!active} /></label>
             <label>Длительность, часов<select name="durationHours" required value={durationDraft || ''} onChange={event => setDurationDraft(Number(event.target.value))} disabled={!active}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}{hours === durationDraft && !validDurations.includes(hours) ? ' · выберите время в календаре' : ''}</option>)}</select></label>
             <label>Зал<select name="hallId" value={hallDraft} onChange={event => setHallDraft(event.target.value)} disabled={!active}>{catalog?.halls?.map(hall => <option key={hall.id} value={hall.id}>{hall.name} · до {hall.capacity} гостей</option>)}</select></label>
-            <label>Выбор блюд до<RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" required defaultValue={localDateTime(detail.event.deadline)} disabled={!active} /></label>
-            <label>Количество гостей<input type="number" name="expectedGuests" min="1" max="1000" required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
+            <label>Выбор блюд до<RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" required value={deadlineDraft} onChange={setDeadlineDraft} disabled={!active} /></label>
+            <label>Количество гостей<input type="number" name="expectedGuests" min="1" max={Math.min(1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.capacity || 1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.seatingConfig?.type === 'fixed' ? layoutSeats(catalog.halls.find(hall => hall.id === hallDraft).seatingConfig.fixedLayout).length : 1000)} required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
             {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
             {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
           </div>
-          {active && <BookingMiniCalendar restaurantId={detail.event.restaurantId} hallId={hallDraft} durationHours={durationDraft} value={dateDraft} onChange={setDateDraft} excludeEventId={detail.event.id} />}
+          {active && <BookingMiniCalendar restaurantId={detail.event.restaurantId} hallId={hallDraft} durationHours={durationDraft} value={dateDraft} onChange={chooseEventDate} excludeEventId={detail.event.id} />}
+          {!active && <p className="muted">Дата мероприятия: {formatRussianDateTime(dateDraft)} (Москва).</p>}
           {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
-          {active && <Button type="submit" disabled={busy}>Сохранить параметры</Button>}
+          {active && <Button type="submit" disabled={busy || !dateDraft}>Сохранить параметры</Button>}
         </form>
         {removeEvent && <div className="danger-zone"><strong>Удаление банкета</strong><p>Банкет, заявки гостей и рассадка будут удалены без возможности восстановления.</p><Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить банкет «${detail.event.title}» вместе с заказами и рассадкой?`, { confirmLabel: 'Удалить банкет' })) removeEvent(); }}>Удалить банкет</Button></div>}
       </section>}
@@ -2385,20 +2396,19 @@ function HallEditor({ hall, busy, onClose, submit, remove }) {
   const [capacity, setCapacity] = useState(hall.capacity || 100);
   const [windows, setWindows] = useState(hall.windows || []);
   const previousWindows = useRef(alwaysOpen(hall.windows) ? [{ weekday: 1, start: '09:00', end: '23:00' }] : hall.windows || []);
-  const [defaultSeatingTemplate, setDefaultSeatingTemplate] = useState(hall.defaultSeatingTemplate || 'rounds');
-  const [allowFreeSeating, setAllowFreeSeating] = useState(hall.allowFreeSeating ?? hall.allowedSeating?.includes('choice') ?? true);
+  const [seatingConfig, setSeatingConfig] = useState(hall.seatingConfig || { type: 'fixed', fixedLayout: generateLayout('rounds', Math.min(hall.capacity || 100, 20)), tablePresets: [{ shape: 'round', seats: 6 }, { shape: 'round', seats: 8 }, { shape: 'rect', seats: 6 }, { shape: 'rect', seats: 10 }] });
+  const updateConfig = patch => setSeatingConfig(current => ({ ...current, ...patch }));
   const updateWindow = (index, field, value) => setWindows(current => current.map((item, i) => i === index ? { ...item, [field]: field === 'weekday' ? Number(value) : value } : item));
-  return <Modal title={hall.id ? 'Настроить зал' : 'Новый зал'} onClose={onClose}><form onSubmit={event => { event.preventDefault(); submit({ name, capacity: Number(capacity), windows, allowedSeating: allowFreeSeating ? ['fixed', 'choice'] : ['fixed'], defaultSeatingTemplate }); }}>
+  return <Modal title={hall.id ? 'Настроить зал' : 'Новый зал'} onClose={onClose}><form onSubmit={event => { event.preventDefault(); submit({ name, capacity: Number(capacity), windows, seatingConfig }); }}>
     <label>Название зала<input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>
     <label>Вместимость, гостей<input required type="number" min="1" max="1000" value={capacity} onChange={event => setCapacity(event.target.value)} /></label>
     <h3>Окна бронирования</h3><p className="muted">Время по Москве, в 24-часовом формате. Для работы без перерыва включите «Круглосуточно»: 23:59 оставляет последнюю минуту дня вне бронирования.</p>
     <label className="seating-option always-open-option"><input type="checkbox" checked={alwaysOpen(windows)} onChange={event => { if (event.target.checked) { previousWindows.current = windows; setWindows(Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '00:00', end: '24:00' }))); } else setWindows(previousWindows.current.length && !alwaysOpen(previousWindows.current) ? previousWindows.current : [{ weekday: 1, start: '09:00', end: '23:00' }]); }} /><span>Круглосуточно · 24/7</span></label>
     <div className="booking-windows">{windows.map((window, index) => <div className="booking-window" key={index}><select aria-label={`День ${index + 1}`} value={window.weekday} onChange={event => updateWindow(index, 'weekday', event.target.value)}>{WEEKDAYS.map((day, weekday) => <option key={day} value={weekday}>{day}</option>)}</select><input type="text" inputMode="text" maxLength={5} required pattern="([01][0-9]|2[0-3]):[0-5][0-9]" placeholder="00:00" aria-label={`Начало окна ${index + 1}, 24 часа`} value={window.start} onChange={event => updateWindow(index, 'start', event.target.value)} /><input type="text" inputMode="text" maxLength={5} required pattern="(([01][0-9]|2[0-3]):[0-5][0-9]|24:00)" placeholder="24:00" aria-label={`Конец окна ${index + 1}, 24 часа`} value={window.end} onChange={event => updateWindow(index, 'end', event.target.value)} /><button type="button" className="icon-btn" aria-label="Удалить окно" onClick={() => setWindows(current => current.filter((_, i) => i !== index))}><X size={16} /></button></div>)}</div>
     <button type="button" className="text-button" onClick={() => setWindows(current => [...current, { weekday: 1, start: '09:00', end: '23:00' }])}>+ Добавить окно</button>
-    <h3>Стандартная рассадка</h3><p className="muted">Эта схема будет создана для каждого нового банкета с учётом числа гостей. По умолчанию места назначает организатор.</p>
-    <label>Схема зала<select value={defaultSeatingTemplate} onChange={event => setDefaultSeatingTemplate(event.target.value)}>{SEATING_TEMPLATES.filter(entry => entry.id !== 'empty').map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
-    <label className="seating-option"><input type="checkbox" checked={allowFreeSeating} onChange={event => setAllowFreeSeating(event.target.checked)} /><span>Разрешить организатору свободную рассадку</span></label>
-    <p className="muted">Если включено, организатор может менять схему зала и разрешить гостям выбирать места. Если выключено, он назначает места только по стандартной схеме.</p>
+    <h3>Столы и стулья</h3><p className="muted">Настройка применяется к новым банкетам. Уже созданные сохраняют свою схему.</p>
+    <div className="hall-policy-options" role="radiogroup" aria-label="Кто расставляет столы"><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'fixed'} onChange={() => updateConfig({ type: 'fixed' })} /><span><strong>Готовая схема ресторана</strong><small>Столы и стулья стоят на заданных местах. Гости выбирают свободный стул.</small></span></label><label className="seating-option"><input type="radio" name="layoutPolicy" checked={seatingConfig.type === 'flexible'} onChange={() => updateConfig({ type: 'flexible' })} /><span><strong>Столы расставляет организатор</strong><small>Он использует только разрешённые рестораном формы и размеры столов.</small></span></label></div>
+    {seatingConfig.type === 'fixed' ? <HallLayoutDesigner layout={seatingConfig.fixedLayout} onChange={fixedLayout => updateConfig({ fixedLayout })} capacity={Number(capacity)} /> : <div className="hall-presets"><strong>Доступные столы</strong><p className="muted">Укажите, какие столы и сколько стульев за каждым можно использовать.</p><details><summary>Изменить набор · {seatingConfig.tablePresets.length} размеров</summary><div className="hall-presets-list">{seatingConfig.tablePresets.map((preset, index) => <div className="hall-preset-row" key={index}><select aria-label={`Форма стола ${index + 1}`} value={preset.shape} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, shape: event.target.value } : item) })}><option value="round">Круглый</option><option value="rect">Прямоугольный</option></select><input aria-label={`Мест за столом ${index + 1}`} type="number" min="1" max="40" value={preset.seats} onChange={event => updateConfig({ tablePresets: seatingConfig.tablePresets.map((item, i) => i === index ? { ...item, seats: Number(event.target.value) } : item) })} /><button type="button" aria-label={`Убрать размер ${index + 1}`} onClick={() => updateConfig({ tablePresets: seatingConfig.tablePresets.filter((_, i) => i !== index) })}><X size={15} /></button></div>)}</div><button type="button" className="text-button" onClick={() => updateConfig({ tablePresets: [...seatingConfig.tablePresets, { shape: 'round', seats: 8 }] })}>+ Добавить размер</button></details></div>}
     <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить зал «${hall.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить зал</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !windows.length}>Сохранить</Button></div>
   </form></Modal>;
 }
@@ -2435,7 +2445,6 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
   const firstHall = restaurants[0]?.halls?.[0];
   const hallDefaultMode = entry => entry?.allowedSeating.includes('fixed') ? 'fixed' : entry?.allowedSeating.includes('choice') ? 'choice' : 'off';
   const [seatingMode, setSeatingMode] = useState(hallDefaultMode(firstHall));
-  const [seatingTemplate, setSeatingTemplate] = useState(firstHall?.defaultSeatingTemplate || 'rounds');
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id || '');
   const [restaurantSearch, setRestaurantSearch] = useState('');
   const [showFavorites, setShowFavorites] = useState(false);
@@ -2445,8 +2454,11 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
   const restaurant = restaurants.find(entry => entry.id === restaurantId);
   const halls = restaurant?.halls || [];
   const hall = halls.find(entry => entry.id === hallId) || halls[0];
-  const canCustomizeSeating = Boolean(hall?.allowFreeSeating || restaurant?.access === 'admin');
-  useEffect(() => { setSeatingMode(hallDefaultMode(hall)); setSeatingTemplate(hall?.defaultSeatingTemplate || 'rounds'); }, [hall?.id]);
+  const canCustomizeSeating = hall?.seatingConfig?.type === 'flexible';
+  const maxGuests = Math.min(500, hall?.capacity || 500, hall?.seatingConfig?.type === 'fixed' ? layoutSeats(hall.seatingConfig.fixedLayout).length : 500);
+  const [guestCount, setGuestCount] = useState(Math.min(12, maxGuests));
+  useEffect(() => { setSeatingMode(hallDefaultMode(hall)); }, [hall?.id]);
+  useEffect(() => { setGuestCount(current => Math.min(current, maxGuests)); }, [maxGuests]);
   const packages = restaurant?.packages || [];
   const selectedOffer = packages.find(offer => offer.id === packageId) || packages[0];
   const hotChoices = selectedOffer?.items.filter(item => item.choiceGroup) || [];
@@ -2454,7 +2466,12 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
     const d = new Date(Date.now() + days * 86400000);
     return `${d.toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' })}T18:00`;
   };
-  const [eventDate, setEventDate] = useState(`${future(7).slice(0, 10)}T18:00`);
+  const [eventDate, setEventDate] = useState('');
+  const [deadline, setDeadline] = useState(future(5));
+  const chooseEventDate = selected => {
+    setEventDate(selected);
+    if (selected && (!deadline || moscowIso(deadline) >= moscowIso(selected))) setDeadline(deadlineBefore(selected));
+  };
   const [duration, setDuration] = useState(4);
   const durations = bookingDurationOptions(hall, eventDate, duration);
   const validDurations = durationOptions(hall, eventDate);
@@ -2485,12 +2502,12 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
             durationHours: duration,
             selectionMode,
             ...(selectionMode === 'package' ? { packageId: f.get('packageId'), ...(hotChoices.length ? { packageChoice: f.get('packageChoice') } : {}) } : {}),
-            date: moscowIso(f.get("date")),
+            date: moscowIso(eventDate),
             deadline: moscowIso(f.get("deadline")),
             expectedGuests: Number(f.get("guests")),
             foodBudget: Math.round(Number(f.get("foodBudget") || 0) * 100),
             drinkBudget: Math.round(Number(f.get("drinkBudget") || 0) * 100),
-            seating: { mode: seatingMode, template: seatingTemplate },
+            seating: canCustomizeSeating ? { mode: seatingMode } : undefined,
           });
         }}
       >
@@ -2521,20 +2538,12 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
         <label>Зал<select name="hallId" required value={hall?.id || ''} onChange={event => setHallId(event.target.value)}>{halls.map(entry => <option key={entry.id} value={entry.id}>{entry.name} · до {entry.capacity} гостей</option>)}</select></label>
         <div className="form-grid">
           <label>
-            Когда встречаемся
-            <RussianDateTimeInput
-              name="date"
-              required
-              value={eventDate}
-              onChange={setEventDate}
-            />
-          </label>
-          <label>
             Собрать выбор до
             <RussianDateTimeInput
               name="deadline"
               required
-              defaultValue={future(5)}
+              value={deadline}
+              onChange={setDeadline}
             />
           </label>
           <label>
@@ -2547,8 +2556,9 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
               type="number"
               name="guests"
               min={1}
-              max={500}
-              defaultValue={12}
+              max={maxGuests}
+              value={guestCount}
+              onChange={event => setGuestCount(Number(event.target.value))}
               required
             />
           </label>
@@ -2561,33 +2571,13 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
             <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
           </label>}
         </div>
-        <BookingMiniCalendar restaurantId={restaurantId} hallId={hall?.id} durationHours={duration} value={eventDate} onChange={setEventDate} />
-        <div className="form-grid">
-          <label>
-            Рассадка
-            <select name="seatingMode" value={seatingMode} disabled={!canCustomizeSeating} onChange={(e) => setSeatingMode(e.target.value)}>
-              {Object.entries(SEATING_MODE_NAMES).map(([k, v]) => (
-                <option key={k} value={k} disabled={k !== 'off' && !hall?.allowedSeating.includes(k)}>{v}</option>
-              ))}
-            </select>
-          </label>
-          {seatingMode !== "off" && canCustomizeSeating && (
-            <label>
-              Схема зала
-              <select name="seatingTemplate" value={seatingTemplate} onChange={event => setSeatingTemplate(event.target.value)}>
-                {SEATING_TEMPLATES.map((t) => (
-                  <option key={t.id} value={t.id}>{t.name}</option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-        {hall && !canCustomizeSeating && <p className="muted">Ресторан установил стандартную схему «{SEATING_TEMPLATES.find(entry => entry.id === hall.defaultSeatingTemplate)?.name || 'Круглые столы'}». Организатор сможет назначить гостям места, но не менять схему или включать свободный выбор.</p>}
+        <BookingMiniCalendar restaurantId={restaurantId} hallId={hall?.id} durationHours={duration} value={eventDate} onChange={chooseEventDate} />
+        {hall && (canCustomizeSeating ? <div className="hall-seating-choice"><label>Кто выбирает место<select name="seatingMode" value={seatingMode} onChange={event => setSeatingMode(event.target.value)}>{Object.entries(SEATING_MODE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><small>После создания банкета вы сможете расставить столы из набора ресторана во вкладке «Рассадка».</small></div> : <div className="hall-seating-choice"><strong>Готовая схема зала · {layoutSeats(hall.seatingConfig.fixedLayout).length} мест</strong><small>Ресторан закрепил расположение столов и стульев. Гости смогут выбрать свободное место.</small><details><summary>Посмотреть схему</summary><SeatingMap layout={hall.seatingConfig.fixedLayout} /></details></div>)}
         <div className="modal-actions">
           <Button variant="secondary" type="button" onClick={onClose}>
             Отмена
           </Button>
-          <Button disabled={busy || !restaurants.length} type="submit">
+          <Button disabled={busy || !restaurants.length || !eventDate} type="submit">
             Создать банкет <ArrowUpRight size={17} />
           </Button>
         </div>
