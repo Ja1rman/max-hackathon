@@ -1062,6 +1062,9 @@ export class Store {
       const event = this.eventRow(eventId, user);
       if (!this.isManager(user, event)) throw new HttpError(403, 'Нет доступа к меню банкета.');
       if (event.status !== 'collecting') throw new HttpError(409, 'Меню закрыто после утверждения.');
+      if (!this.adminOf(user, event.restaurant_id) && (!itemId || Object.keys(body).length !== 1 || typeof body.forGuests !== 'boolean')) {
+        throw new HttpError(403, 'Создавать и редактировать блюда может только администратор ресторана.');
+      }
       if (!itemId && this.db.prepare('SELECT COUNT(*) AS count FROM event_menu WHERE event_id=?').get(event.id).count >= 500) throw new HttpError(429, 'Достигнут предел позиций меню.');
       const existing = itemId ? this.db.prepare('SELECT data FROM event_menu WHERE event_id=? AND item_id=?').get(event.id, itemId) : null;
       if (itemId && !existing) throw new HttpError(404, 'Позиция меню не найдена.');

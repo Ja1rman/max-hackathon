@@ -554,8 +554,7 @@ main {
 .restaurant-choice strong { font-size: 18px; }
 .restaurant-choice small { color: var(--muted); line-height: 1.45; }
 .restaurant-choice-open > span:last-child { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #416e37; }
-.photo-credits { margin: 14px 0 0; font-size: 12px; }
-.photo-credits a { color: #416e37; text-decoration: underline; text-underline-offset: 2px; }
+.photo-note { margin: 14px 0 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .menu-category { border-top: 1px solid var(--line); padding: 12px 0; }
 .menu-category summary { display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 700; font-size: 17px; padding: 10px 2px; }
 .menu-category summary span { font-size: 11px; color: var(--muted); border-radius: 99px; background: var(--soft); padding: 3px 8px; }
@@ -1424,6 +1423,9 @@ main {
 }
 .checkout-jump { position: fixed; right: 18px; bottom: 20px; z-index: 29; display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 16px; border: 1px solid #d2e0d0; border-radius: 999px; background: var(--green); color: #fff; box-shadow: 0 7px 20px #183c2c44; font-size: 12px; font-weight: 750; }
 .checkout-jump:hover { background: #1b604a; }
+.back-to-top { position: fixed; z-index: 30; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; padding: 0 14px; border: 1px solid #d2e0d0; border-radius: 999px; background: var(--paper); color: var(--green); box-shadow: 0 6px 20px #183c2c33; font-size: 12px; font-weight: 750; }
+.page-back-to-top { left: 18px; bottom: 20px; }
+.modal-back-to-top { z-index: 110; right: 30px; bottom: 30px; }
 .empty {
   text-align: center;
   padding: 45px 20px;
@@ -1504,6 +1506,10 @@ main {
   grid-template-columns: 1fr 1fr;
   gap: 17px;
 }
+.budget-help { grid-column: 1 / -1; display: grid; gap: 6px; padding: 14px 16px; border: 1px solid #dae7d7; border-radius: 10px; background: #f1f7ed; color: var(--ink); }
+.budget-help strong { font-size: 12px; color: var(--green); }
+.budget-help p { font-size: 11px; line-height: 1.6; }
+.guest-budget-help { margin: 0 0 16px; }
 .modal-actions {
   display: flex;
   justify-content: flex-end;
@@ -1993,7 +1999,9 @@ main {
   .selection-total .btn {
     align-self: stretch;
   }
-  .checkout-jump { bottom: calc(78px + env(safe-area-inset-bottom)); }
+  .checkout-jump, .page-back-to-top { bottom: calc(78px + env(safe-area-inset-bottom)); }
+  .page-back-to-top { left: 14px; }
+  .modal-back-to-top { right: 18px; bottom: calc(18px + env(safe-area-inset-bottom)); }
   .login-grid {
     grid-template-columns: 1fr;
     margin: 50px auto 30px;
@@ -2783,19 +2791,33 @@ main {
 .shared-qty { font-size: 12px; font-weight: 750; color: var(--green); }
 .unit-total { line-height: 1.35; }
 .ingredients { display: block; font-size: 9px; color: #7d8a74; margin: 4px 0; line-height: 1.5; }
-.shared-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 16px; border-radius: 10px; background: var(--soft); }
-.shared-summary > div { flex: 1 1 200px; }
-.shared-summary strong { display: block; font-size: 12px; color: var(--green); }
-.shared-summary small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
-.event-dish { display: grid; gap: 8px; align-content: start; }
-.event-dish.hidden-dish .dish-card { opacity: 0.5; }
-.event-dish-controls { display: grid; gap: 8px; padding: 10px; border-radius: 8px; background: #f6f8f3; }
+.event-menu-guide { display: grid; gap: 8px; margin: 0 0 16px; padding: 12px 14px; border-left: 3px solid var(--green); border-radius: 8px; background: #f6f8f3; }
+.event-menu-guide p { font-size: 11px; line-height: 1.6; }
+.shared-summary { display: grid; gap: 10px; padding: 14px; margin-bottom: 16px; border-radius: 10px; background: var(--soft); }
+.shared-summary-heading { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.shared-summary-heading strong { display: block; font-size: 13px; color: var(--green); }
+.shared-summary-heading small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; }
+.shared-summary-heading b { white-space: nowrap; color: var(--green); font-size: 13px; }
+.shared-summary-list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.shared-summary-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: baseline; padding: 8px 0; border-top: 1px solid #dce7d9; font-size: 11px; }
+.shared-summary-list li span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.shared-summary-list li strong { color: var(--green); white-space: nowrap; }
+.shared-summary-empty { font-size: 11px; color: var(--muted); }
+.shared-summary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 9px; border-top: 1px solid #dce7d9; }
+.shared-summary-actions span { margin-right: auto; color: var(--green); font-size: 11px; font-weight: 700; }
+.event-dish { display: flex; flex-direction: column; align-self: start; min-width: 0; overflow: hidden; border: 1px solid #d6e2d2; border-radius: 12px; background: var(--paper); box-shadow: 0 3px 13px #183c2c0d; }
+.event-dish .dish-card { border: 0; border-radius: 0; }
+.event-dish.hidden-dish .dish-visual { opacity: .6; }
+.event-dish-controls { display: grid; gap: 11px; padding: 14px; border-top: 1px solid #d6e2d2; background: #f6f8f3; }
+.event-dish-controls-header { display: grid; gap: 2px; padding-bottom: 7px; border-bottom: 1px solid #dfe8dc; }
+.event-dish-controls-header strong { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.event-dish-controls-header small { font-size: 10px; color: var(--muted); }
 .admin-panel .event-dish-controls label.check { display: flex; align-items: center; gap: 8px; font-weight: 600; }
 .admin-panel .event-dish-controls input[type="checkbox"] { width: auto; }
 .shared-control { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 11px; font-weight: 600; color: #647856; }
 .shared-control .stepper { min-width: 120px; }
 .event-dish-controls .text-button { margin: 0; justify-self: start; }
-.import-list { display: grid; gap: 4px; max-height: 50vh; overflow: auto; margin: 12px 0; }
+.import-list { display: grid; gap: 4px; margin: 12px 0; }
 .import-list label.check { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; }
 .import-list input { width: auto; }
 .import-list label.check span { min-width: 0; overflow-wrap: anywhere; }

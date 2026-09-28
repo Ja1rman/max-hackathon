@@ -299,6 +299,7 @@ function Empty({ title, children }) {
 }
 function Modal({ title, children, onClose }) {
   const ref = useRef(null);
+  const [showTop, setShowTop] = useState(false);
   useEffect(() => {
     const previous = document.activeElement;
     ref.current?.focus();
@@ -340,6 +341,7 @@ function Modal({ title, children, onClose }) {
         className="modal"
         tabIndex={-1}
         ref={ref}
+        onScroll={event => setShowTop(event.currentTarget.scrollTop > 350)}
       >
         <div className="section-head">
           <h2>{title}</h2>
@@ -348,9 +350,20 @@ function Modal({ title, children, onClose }) {
           </button>
         </div>
         {children}
+        {showTop && <button type="button" className="back-to-top modal-back-to-top" onClick={() => ref.current?.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })}><ArrowUp size={17} /> Наверх</button>}
       </section>
     </div>
   );
+}
+function PageBackToTop() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const update = () => setVisible(window.scrollY > 600);
+    window.addEventListener('scroll', update, { passive: true });
+    update();
+    return () => window.removeEventListener('scroll', update);
+  }, []);
+  return visible && <button type="button" className="back-to-top page-back-to-top" onClick={() => window.scrollTo({ top: 0, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' })}><ArrowUp size={17} /> Наверх</button>;
 }
 function App() {
   const [config, setConfig] = useState(null),
@@ -1064,7 +1077,7 @@ function App() {
                     ))}
                   </div></details>)}
                   {!r.menu?.length && <p className="muted">В меню пока нет позиций.</p>}
-                  {r.name.includes('Петръ') && <p className="photo-credits"><a href={`${BASE}/petr-photos/credits.html`} target="_blank" rel="noopener noreferrer">Источники фотографий блюд</a></p>}
+                  {r.name.includes('Петръ') && <p className="photo-note">Для MVP использованы иллюстративные фотографии. Подача блюда в ресторане может отличаться.</p>}
                   <div className="section-head package-section-head"><div><h2>Пакетные предложения</h2><p className="muted">Фиксированная цена на гостя. Состав сохраняется в банкет при выборе пакета.</p></div>
                     {r.access === 'admin' && <Button variant="secondary" onClick={() => setEditPackage({ restaurantId: r.id, name: '', price: 0, items: [] })}><Plus size={16} /> Добавить пакет</Button>}
                   </div>
@@ -1186,7 +1199,7 @@ function App() {
                         className={displayTab === "menu" ? "active" : ""}
                         onClick={() => setTab("menu")}
                       >
-                        Мой выбор
+                        Мой выбор блюд
                       </button>
                     )}
                     {canManage && <button className={displayTab === 'eventMenu' ? 'active' : ''} onClick={() => setTab('eventMenu')}>Меню банкета</button>}
@@ -1316,9 +1329,10 @@ function App() {
                       section={displayTab === 'admin' ? 'settings' : 'menu'}
                       detail={detail}
                       catalog={restaurants.find((r) => r.id === detail.event.restaurantId)}
+                      canEditDishes={session.superAdmin || restaurants.find(r => r.id === detail.event.restaurantId)?.access === 'admin'}
                       busy={busy}
                       setForGuests={(item, forGuests) => updateAdmin(() => api(`/events/${selected}/menu/${item.id}`, { method: 'PATCH', body: { forGuests } }), forGuests ? 'Позиция доступна гостям' : 'Позиция скрыта от гостей')}
-                      saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Общий стол сохранён')}
+                      saveShared={items => updateAdmin(() => api(`/events/${selected}/shared`, { method: 'PUT', body: { items } }), 'Позиции общего стола сохранены')}
                       saveCatalogMenu={itemIds => updateAdmin(() => api(`/events/${selected}/menu/catalog`, { method: 'PUT', body: { itemIds } }), 'Меню банкета обновлено')}
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
                       removeEvent={detail.event.canDelete ? () => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); }) : null}
@@ -1629,6 +1643,7 @@ function App() {
           )}
         </nav>
       </div>
+      <PageBackToTop />
       <ConfirmHost />
       {toast && (
         <div className="toast" role="status">
@@ -1966,6 +1981,18 @@ function BudgetMeter({ foodBudget, drinkBudget, spent, guestView }) {
     </div>
   );
 }
+function BudgetHelp({ guest = false }) {
+  return <div className={guest ? 'budget-help guest-budget-help' : 'budget-help'}>
+    <strong>{guest ? 'Что означают 🥧 и 🍾?' : 'Как работает бюджет гостя'}</strong>
+    {guest ? <>
+      <p>Кусочки пирога 🥧 показывают, сколько можно выбрать еды (1 🥧 = 10 ₽), а бутылочки 🍾 — напитков (1 🍾 = 100 ₽). Это условные единицы для отображения бюджета, их не нужно покупать.</p>
+      <p>Нажимайте «+» у блюд и напитков ниже: стоимость каждой порции вычитается из соответствующего остатка. Еду нельзя оплатить бутылочками, а напитки — кусочками пирога. Если написано «без ограничения», для этой категории лимита нет.</p>
+    </> : <>
+      <p>Укажите суммы в рублях на одного гостя отдельно для еды и напитков. Гостю они показываются условными единицами: 1 🥧 = 10 ₽ для еды, 1 🍾 = 100 ₽ для напитков. Например, 2 500 ₽ на еду — это 250 🥧, а 600 ₽ на напитки — 6 🍾.</p>
+      <p>Цена каждого блюда или напитка показывается в своей единице и уменьшает соответствующий остаток при выборе порции. Лимиты не объединяются: остаток на еду не переносится на напитки. Значение 0 означает «без ограничения». Это только способ показать бюджет; стоимость заказа для ресторана остаётся в рублях.</p>
+    </>}
+  </div>;
+}
 function PackageView({ offer, guests }) {
   if (!offer) return <Empty title="Пакет ещё не выбран">Организатор уточняет состав заказа.</Empty>;
   const categories = [...new Set(offer.items.map(item => item.category))];
@@ -2058,6 +2085,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
           </p>
         </div>
       </div>
+      {guestView && <BudgetHelp guest />}
       {budgeted && <BudgetMeter foodBudget={limits.pie} drinkBudget={limits.bottle} spent={spent} guestView={guestView} />}
       <section className="selection-bottom" ref={checkoutRef} aria-label="Оформление заказа">
         <div className="selection-summary">
@@ -2109,7 +2137,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
       {!locked && canSelect && <div className="guest-guide"><strong>Как выбрать</strong><p>Добавьте порции кнопками у блюд и напитков ниже. Состав заказа обновится в карточке выше — там же можно добавить пожелания и сохранить выбор.</p>{budgeted && <p>У еды и напитков отдельные лимиты. Индикаторы показывают, сколько вы уже выбрали и сколько осталось. Блюдо сверх лимита добавить нельзя.</p>}</div>}
       {shared.length > 0 && (
         <section className="shared-table">
-          <h3>Уже на общем столе</h3>
+          <h3>Позиции общего стола</h3>
           <p className="muted">Эти блюда организатор заказал для всех. Добавлять их в свой заказ не нужно.</p>
           <div className="shared-list">
             {shared.map((s) => {
@@ -2164,7 +2192,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
     </>
   );
 }
-function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, uploadPhoto, onError, addGuest, editGuest, deleteDish, editDish, setForGuests, saveShared, saveCatalogMenu }) {
+function EventAdmin({ section, detail, catalog, canEditDishes, busy, saveEvent, removeEvent, uploadPhoto, onError, addGuest, editGuest, deleteDish, editDish, setForGuests, saveShared, saveCatalogMenu }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
@@ -2204,7 +2232,8 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
   const unlistedGuests = detail.guests.filter(guest => !invited.some(entry => entry.userId === guest.id));
   const orderedIds = new Set(detail.guests.flatMap(guest => guest.items.map(item => item.menuItemId)));
   const lockedCatalogIds = new Set([...orderedIds, ...(detail.shared || []).map(item => item.menuItemId)]);
-  const sharedTotal = detail.menu.reduce((sum, item) => sum + item.price * (shared[item.id] || 0), 0);
+  const sharedLines = detail.menu.filter(item => (shared[item.id] || 0) > 0).map(item => ({ ...item, quantity: shared[item.id], lineTotal: item.price * shared[item.id] }));
+  const sharedTotal = sharedLines.reduce((sum, item) => sum + item.lineTotal, 0);
   const setSharedQty = (id, quantity) => { setShared(value => ({ ...value, [id]: quantity })); setSharedDirty(true); };
   return (
     <div className="admin-layout">
@@ -2239,10 +2268,10 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max={Math.min(1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.capacity || 1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.seatingConfig?.type === 'fixed' ? layoutSeats(catalog.halls.find(hall => hall.id === hallDraft).seatingConfig.fixedLayout).length : 1000)} required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
             {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
             {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
+            {modeDraft === 'individual' && <BudgetHelp />}
           </div>
           {active && <BookingMiniCalendar restaurantId={detail.event.restaurantId} hallId={hallDraft} durationHours={durationDraft} value={dateDraft} onChange={chooseEventDate} excludeEventId={detail.event.id} />}
           {!active && <p className="muted">Дата мероприятия: {formatRussianDateTime(dateDraft)} МСК.</p>}
-          {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
           {active && <Button type="submit" disabled={busy || !dateDraft}>Сохранить параметры</Button>}
         </form>
         {removeEvent && <div className="danger-zone"><strong>Удаление банкета</strong><p>Банкет, заявки гостей и рассадка будут удалены без возможности восстановления.</p><Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить банкет «${detail.event.title}» вместе с заказами и рассадкой?`, { confirmLabel: 'Удалить банкет' })) removeEvent(); }}>Удалить банкет</Button></div>}
@@ -2271,30 +2300,36 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
         </form>}
       </section>}
       {section === 'menu' && (detail.event.selectionMode === 'package' ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} /> : <section className="panel admin-panel">
-        <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Отметьте, что могут выбрать гости, и что поставить на общий стол. Изменения действуют только для этого мероприятия.</p></div>
+        <div className="section-head"><div><h2>Меню этого банкета</h2><p className="muted">Здесь вы определяете состав меню только для этого мероприятия.</p></div>
           {active && <div className="admin-actions">
             <button type="button" onClick={() => { setCatalogQuery(''); setImporting(catalogItems.filter(item => inMenu.has(item.id)).map(item => item.id)); }}><Plus size={15} /> Выбрать из каталога</button>
-            <button type="button" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={15} /> Своя позиция</button>
+            {canEditDishes && <button type="button" onClick={() => editDish({ category: 'Закуски', price: 0, available: true, vegetarian: false, allergens: [], nutrition: { kcal: 0, protein: 0, fat: 0, carbs: 0 } })}><Plus size={15} /> Своя позиция</button>}
           </div>}
         </div>
+        <div className="event-menu-guide">
+          <p><strong>1. Выберите блюда из каталога.</strong> Отметьте в карточках «Гостям на выбор», чтобы гости могли сами заказать эти позиции.</p>
+          <p><strong>2. Укажите количество для общего стола.</strong> Эти порции заказываются сразу для всех, не предлагаются гостям для личного выбора и не расходуют их бюджет. Состав и итоговую стоимость проверьте ниже, затем сохраните.</p>
+        </div>
         <div className="shared-summary">
-          <div>
-            <strong>Общий стол</strong>
-            <small>{positions(Object.values(shared).filter(Boolean).length)} · {money(sharedTotal)} · не входит в бюджет гостей</small>
+          <div className="shared-summary-heading">
+            <div><strong>Позиции общего стола</strong><small>{positions(sharedLines.length)} · не входит в бюджет гостей</small></div>
+            <b>{money(sharedTotal)}</b>
           </div>
-          {active && sharedDirty && <>
+          {sharedLines.length ? <ul className="shared-summary-list">{sharedLines.map(item => <li key={item.id}><span>{item.name}</span><span>× {item.quantity}</span><strong>{money(item.lineTotal)}</strong></li>)}</ul> : <p className="shared-summary-empty">Пока ничего не выбрано для общего стола.</p>}
+          {active && sharedDirty && <div className="shared-summary-actions"><span>Есть несохранённые изменения</span>
             <Button type="button" variant="secondary" disabled={busy} onClick={() => { setShared(toDraft()); setSharedDirty(false); }}>Отменить</Button>
             <Button type="button" disabled={busy} onClick={async () => {
               const result = await saveShared(Object.entries(shared).filter(([, quantity]) => quantity > 0).map(([menuItemId, quantity]) => ({ menuItemId, quantity })));
               if (result !== null) setSharedDirty(false);
-            }}>Сохранить общий стол</Button>
-          </>}
+            }}>Сохранить позиции общего стола</Button>
+          </div>}
         </div>
         <div className="menu-grid catalog">{detail.menu.map(item => {
           const onShared = (shared[item.id] || 0) > 0;
           return <div key={item.id} className={`event-dish ${item.forGuests === false && !onShared ? 'hidden-dish' : ''}`}>
-            <DishCard item={item} admin={active} edit={() => editDish(item)} />
+            <DishCard item={item} admin={active && canEditDishes} edit={() => editDish(item)} />
             <div className="event-dish-controls">
+              <div className="event-dish-controls-header"><strong>Для блюда «{item.name}»</strong><small>Настройка в этом банкете</small></div>
               <label className="check">
                 <input type="checkbox" checked={item.forGuests !== false && !onShared} disabled={!active || busy || onShared || (item.forGuests !== false && orderedIds.has(item.id))} onChange={event => setForGuests(item, event.target.checked)} />
                 Гостям на выбор
@@ -2606,6 +2641,7 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onError, 
             Напитки на гостя, ₽ <span className="optional">необязательно</span>
             <input type="number" name="drinkBudget" min={0} max={1000000} step="1" placeholder="Например, 600" />
           </label>}
+          {selectionMode === 'individual' && <BudgetHelp />}
         </div>
         <BookingMiniCalendar restaurantId={restaurantId} hallId={hall?.id} durationHours={duration} value={eventDate} onChange={chooseEventDate} />
         {hall && <div className="hall-seating-choice"><label>Рассадка<select name="seatingMode" value={seatingMode} onChange={event => setSeatingMode(event.target.value)}>{Object.entries(SEATING_MODE_NAMES).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>{canCustomizeSeating ? <small>После создания банкета вы сможете расставить столы из набора ресторана во вкладке «Рассадка».</small> : <><strong>Готовая схема зала · {layoutSeats(hall.seatingConfig.fixedLayout).length} мест</strong><small>Расположение столов и стульев закреплено рестораном. Режим рассадки можно изменить позже.</small><details><summary>Посмотреть схему</summary><SeatingMap layout={hall.seatingConfig.fixedLayout} /></details></>}</div>}

@@ -323,6 +323,7 @@ test('common bot button finds only invitations for the signed MAX phone and clai
 test('event administration edits metadata and event-only KBJU menu with revision and selection locks', async t => {
   const f = await fixture(t);
   const owner = await f.login(100);
+  const admin = await f.login(900);
   const outsider = await f.login(200);
   const event = await f.event(owner.token);
   const newDate = futureMoscow(20);
@@ -332,19 +333,23 @@ test('event administration edits metadata and event-only KBJU menu with revision
   assert.equal((await f.request(`/api/events/${event.id}`, { token: owner.token, method: 'PATCH', body: { expectedRevision: event.revision, title: 'Старая версия' } })).status, 409);
   assert.equal((await f.request(`/api/events/${event.id}`, { token: outsider.token, method: 'PATCH', body: { expectedRevision: next.data.revision, title: 'Чужое' } })).status, 403);
   const dish = { name: 'Яблочный сок', description: 'Свежий сок', category: 'Напитки', price: 29000, weight: '250 мл', allergens: [], vegetarian: true, available: true, labels: ['Мало калорий'], nutrition: { kcal: 110, protein: 0, fat: 0, carbs: 26.5 } };
-  const added = await f.request(`/api/events/${event.id}/menu`, { token: owner.token, method: 'POST', body: dish });
+  assert.equal((await f.request(`/api/events/${event.id}/menu`, { token: owner.token, method: 'POST', body: dish })).status, 403);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${event.menu[0].id}`, { token: owner.token, method: 'PATCH', body: { description: 'Подмена состава' } })).status, 403);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${event.menu[0].id}`, { token: owner.token, method: 'PATCH', body: { forGuests: false, name: 'Подмена' } })).status, 403);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${event.menu[0].id}`, { token: owner.token, method: 'PATCH', body: { forGuests: false } })).status, 200);
+  const added = await f.request(`/api/events/${event.id}/menu`, { token: admin.token, method: 'POST', body: dish });
   assert.equal(added.status, 201);
   assert.equal(added.data.nutrition.carbs, 26.5);
   assert.deepEqual(added.data.labels, ['Мало калорий']);
-  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { labels: ['Несуществующая'] } })).status, 400);
-  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { labels: ['Халяль', 'Много белка'] } })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: admin.token, method: 'PATCH', body: { labels: ['Несуществующая'] } })).status, 400);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: admin.token, method: 'PATCH', body: { labels: ['Халяль', 'Много белка'] } })).status, 200);
   assert.deepEqual((await f.request(`/api/events/${event.id}`, { token: owner.token })).data.menu.find(item => item.id === added.data.id).labels, ['Халяль', 'Много белка']);
   assert.equal((await f.request(`/api/restaurants/${event.restaurantId}/menu/${added.data.id}`, { token: owner.token })).status, 404);
   const guest = await f.login(300);
   await f.inviteGuest(owner.token, event, guest.token, 300, '+79990000003');
   assert.equal((await f.request(`/api/events/${event.id}/selection`, { token: guest.token, method: 'PUT', body: { items: [{ menuItemId: added.data.id, quantity: 1 }] } })).status, 200);
-  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { price: 1 } })).status, 409);
-  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'PATCH', body: { description: 'Новый состав' } })).status, 200);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: admin.token, method: 'PATCH', body: { price: 1 } })).status, 409);
+  assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: admin.token, method: 'PATCH', body: { description: 'Новый состав' } })).status, 200);
   assert.equal((await f.request(`/api/events/${event.id}/menu/${added.data.id}`, { token: owner.token, method: 'DELETE' })).status, 409);
 });
 
