@@ -1,306 +1,47 @@
 {
-  "schemaVersion": 1,
-  "description": "Только синтетические демонстрационные данные. Описывает seed из server/store.mjs; не импортируется автоматически. Идентификаторы fixture_* не являются настоящими API ID. Секретов и действующих приглашений нет.",
-  "source": "server/store.mjs SAMPLE_MENU and Store.loginDemo",
-  "currency": "RUB",
-  "moneyUnit": "kopecks",
-  "relativeDates": {
-    "eventDaysAfterCreation": 14,
-    "deadlineDaysAfterCreation": 10
-  },
+  "schemaVersion": 2,
+  "description": "Описательный манифест синтетического демо. Реальные записи создаёт server/store.mjs при POST /auth/demo; этот JSON не импортируется, не содержит токенов, действующих приглашений или персональных данных.",
+  "scope": "Новое изолированное пространство для каждого первого входа организатора",
+  "roles": [
+    { "role": "admin", "name": "Администратор", "access": "Все рестораны демо-пространства" },
+    { "role": "restaurant", "name": "Управляющий «Петръ»", "access": "Администратор демо-ресторана" },
+    { "role": "organizer", "name": "Александра", "access": "Организатор двух демо-банкетов" },
+    { "role": "guest", "name": "Вы", "access": "Гость двух демо-банкетов" }
+  ],
   "restaurant": {
-    "id": "fixture_restaurant",
-    "name": "Тёплый вечер",
-    "description": "Современная кухня для ваших особенных встреч. Демонстрационный ресторан и пример меню.",
-    "address": "Москва · адрес уточняется",
-    "sampleMenu": true,
-    "menu": [
-      {
-        "name": "Буррата с томатами",
-        "description": "Сладкие томаты, базилик, оливковое масло и нежная буррата",
-        "category": "Закуски",
-        "price": 69000,
-        "weight": "230 г",
-        "emoji": "🍅",
-        "allergens": [
-          "Молоко"
-        ],
-        "vegetarian": true,
-        "id": "fixture_dish_0",
-        "available": true
-      },
-      {
-        "name": "Салат с ростбифом",
-        "description": "Ростбиф, микс салатов, печёный перец и горчичный соус",
-        "category": "Закуски",
-        "price": 79000,
-        "weight": "210 г",
-        "emoji": "🥗",
-        "allergens": [
-          "Горчица"
-        ],
-        "vegetarian": false,
-        "id": "fixture_dish_1",
-        "available": true
-      },
-      {
-        "name": "Лосось с овощами",
-        "description": "Филе лосося на гриле с сезонными овощами и лимоном",
-        "category": "Горячее",
-        "price": 129000,
-        "weight": "320 г",
-        "emoji": "🐟",
-        "allergens": [
-          "Рыба"
-        ],
-        "vegetarian": false,
-        "id": "fixture_dish_2",
-        "available": true
-      },
-      {
-        "name": "Цыплёнок с пюре",
-        "description": "Запечённое филе цыплёнка, картофельное пюре и сливочный соус",
-        "category": "Горячее",
-        "price": 89000,
-        "weight": "350 г",
-        "emoji": "🍗",
-        "allergens": [
-          "Молоко"
-        ],
-        "vegetarian": false,
-        "id": "fixture_dish_3",
-        "available": true
-      },
-      {
-        "name": "Ризотто с грибами",
-        "description": "Рис арборио, лесные грибы и пармезан",
-        "category": "Горячее",
-        "price": 85000,
-        "weight": "280 г",
-        "emoji": "🍄",
-        "allergens": [
-          "Молоко"
-        ],
-        "vegetarian": true,
-        "id": "fixture_dish_4",
-        "available": true
-      },
-      {
-        "name": "Павлова с ягодами",
-        "description": "Хрустящая меренга, сливочный крем и свежие ягоды",
-        "category": "Десерты",
-        "price": 49000,
-        "weight": "150 г",
-        "emoji": "🍓",
-        "allergens": [
-          "Яйца",
-          "Молоко"
-        ],
-        "vegetarian": true,
-        "id": "fixture_dish_5",
-        "available": true
-      },
-      {
-        "name": "Шоколадный фондан",
-        "description": "Тёплый шоколадный десерт с шариком ванильного мороженого",
-        "category": "Десерты",
-        "price": 55000,
-        "weight": "180 г",
-        "emoji": "🍫",
-        "allergens": [
-          "Глютен",
-          "Яйца",
-          "Молоко"
-        ],
-        "vegetarian": true,
-        "id": "fixture_dish_6",
-        "available": true
-      },
-      {
-        "name": "Домашний лимонад",
-        "description": "Лимон, мята и газированная вода",
-        "category": "Напитки",
-        "price": 29000,
-        "weight": "300 мл",
-        "emoji": "🍋",
-        "allergens": [],
-        "vegetarian": true,
-        "id": "fixture_dish_7",
-        "available": true
-      }
-    ]
+    "name": "Петръ · демо",
+    "address": "Санкт-Петербург, ул. Гороховая, д. 1",
+    "catalog": "Копия текущего live-каталога ресторана «Петръ» с новыми ID блюд",
+    "packages": "Копии текущих пакетных предложений и отдельных блюд для пакетов",
+    "hall": "Демо-зал с настройками окон бронирования и рассадки"
   },
-  "demoRoles": [
+  "events": [
     {
-      "role": "organizer",
-      "name": "Александра"
+      "title": "День рождения Александры в «Петръ»",
+      "startsAfterDays": 14,
+      "deadlineAfterDays": 10,
+      "startTimeMoscow": "18:00",
+      "durationHours": 4,
+      "selectionMode": "individual",
+      "expectedGuests": 12,
+      "foodBudgetKopecksPerGuest": 250000,
+      "drinkBudgetKopecksPerGuest": 60000,
+      "joinedGuests": 6,
+      "submittedSelections": 5,
+      "sharedTableCatalogItems": 2,
+      "assignedSeats": 3
     },
     {
-      "role": "guest",
-      "name": "Вы"
-    },
-    {
-      "role": "restaurant",
-      "name": "Команда ресторана"
+      "title": "Корпоратив в «Петръ» · пакет",
+      "startsAfterDays": 18,
+      "deadlineAfterDays": 13,
+      "startTimeMoscow": "18:00",
+      "durationHours": 4,
+      "selectionMode": "package",
+      "expectedGuests": 10,
+      "invitedGuests": 6,
+      "joinedGuests": 1
     }
   ],
-  "event": {
-    "id": "fixture_event",
-    "title": "День рождения Александры",
-    "restaurantId": "fixture_restaurant",
-    "status": "collecting",
-    "expectedGuests": 12,
-    "budget": 3600000,
-    "joined": 6,
-    "responded": 5,
-    "total": 1053000,
-    "revision": 0,
-    "menuSnapshot": true,
-    "demo": true
-  },
-  "guests": [
-    {
-      "id": "fixture_guest_0",
-      "name": "Мария Волкова",
-      "notes": "Без орехов, пожалуйста",
-      "submitted": true,
-      "items": [
-        {
-          "menuItemId": "fixture_dish_0",
-          "quantity": 1,
-          "price": 69000,
-          "name": "Буррата с томатами"
-        },
-        {
-          "menuItemId": "fixture_dish_4",
-          "quantity": 1,
-          "price": 85000,
-          "name": "Ризотто с грибами"
-        },
-        {
-          "menuItemId": "fixture_dish_5",
-          "quantity": 1,
-          "price": 49000,
-          "name": "Павлова с ягодами"
-        }
-      ],
-      "total": 203000
-    },
-    {
-      "id": "fixture_guest_1",
-      "name": "Дмитрий Соколов",
-      "notes": "",
-      "submitted": true,
-      "items": [
-        {
-          "menuItemId": "fixture_dish_1",
-          "quantity": 1,
-          "price": 79000,
-          "name": "Салат с ростбифом"
-        },
-        {
-          "menuItemId": "fixture_dish_3",
-          "quantity": 1,
-          "price": 89000,
-          "name": "Цыплёнок с пюре"
-        },
-        {
-          "menuItemId": "fixture_dish_7",
-          "quantity": 1,
-          "price": 29000,
-          "name": "Домашний лимонад"
-        }
-      ],
-      "total": 197000
-    },
-    {
-      "id": "fixture_guest_2",
-      "name": "Анна Морозова",
-      "notes": "Вегетарианское меню",
-      "submitted": true,
-      "items": [
-        {
-          "menuItemId": "fixture_dish_0",
-          "quantity": 1,
-          "price": 69000,
-          "name": "Буррата с томатами"
-        },
-        {
-          "menuItemId": "fixture_dish_4",
-          "quantity": 1,
-          "price": 85000,
-          "name": "Ризотто с грибами"
-        },
-        {
-          "menuItemId": "fixture_dish_7",
-          "quantity": 1,
-          "price": 29000,
-          "name": "Домашний лимонад"
-        }
-      ],
-      "total": 183000
-    },
-    {
-      "id": "fixture_guest_3",
-      "name": "Алексей Петров",
-      "notes": "Соус отдельно",
-      "submitted": true,
-      "items": [
-        {
-          "menuItemId": "fixture_dish_1",
-          "quantity": 1,
-          "price": 79000,
-          "name": "Салат с ростбифом"
-        },
-        {
-          "menuItemId": "fixture_dish_2",
-          "quantity": 1,
-          "price": 129000,
-          "name": "Лосось с овощами"
-        },
-        {
-          "menuItemId": "fixture_dish_6",
-          "quantity": 1,
-          "price": 55000,
-          "name": "Шоколадный фондан"
-        }
-      ],
-      "total": 263000
-    },
-    {
-      "id": "fixture_guest_4",
-      "name": "Екатерина Смирнова",
-      "notes": "",
-      "submitted": true,
-      "items": [
-        {
-          "menuItemId": "fixture_dish_0",
-          "quantity": 1,
-          "price": 69000,
-          "name": "Буррата с томатами"
-        },
-        {
-          "menuItemId": "fixture_dish_3",
-          "quantity": 1,
-          "price": 89000,
-          "name": "Цыплёнок с пюре"
-        },
-        {
-          "menuItemId": "fixture_dish_5",
-          "quantity": 1,
-          "price": 49000,
-          "name": "Павлова с ягодами"
-        }
-      ],
-      "total": 207000
-    },
-    {
-      "id": "fixture_demo_guest",
-      "name": "Вы",
-      "notes": "",
-      "submitted": false,
-      "items": [],
-      "total": 0
-    }
-  ]
+  "apiCheckInputs": "fixtures/api-checks.json"
 }

@@ -608,3 +608,34 @@ checks:                                   # обязательные прове�
       type: array
       min_items: 1
       required_fields: [id, name, roles, isYou]
+
+  - id: approved_delete_forbidden_for_organizer
+    name: После утверждения организатор не может удалить банкет
+    required: true
+    method: DELETE
+    path: /events/{eventId}
+    role: organizer
+    params:
+      path: { eventId: "{{eventId}}" }
+      headers: { Authorization: "Bearer {{organizerToken}}" }
+    expected_status: [403]
+    expected_response:
+      content_type: application/json
+      type: object
+      required_fields: [error]
+
+  - id: approved_delete_by_restaurant_admin
+    name: Администратор ресторана может удалить утверждённый банкет
+    required: true
+    method: DELETE
+    path: /events/{eventId}
+    role: restaurant
+    params:
+      path: { eventId: "{{eventId}}" }
+      headers: { Authorization: "Bearer {{adminToken}}" }
+    expected_status: [200]
+    expected_response:
+      content_type: application/json
+      type: object
+      required_fields: [success, eventId]
+      values: { success: true, eventId: "{{eventId}}" }

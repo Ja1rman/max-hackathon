@@ -1,6 +1,6 @@
 ---
 document: За столом — модель хранения и обмена
-version: 1.7.0
+version: 1.8.0
 sources:
 - server/store.mjs
 - server/auth.mjs
@@ -12,7 +12,7 @@ api_contract: "../openapi.yaml"
 fixture: "../fixtures/demo.json"
 engine:
   product: SQLite via Node.js24 node:sqlite DatabaseSync
-  user_version: 10
+  user_version: 14
   pragmas:
     foreign_keys: 'ON'
     journal_mode: WAL
@@ -20,7 +20,7 @@ engine:
   migration: Если events.revision отсутствует, ALTER TABLE добавляет INTEGER NOT NULL
     DEFAULT0. Аналогично добавляются events.seating_mode ('off') и events.seating_layout
     ('{"tables":[]}'). events.guest_budget добавляется со значением budget / expected_guests
-    (старый бюджет был общим на банкет). В v8 список organizers переносится в restaurant_members (organizer во всех live-ресторанах для подтверждённых номеров), владельцы live-банкетов получают organizer в своих ресторанах, таблица organizers удаляется. В v9 добавляется events.photo_url. В v10 добавляются глобальные администраторы, пакетные предложения, режим заказа, снимок пакета и область выгрузки кухни; однократно импортируется меню «Петръ». Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
+    (старый бюджет был общим на банкет). В v8 прежние организаторы переносились в restaurant_members; в текущей схеме права организатора привязаны к events через owner_id и event_organizers. В v9 добавляется events.photo_url. В v10 добавляются глобальные администраторы, пакетные предложения, режим заказа, снимок пакета и область выгрузки кухни; однократно импортируется меню «Петръ». В v11–v14 добавлены бронирование залов, фотографии блюд, конфигурация рассадки зала и уведомления по категориям. Начальное создание CREATE TABLE IF NOT EXISTS. Схема должна оставаться
     совместимой при откате кода.
   indexes:
   - events_scope_idx ON events(scope)
@@ -48,6 +48,7 @@ tables:
       phone: TEXT NULL
       phone_verified_at: INTEGER NULL (Unix milliseconds)
       notifications_enabled: INTEGER NOT NULL DEFAULT 0
+      notification_preferences: TEXT NOT NULL DEFAULT '' (JSON настроек категорий)
     purpose: MAX ID хранится строкой; id=max_<MAX ID>. Роль restaurant для live пересчитывается
       по allowlist при каждом запросе.
   sessions:
@@ -83,6 +84,9 @@ tables:
       photo_url: TEXT NOT NULL DEFAULT '' (путь загруженного фото мероприятия)
       selection_mode: TEXT NOT NULL DEFAULT 'individual' (individual | package)
       package_data: TEXT NOT NULL DEFAULT '' (JSON Package, снимок выбранного пакета)
+      duration_hours: INTEGER NOT NULL DEFAULT 4 (от 1 до 12)
+      hall_id: TEXT NOT NULL DEFAULT '' (зал ресторана)
+      seating_config: TEXT NOT NULL DEFAULT '' (снимок ограничений рассадки зала)
       date: TEXT NOT NULL (ISO-8601 UTC)
       deadline: TEXT NOT NULL (ISO-8601 UTC)
       expected_guests: INTEGER NOT NULL
@@ -107,8 +111,7 @@ tables:
     primary_key:
     - event_id
     - item_id
-    purpose: Снимок доступных блюд при создании банкета; владелец и ресторан могут
-      менять его до утверждения с защитой уже выбранной цены/названия. item_id намеренно
+    purpose: Снимок доступных блюд при создании банкета; организатор может выбирать позиции каталога и назначать позиции общего стола, а данные блюд редактирует администратор ресторана. Изменения до утверждения защищают уже выбранные цену и название. item_id намеренно
       не FK на текущий каталог. КБЖУ на порцию и photoUrl хранятся в JSON MenuItem.
   guests:
     columns:
@@ -204,8 +207,20 @@ tables:
     primary_key:
     - restaurant_id
     - user_id
-    purpose: Доступ пользователя к ресторану. Нет строки — обычный пользователь (гость).
-      Суперадминистраторы из RESTAURANT_ADMIN_IDS администрируют все рестораны без строк.
+    purpose: Текущие права администратора ресторана; старые строки organizer мигрируют
+      в event_organizers. Нет строки — пользователь может просматривать ресторан и быть
+      организатором отдельного банкета или гостем. Администраторы сервиса из
+      RESTAURANT_ADMIN_IDS либо global_admins администрируют все рестораны без строк.
+  event_organizers:
+    columns:
+      event_id: TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      granted_by: TEXT NULL REFERENCES users(id) ON DELETE SET NULL
+      created_at: TEXT NOT NULL (ISO-8601 UTC)
+    primary_key:
+    - event_id
+    - user_id
+    purpose: Дополнительные организаторы именно этого банкета; создатель хранится в events.owner_id.
   global_admins:
     columns:
       user_id: TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
@@ -218,6 +233,31 @@ tables:
       restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
       data: TEXT NOT NULL (JSON Package)
     purpose: Редактируемые фиксированные предложения; создание банкета копирует выбранное предложение в events.package_data.
+  package_dishes:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      data: TEXT NOT NULL (JSON блюда только для пакета с фото и КБЖУ)
+    purpose: Отдельный каталог блюд для составления фиксированных предложений.
+  restaurant_halls:
+    columns:
+      id: TEXT PRIMARY KEY
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+      name: TEXT NOT NULL
+      capacity: INTEGER NOT NULL
+      windows: TEXT NOT NULL (JSON недельных окон бронирования)
+      allowed_seating: TEXT NOT NULL (JSON допустимых режимов)
+      default_seating_template: TEXT NOT NULL DEFAULT 'rounds'
+      seating_config: TEXT NOT NULL DEFAULT '' (JSON фиксированной карты либо набора столов)
+    purpose: Вместимость и часы зала, правила бронирования и стандартная рассадка.
+  restaurant_favorites:
+    columns:
+      user_id: TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE
+      restaurant_id: TEXT NOT NULL REFERENCES restaurants(id) ON DELETE CASCADE
+    primary_key:
+    - user_id
+    - restaurant_id
+    purpose: Избранные рестораны пользователя.
   kitchen_download_tokens:
     columns:
       token_hash: TEXT PRIMARY KEY (SHA-256)
@@ -297,16 +337,16 @@ authorization:
   guest_detail: Собственные позиции/пожелания; summary=[]; чужие имена и пожелания
     отсутствуют. Общая сумма и счётчики банкета доступны участнику.
   kitchen: 'GET /api/kitchen доступен администраторам ресторана и сервиса: банкеты scope с date >= вчера; выгрузка принимает eventIds для выбранных мероприятий.'
-  users: 'GET /api/users, GET /api/restaurants/{id}/members и PUT/DELETE /api/restaurants/{id}/members/{userId}: глобальный администратор назначает администратора ресторана; администратор ресторана назначает только organizer. userId также принимает числовой MAX ID до первого входа.'
+  users: 'Доступы показывают только людей из доступных банкетов и администраторов доступных ресторанов. Глобальный администратор назначает администраторов сервиса и ресторанов; организатор банкета либо администратор ресторана назначает организаторов конкретного банкета. Пользователя можно добавить по телефону или MAX ID.'
   restaurants: 'POST /api/restaurants — суперадминистратор; PATCH — администратор ресторана.'
-  roles: 'Доступ по ресторанам: admin/organizer из restaurant_members, все рестораны для RESTAURANT_ADMIN_IDS и global_admins (и OPEN_ORGANIZER_SIGNUP=true даёт organizer везде). Сводная роль: admin для глобального администратора, restaurant для администратора хотя бы одного ресторана, organizer или guest. Банкетом управляют владелец с действующей ролью и admin его ресторана; бывший владелец сохраняет только просмотр.'
+  roles: 'restaurant_members хранит администраторов ресторана, RESTAURANT_ADMIN_IDS и global_admins — администраторов сервиса. Организаторы привязаны к owner_id или event_organizers конкретного банкета. Каждый вошедший может просматривать все рестораны и создавать собственный банкет; права на чужие банкеты не возникают. Любая роль может быть гостем другого банкета.'
   manager_detail: 'owner или restaurant: все гости, summary, budget, ownerName, inviteCode, invite
     URLs.'
-  create_event: organizer или restaurant.
+  create_event: Любой вошедший пользователь становится организатором созданного банкета.
   live_guest: Подтверждённый MAX номер связывается со своей записью guest_invites;
     по действительной персональной ссылке запись создаётся и для неизвестного номера. Выбор доступен только для своей записи, без userId в запросе.
-  approve: Только owner с действующим доступом к ресторану.
-  menu_write: restaurant в scope ресторана. Live allowlist общий для ресторанов MVP.
+  approve: Организатор банкета или администратор его ресторана.
+  menu_write: Каталог и данные блюд правит администратор ресторана; организатор выбирает готовые позиции каталога в меню своего банкета.
   csv: owner или restaurant, только approved.
   seating_read: Любой участник видит схему, занятые места с именами гостей (seating.names)
     и своё место; телефоны и полный список людей (seating.people) — только owner и restaurant.
@@ -331,7 +371,6 @@ lifecycle:
   catalog_update: Не меняет event_menu. sample_menu ресторана сбрасывается в0 при
     правке каталога.
   not_implemented:
-  - delete_event
   - cancel
   - reopen
   - payment
