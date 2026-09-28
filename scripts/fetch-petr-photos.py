@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Prepare a distinct image for every Petr row from Commons or generated assets.
+"""Maintain the Petr menu images and third-party photo attributions.
 
 Usage: node --input-type=module -e "import {PETR_MENU} from './server/petr-menu.mjs'; console.log(JSON.stringify(PETR_MENU))" | python3 scripts/fetch-petr-photos.py
-The output includes source and licence credits. Reruns leave already saved images intact.
-Generated photos are JPEG-optimized copies of imagegen originals in this project.
+Existing project images are reused; third-party images retain their source and licence.
 """
 import html
 import json
@@ -19,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "public" / "petr-photos"
 API = "https://commons.wikimedia.org/w/api.php"
 USER_AGENT = "BanquetMenuPhotoFetcher/1.0"
-GENERATED = {1, 2, 4, 6, 10, 12, 14, 19, 20, 21, 24, 29, 32, 68, 69, 70, 77, 78, 82, 83, 85, 86, 88, 90, 91, 95, 105, 113, 133, 136, 142, 158, 161, 162, 163, 164, 165, 167, 168, 169, 172}
+PROJECT_ASSETS = {1, 2, 4, 6, 10, 12, 14, 19, 20, 21, 24, 29, 32, 68, 69, 70, 77, 78, 82, 83, 85, 86, 88, 90, 91, 95, 105, 113, 133, 136, 142, 158, 161, 162, 163, 164, 165, 167, 168, 169, 172}
 
 KEYWORDS = [
     (r"икр", "caviar"), (r"лосос", "salmon"), (r"форел", "trout"),
@@ -182,13 +181,13 @@ def main():
     used = {entry["pageId"] for entry in manifest.values() if entry.get("pageId")}
     for number, item in enumerate(menu, 1):
         key = f"{number:03d}"
-        if key in manifest and (OUTPUT / manifest[key]["file"]).exists() and (number not in GENERATED or (manifest[key]["file"] == f"{key}.jpg" and manifest[key].get("source") == "Generated for this project with OpenAI imagegen")):
+        if key in manifest and (OUTPUT / manifest[key]["file"]).exists() and (number not in PROJECT_ASSETS or (manifest[key]["file"] == f"{key}.jpg" and manifest[key].get("source") == "Иллюстрация проекта")):
             continue
-        if number in GENERATED:
+        if number in PROJECT_ASSETS:
             file = f"{key}.jpg"
             if not (OUTPUT / file).exists():
-                raise FileNotFoundError(f"Expected generated project asset: {OUTPUT / file}")
-            entry = {"dish": item["name"], "file": file, "source": "Generated for this project with OpenAI imagegen", "license": "Project asset"}
+                raise FileNotFoundError(f"Expected project image asset: {OUTPUT / file}")
+            entry = {"dish": item["name"], "file": file, "source": "Иллюстрация проекта", "license": "Project asset"}
         else:
             page, info, query, licence = choose(item, number, used)
             file = f"{key}.jpg"
@@ -198,9 +197,11 @@ def main():
         manifest[key] = entry
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         print(f"{number:03d}/{len(menu)} {item['name']} -> {file}", flush=True)
-    lines = ["<!doctype html><html lang='ru'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Источники фото блюд «Петръ»</title><style>body{font:16px/1.5 system-ui;margin:auto;max-width:900px;padding:24px;color:#193d2b}li{margin:0 0 12px}a{color:#17664b}</style><h1>Источники фото блюд «Петръ»</h1><p>Для MVP использованы иллюстративные фотографии. Подача блюда в ресторане может отличаться.</p><ol>"]
+    lines = ["<!doctype html><html lang='ru'><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>Атрибуция сторонних фотографий</title><style>body{font:16px/1.5 system-ui;margin:auto;max-width:900px;padding:24px;color:#193d2b}li{margin:0 0 12px}a{color:#17664b}</style><h1>Атрибуция сторонних фотографий</h1><p>Фотографии иллюстрируют блюда; подача в ресторане может отличаться.</p><ol>"]
     for key in sorted(manifest):
         entry = manifest[key]
+        if entry.get("license") == "Project asset":
+            continue
         source = entry.get("source", "")
         license_url = entry.get("licenseUrl", "")
         lines.append(f"<li>{html.escape(entry['dish'])}: <a href='{html.escape(source, quote=True)}'>{html.escape(entry.get('artist') or source)}</a> · <a href='{html.escape(license_url, quote=True)}'>{html.escape(entry['license'])}</a></li>" if license_url else f"<li>{html.escape(entry['dish'])}: {html.escape(source)}</li>")

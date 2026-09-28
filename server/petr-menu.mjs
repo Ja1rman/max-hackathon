@@ -1,5 +1,3 @@
-// Transcribed from the Petrъ menu screenshots supplied for this project.
-// Prices and weights are menu data; nutrition is an explicit category estimate.
 const rows = `
 Икорное предложение|Тост со сливочным маслом для вашей икры|15|50
 Икорное предложение|Тарталетка с мягким сливочным маслом и перепелиным яйцом для вашей икры|15|100

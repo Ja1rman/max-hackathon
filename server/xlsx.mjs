@@ -1,7 +1,5 @@
 import { crc32, deflateRawSync } from 'node:zlib';
 
-// Minimal Office Open XML workbook writer: string/number cells, bold header row, several sheets.
-// Enough for kitchen exports without adding a runtime dependency.
 
 const xml = value => String(value ?? '').replace(/[&<>"]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char])
   // Characters XML 1.0 forbids would make Excel reject the file.
