@@ -4,7 +4,7 @@
 
 SHA-256 сертификата: `D26D2D0231B7C39F92CC738512BA54103519E4405D68B5BD703E9788CA8ECF31`.
 
-Срок действия: 1 марта 2022 — 27 февраля 2032. MAX отдаёт промежуточный сертификат Russian Trusted Sub CA (2024), поэтому дополнительно хранить его не нужно. TLS-проверка `platform-api2.max.ru` с этим корнем прошла успешно.
+Срок действия: 1 марта 2022 — 27 февраля 2032. MAX отдаёт промежуточный сертификат Russian Trusted Sub CA (2024), поэтому дополнительно хранить его не нужно.
 
 Docker задаёт `NODE_EXTRA_CA_CERTS=/app/certs/russian-trusted-root-ca.pem` для Node.js процесса приложения и ручной настройки бота. Системное хранилище сервера не меняется. Для локального скрипта: `NODE_EXTRA_CA_CERTS=certs/russian-trusted-root-ca.pem node --env-file=.env scripts/setup-max.mjs`.
 
