@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowUpRight,
+  ArrowUp,
   ArrowLeft,
   Check,
   CheckCheck,
@@ -55,6 +56,7 @@ const money = (value = 0) =>
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
   }).format(value / 100);
+const portionWord = count => ({ one: 'порция', few: 'порции', many: 'порций', other: 'порции' })[new Intl.PluralRules('ru-RU').select(count)];
 const dateText = (value, time = false) =>
   value
     ? new Date(value).toLocaleString("ru-RU", {
@@ -592,6 +594,17 @@ function App() {
     await loadDetail(selected);
     await refresh();
     notify(message);
+  });
+  const saveMySelection = values => perform(async () => {
+    await api(`/events/${selected}/selection`, { method: 'PUT', body: values });
+    await loadDetail(selected);
+    await refresh();
+    notify(canManage ? 'Ваш выбор сохранён' : 'Заказ отправлен организатору на согласование');
+  });
+  const chooseMySeat = seatId => perform(async () => {
+    await api(`/events/${selected}/seat`, { method: 'PUT', body: { seatId } });
+    await loadDetail(selected);
+    notify(seatId ? 'Место закреплено за вами' : 'Место освобождено');
   });
   const demo = (role) =>
     perform(async () => {
@@ -1161,6 +1174,11 @@ function App() {
                       </button>
                     )}
                     {canManage && <button className={displayTab === 'eventMenu' ? 'active' : ''} onClick={() => setTab('eventMenu')}>Меню банкета</button>}
+                    {!canManage && (
+                      <button className={displayTab === 'menu' ? 'active' : ''} onClick={() => setTab('menu')}>
+                        {detail.event.selectionMode === 'package' ? 'Состав пакета' : 'Меню и заказ'}
+                      </button>
+                    )}
                     {!canManage && seatingOn && (
                       <button
                         className={displayTab === "seat" ? "active" : ""}
@@ -1188,38 +1206,19 @@ function App() {
                       </button>
                     )}
                   </div>
-                  {displayTab === "menu" ? (
-                    detail.event.selectionMode === 'package' ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} /> : <GuestMenu
-                      key={selected}
-                      detail={detail}
-                      busy={busy}
-                      canSelect={detail.canSelect && (session.demo || session.phoneVerified)}
-                      guestView={!canManage}
-                      save={(values) =>
-                        perform(async () => {
-                          await api(`/events/${selected}/selection`, {
-                            method: "PUT",
-                            body: values,
-                          });
-                          await loadDetail(selected);
-                          await refresh();
-                          notify(canManage ? "Ваш выбор сохранён" : "Заказ отправлен организатору на согласование");
-                        })
-                      }
-                    />
-                  ) : displayTab === "seat" ? (
-                    <SeatPicker
-                      detail={detail}
-                      busy={busy}
-                      canSelect={detail.seating?.mode === 'choice' && detail.event.status === 'collecting' && (session.demo || session.phoneVerified)}
-                      choose={(seatId) =>
-                        perform(async () => {
-                          await api(`/events/${selected}/seat`, { method: "PUT", body: { seatId } });
-                          await loadDetail(selected);
-                          notify(seatId ? "Место закреплено за вами" : "Место освобождено");
-                        })
-                      }
-                    />
+                  {!canManage ? (
+                    <>
+                      <div hidden={displayTab !== 'menu'}>
+                        {detail.event.selectionMode === 'package'
+                          ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} />
+                          : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView active={displayTab === 'menu'} save={saveMySelection} />}
+                      </div>
+                      {displayTab === 'seat' && <SeatPicker detail={detail} busy={busy} canSelect={detail.seating?.mode === 'choice' && detail.event.status === 'collecting' && (session.demo || session.phoneVerified)} choose={chooseMySeat} />}
+                    </>
+                  ) : displayTab === "menu" ? (
+                    detail.event.selectionMode === 'package'
+                      ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} />
+                      : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView={false} active save={saveMySelection} />
                   ) : displayTab === "seating" ? (
                     <SeatingAdmin
                       key={selected}
@@ -1957,8 +1956,10 @@ function PackageView({ offer, guests }) {
     {categories.map(category => <div className="package-category" key={category}><h3>{category}</h3>{offer.items.filter(item => item.category === category).map((item, index) => <div className="package-item package-item-rich" key={`${category}-${index}`}>{item.photoUrl && <img src={`${BASE}${item.photoUrl}`} alt="" />}<div><strong>{item.name}</strong><small>Только для пакетного предложения · {item.grams} г</small>{item.description && <p>{item.description}</p>}<small>К {item.nutrition?.kcal ?? '—'} · Б {item.nutrition?.protein ?? '—'} · Ж {item.nutrition?.fat ?? '—'} · У {item.nutrition?.carbs ?? '—'}</small>{item.labels?.length > 0 && <small>{item.labels.join(' · ')}</small>}</div></div>)}</div>)}
   </section>;
 }
-function GuestMenu({ detail, busy, save, canSelect, guestView }) {
+function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) {
   const selection = detail.selection;
+  const checkoutRef = useRef(null);
+  const [showCheckoutJump, setShowCheckoutJump] = useState(false);
   const [items, setItems] = useState(() =>
       Object.fromEntries(
         (selection?.items || []).map((i) => [i.menuItemId, i.quantity]),
@@ -2009,6 +2010,22 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
       window.WebApp?.disableClosingConfirmation?.();
     };
   }, [dirty]);
+  useEffect(() => {
+    const card = checkoutRef.current;
+    if (!active || !card) {
+      setShowCheckoutJump(false);
+      return;
+    }
+    if (typeof IntersectionObserver === 'undefined') {
+      const update = () => setShowCheckoutJump(card.getBoundingClientRect().bottom < 0);
+      window.addEventListener('scroll', update, { passive: true });
+      update();
+      return () => window.removeEventListener('scroll', update);
+    }
+    const observer = new IntersectionObserver(([entry]) => setShowCheckoutJump(!entry.isIntersecting), { threshold: 0.1 });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [active]);
   return (
     <>
       <div className="menu-heading">
@@ -2024,7 +2041,54 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
         </div>
       </div>
       {budgeted && <BudgetMeter foodBudget={limits.pie} drinkBudget={limits.bottle} spent={spent} guestView={guestView} />}
-      {!locked && canSelect && <div className="guest-guide"><strong>Как выбрать</strong><p>Добавьте нужное количество порций кнопками у блюд и напитков, затем нажмите «Отправить организатору» внизу страницы. До окончания сбора заказ можно изменить кнопкой «Обновить заказ».</p>{budgeted && <p>У еды и напитков отдельные лимиты. Индикаторы выше показывают, сколько вы уже выбрали и сколько осталось. Блюдо сверх лимита добавить нельзя.</p>}</div>}
+      <section className="selection-bottom" ref={checkoutRef} aria-label="Оформление заказа">
+        <div className="selection-summary">
+          <strong>Ваш заказ</strong>
+          {chosen.length ? (
+            <ul className="selection-items">
+              {chosen.map(item => <li key={item.id}><span>{item.name}</span><b>× {item.quantity}</b></li>)}
+            </ul>
+          ) : <p className="muted">Пока ничего не выбрано. Добавьте блюда или напитки из меню ниже.</p>}
+        </div>
+        <label>
+          Пожелания для кухни
+          <textarea
+            value={notes}
+            disabled={locked}
+            maxLength={500}
+            onChange={(e) => {
+              setNotes(e.target.value);
+              setDirty(true);
+            }}
+            placeholder="Например, соус отдельно. Укажите пищевые ограничения."
+          />
+          <small>Пожелания увидят организатор и ресторан. Состав блюд уточняется у ресторана.</small>
+        </label>
+        <div className="selection-total">
+          <span>Ваш выбор · {count} {portionWord(count)}</span>
+          {guestView ? <strong className="unit-total">{units(spent.pie, "pie")} · {units(spent.bottle, "bottle")}</strong> : <strong>{money(total)}</strong>}
+          <Button
+            disabled={busy || locked || count === 0 || over}
+            onClick={async () => {
+              const result = await save({
+                items: Object.entries(items)
+                  .filter(([id, q]) => q > 0 && selectable.some((i) => i.id === id))
+                  .map(([menuItemId, quantity]) => ({ menuItemId, quantity })),
+                notes,
+              });
+              if (result !== null) setDirty(false);
+            }}
+          >
+            {busy ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}{" "}
+            {locked ? "Выбор зафиксирован" : selection?.submitted ? "Обновить заказ" : "Отправить организатору"}
+          </Button>
+          {over ? <small className="budget-warning">Выбор превышает бюджет — уберите что-нибудь</small>
+            : dirty ? <small>Есть несохранённые изменения</small>
+              : detail.event.status === "approved" && selection?.submitted ? <small className="green">Организатор согласовал заказ</small>
+                : selection?.submitted ? <small className="green">Отправлено организатору на согласование</small> : null}
+        </div>
+      </section>
+      {!locked && canSelect && <div className="guest-guide"><strong>Как выбрать</strong><p>Добавьте порции кнопками у блюд и напитков ниже. Состав заказа обновится в карточке выше — там же можно добавить пожелания и отправить выбор организатору.</p>{budgeted && <p>У еды и напитков отдельные лимиты. Индикаторы показывают, сколько вы уже выбрали и сколько осталось. Блюдо сверх лимита добавить нельзя.</p>}</div>}
       {shared.length > 0 && (
         <section className="shared-table">
           <h3>Уже на общем столе</h3>
@@ -2078,67 +2142,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView }) {
           ))}
       </div>
       {!visible.length && <p className="muted">По выбранным фильтрам блюд нет. Снимите одну из пометок.</p>}
-      <div className="selection-bottom">
-        <label>
-          Пожелания для кухни
-          <textarea
-            value={notes}
-            disabled={locked}
-            maxLength={500}
-            onChange={(e) => {
-              setNotes(e.target.value);
-              setDirty(true);
-            }}
-            placeholder="Например, соус отдельно. Укажите пищевые ограничения."
-          />
-          <small>
-            Пожелания увидят организатор и ресторан. Состав блюд уточняется у
-            ресторана.
-          </small>
-        </label>
-        <div className="selection-total">
-          <span>Ваш выбор · {count} порций</span>
-          {guestView ? (
-            <strong className="unit-total">
-              {units(spent.pie, "pie")} · {units(spent.bottle, "bottle")}
-            </strong>
-          ) : (
-            <strong>{money(total)}</strong>
-          )}
-          <Button
-            disabled={busy || locked || count === 0 || over}
-            onClick={async () => {
-              const result = await save({
-                items: Object.entries(items)
-                  .filter(([id, q]) => q > 0 && selectable.some((i) => i.id === id))
-                  .map(([menuItemId, quantity]) => ({ menuItemId, quantity })),
-                notes,
-              });
-              if (result !== null) setDirty(false);
-            }}
-          >
-            {busy ? (
-              <LoaderCircle size={17} className="spin" />
-            ) : (
-              <Check size={17} />
-            )}{" "}
-            {locked
-              ? "Выбор зафиксирован"
-              : selection?.submitted
-                ? "Обновить заказ"
-                : "Отправить организатору"}
-          </Button>
-          {over ? (
-            <small className="budget-warning">Выбор превышает бюджет — уберите что-нибудь</small>
-          ) : dirty ? (
-            <small>Есть несохранённые изменения</small>
-          ) : detail.event.status === "approved" && selection?.submitted ? (
-            <small className="green">Организатор согласовал заказ</small>
-          ) : selection?.submitted ? (
-            <small className="green">Отправлено организатору на согласование</small>
-          ) : null}
-        </div>
-      </div>
+      {active && showCheckoutJump && <button type="button" className="checkout-jump" onClick={() => checkoutRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })}><ArrowUp size={17} /> К заказу</button>}
     </>
   );
 }
