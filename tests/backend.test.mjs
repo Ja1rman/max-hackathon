@@ -415,6 +415,12 @@ test('photo upload validates image bytes and exposes only generated media path',
   const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lF8AAAAASUVORK5CYII=', 'base64');
   const upload = await fetch(`${f.base}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'image/png' }, body: bytes });
   assert.equal(upload.status, 201);
+  const mediumPhoto = Buffer.concat([bytes, Buffer.alloc(4 * 1024 * 1024)]);
+  const mediumUpload = await fetch(`${f.base}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'image/png' }, body: mediumPhoto });
+  assert.equal(mediumUpload.status, 201, 'photos larger than 3 MiB are accepted');
+  const oversizedPhoto = Buffer.concat([bytes, Buffer.alloc(10 * 1024 * 1024)]);
+  const oversizedUpload = await fetch(`${f.base}/api/media`, { method: 'POST', headers: { Authorization: `Bearer ${owner.token}`, 'Content-Type': 'image/png' }, body: oversizedPhoto });
+  assert.equal(oversizedUpload.status, 413, 'photos larger than 10 MiB are rejected');
   const { photoUrl } = await upload.json();
   assert.match(photoUrl, /^\/api\/media\/[a-f0-9-]{36}\.png$/);
   const retrieved = await fetch(`${f.base}${photoUrl}`);

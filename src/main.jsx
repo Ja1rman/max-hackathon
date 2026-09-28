@@ -39,6 +39,7 @@ import {
   UserRound,
 } from "lucide-react";
 import "./styles.css";
+import EventPhotoField from './EventPhotoField.jsx';
 import { MENU_LABELS } from '../shared/menu-labels.mjs';
 import { generateLayout, layoutSeats } from '../shared/seating.mjs';
 import { formatRussianDateTime, parseRussianDateTime, moscowDateTimeIso } from '../shared/moscow-date.mjs';
@@ -114,7 +115,7 @@ function bookingDurationOptions(hall, localValue, selected) {
   return selected && !options.includes(selected) ? [...options, selected].sort((a, b) => a - b) : options;
 }
 async function uploadImage(file) {
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 3 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 3 МБ.');
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 10 * 1024 * 1024) throw new Error('Выберите JPEG, PNG или WebP до 10 МБ.');
   const response = await fetch(`${BASE}/api/v1/media`, { method: 'POST', headers: { Authorization: `Bearer ${authToken}`, 'Content-Type': file.type }, body: file }).catch(() => { throw new Error('Нет связи с сервисом. Попробуйте загрузить фото ещё раз.'); });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || 'Не удалось загрузить фото.');
@@ -187,26 +188,43 @@ const deadlineBefore = eventDate => {
   const eventTime = Date.parse(moscowIso(eventDate));
   return localDateTime(new Date(Math.min(eventTime - 60_000, Math.max(Date.now() + 60_000, eventTime - 3600_000))).toISOString());
 };
-function RussianDateTimeInput({ name, value, defaultValue, onChange, ...props }) {
+function RussianDateTimeInput({ name, label, value, defaultValue, onChange, ...props }) {
   const [display, setDisplay] = useState(formatRussianDateTime(value ?? defaultValue));
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const inputRef = useRef(null);
+  const selected = value || parseRussianDateTime(display);
+  const datePart = selected?.slice(0, 10) || '';
+  const timePart = selected?.slice(11, 16) || '18:00';
   useEffect(() => { if (value) setDisplay(formatRussianDateTime(value)); }, [value]);
-  return <input
-    {...props}
-    type="text"
-    name={name}
-    inputMode="text"
-    autoComplete="off"
-    maxLength={16}
-    placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
-    value={display}
-    onChange={event => {
-      const next = event.target.value;
-      const parsed = parseRussianDateTime(next);
-      event.target.setCustomValidity(next && !parsed ? 'Введите реальную дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ.' : '');
-      setDisplay(next);
-      onChange?.(parsed);
-    }}
-  />;
+  const choose = (day, time) => {
+    if (!day) return;
+    const next = `${day}T${time || '18:00'}`;
+    setDisplay(formatRussianDateTime(next));
+    inputRef.current?.setCustomValidity('');
+    onChange?.(next);
+  };
+  return <div className="russian-datetime"><label htmlFor={`${name}-manual`}>{label}</label>
+    <div className="russian-datetime-row"><input
+      {...props}
+      ref={inputRef}
+      id={`${name}-manual`}
+      type="text"
+      name={name}
+      inputMode="text"
+      autoComplete="off"
+      maxLength={16}
+      placeholder="ДД.ММ.ГГГГ ЧЧ:ММ"
+      value={display}
+      onChange={event => {
+        const next = event.target.value;
+        const parsed = parseRussianDateTime(next);
+        event.target.setCustomValidity(next && !parsed ? 'Введите реальную дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ.' : '');
+        setDisplay(next);
+        onChange?.(parsed);
+      }}
+    /><button type="button" className="russian-datetime-toggle" aria-label="Выбрать дату и время в календаре" aria-expanded={pickerOpen} disabled={props.disabled} onClick={() => setPickerOpen(open => !open)}><CalendarDays size={19} /></button></div>
+    {pickerOpen && !props.disabled && <div className="russian-datetime-picker"><label>Дата<input type="date" value={datePart} onChange={event => choose(event.target.value, timePart)} /></label><label>Время, МСК<input type="time" value={timePart} onChange={event => choose(datePart || new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Moscow' }), event.target.value)} /></label></div>}
+  </div>;
 }
 function BookingMiniCalendar({ restaurantId, hallId, durationHours, value, onChange, excludeEventId = '' }) {
   const day = /^\d{4}-\d{2}-\d{2}/.test(value || '') ? value.slice(0, 10) : '';
@@ -238,8 +256,8 @@ function BookingMiniCalendar({ restaurantId, hallId, durationHours, value, onCha
     <div className="booking-calendar-days">{['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map(label => <span key={label}>{label}</span>)}{Array.from({ length: offset }, (_, index) => <span key={`empty-${index}`} />)}{calendar?.days.map(entry => <button key={entry.date} type="button" className={focusedDay === entry.date ? 'selected' : ''} disabled={!entry.slots.length} aria-label={`${new Date(`${entry.date}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}: ${entry.slots.length ? slotCount(entry.slots.length) : 'нет свободного времени'}`} onClick={() => setFocusedDay(entry.date)}><strong>{Number(entry.date.slice(-2))}</strong>{entry.slots.length > 0 && <i />}</button>)}</div>
     {!calendar && !error && <p className="muted">{restaurantId && hallId && durationHours ? 'Загружаем свободные слоты…' : 'Выберите зал и длительность, чтобы увидеть свободные слоты.'}</p>}
     {error && <p className="booking-calendar-error">{error}</p>}
-    {calendar && <div className="booking-calendar-times"><strong>{focusedDay && focusedDay.slice(0, 7) === month ? `Начало · ${new Date(`${focusedDay}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}` : 'Выберите доступный день'}</strong>{focusedDay && focusedDay.slice(0, 7) === month && (slots.length ? <div className="booking-time-grid">{slots.map(time => <button key={time} type="button" className={value === `${focusedDay}T${time}` ? 'selected' : ''} onClick={() => onChange(`${focusedDay}T${time}`)}>{time}</button>)}</div> : <small>На этот день свободного времени для выбранной длительности нет.</small>)}</div>}
-    <div className={value ? 'booking-calendar-selected' : 'booking-calendar-selected empty'}>{value ? `Выбрано: ${formatRussianDateTime(value)} · время по Москве` : 'Дата банкета не выбрана. Нажмите на день и свободное время.'}</div>
+    {calendar && <div className="booking-calendar-times"><strong>{focusedDay && focusedDay.slice(0, 7) === month ? `Начало · ${new Date(`${focusedDay}T12:00:00+03:00`).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })} · МСК` : 'Выберите доступный день · МСК'}</strong>{focusedDay && focusedDay.slice(0, 7) === month && (slots.length ? <div className="booking-time-grid">{slots.map(time => <button key={time} type="button" className={value === `${focusedDay}T${time}` ? 'selected' : ''} onClick={() => onChange(`${focusedDay}T${time}`)}>{time}</button>)}</div> : <small>На этот день свободного времени для выбранной длительности нет.</small>)}</div>}
+    <div className={value ? 'booking-calendar-selected' : 'booking-calendar-selected empty'}>{value ? `Выбрано: ${formatRussianDateTime(value)} МСК` : 'Дата банкета не выбрана. Нажмите на день и свободное время (МСК).'}</div>
   </div>;
 }
 function Brand({ small = false }) {
@@ -285,7 +303,7 @@ function Modal({ title, children, onClose }) {
     const previous = document.activeElement;
     ref.current?.focus();
     const handler = (e) => {
-      if (document.querySelector('.confirm-backdrop')) return;
+      if (document.querySelector('.confirm-backdrop, .photo-crop-backdrop')) return;
       if (e.key === "Escape") onClose();
       if (e.key === "Tab") {
         const elements = [
@@ -1080,7 +1098,7 @@ function App() {
                       <h1>{detail.event.title}</h1>
                       <p>
                         <CalendarDays size={15} />
-                        {dateText(detail.event.date, true)}
+                        {dateText(detail.event.date, true)} МСК
                         <span>·</span>
                         <Utensils size={15} />
                         {detail.event.restaurantName}
@@ -1138,9 +1156,7 @@ function App() {
                       detail={
                         detail.event.status === "approved"
                           ? "Выбор завершён"
-                          : dateText(detail.event.deadline, true)
-                              .split(" в ")
-                              .at(-1)
+                          : `${dateText(detail.event.deadline, true).split(" в ").at(-1)} МСК`
                       }
                     />
                   </div>
@@ -1307,6 +1323,7 @@ function App() {
                       saveEvent={values => updateAdmin(() => api(`/events/${selected}`, { method: 'PATCH', body: { ...values, expectedRevision: detail.event.revision } }), 'Настройки банкета обновлены')}
                       removeEvent={detail.event.canDelete ? () => perform(async () => { await api(`/events/${selected}`, { method: 'DELETE' }); setSelected(null); setDetail(null); await refresh(); notify('Банкет удалён'); }) : null}
                       uploadPhoto={file => perform(() => uploadImage(file))}
+                      onError={setError}
                       addGuest={values => updateAdmin(() => api(`/events/${selected}/guests`, { method: 'POST', body: values }), 'Гость добавлен')}
                       editGuest={(id, values) => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'PATCH', body: values }), 'Данные гостя обновлены')}
                       deleteGuest={id => updateAdmin(() => api(`/events/${selected}/guests/${id}`, { method: 'DELETE' }), 'Гость удалён')}
@@ -1626,6 +1643,7 @@ function App() {
           busy={busy}
           toggleFavorite={toggleFavorite}
           uploadPhoto={file => perform(() => uploadImage(file))}
+          onError={setError}
           onClose={() => setCreateOpen(false)}
           submit={(body) =>
             perform(async () => {
@@ -2080,7 +2098,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
             }}
           >
             {busy ? <LoaderCircle size={17} className="spin" /> : <Check size={17} />}{" "}
-            {locked ? "Выбор зафиксирован" : selection?.submitted ? "Обновить заказ" : "Отправить организатору"}
+            {locked ? "Выбор зафиксирован" : "Сохранить"}
           </Button>
           {over ? <small className="budget-warning">Выбор превышает бюджет — уберите что-нибудь</small>
             : dirty ? <small>Есть несохранённые изменения</small>
@@ -2088,7 +2106,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
                 : selection?.submitted ? <small className="green">Отправлено организатору на согласование</small> : null}
         </div>
       </section>
-      {!locked && canSelect && <div className="guest-guide"><strong>Как выбрать</strong><p>Добавьте порции кнопками у блюд и напитков ниже. Состав заказа обновится в карточке выше — там же можно добавить пожелания и отправить выбор организатору.</p>{budgeted && <p>У еды и напитков отдельные лимиты. Индикаторы показывают, сколько вы уже выбрали и сколько осталось. Блюдо сверх лимита добавить нельзя.</p>}</div>}
+      {!locked && canSelect && <div className="guest-guide"><strong>Как выбрать</strong><p>Добавьте порции кнопками у блюд и напитков ниже. Состав заказа обновится в карточке выше — там же можно добавить пожелания и сохранить выбор.</p>{budgeted && <p>У еды и напитков отдельные лимиты. Индикаторы показывают, сколько вы уже выбрали и сколько осталось. Блюдо сверх лимита добавить нельзя.</p>}</div>}
       {shared.length > 0 && (
         <section className="shared-table">
           <h3>Уже на общем столе</h3>
@@ -2146,7 +2164,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
     </>
   );
 }
-function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, uploadPhoto, addGuest, editGuest, deleteDish, editDish, setForGuests, saveShared, saveCatalogMenu }) {
+function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, uploadPhoto, onError, addGuest, editGuest, deleteDish, editDish, setForGuests, saveShared, saveCatalogMenu }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [modeDraft, setModeDraft] = useState(detail.event.selectionMode || 'individual');
@@ -2155,6 +2173,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
   const [deadlineDraft, setDeadlineDraft] = useState(localDateTime(detail.event.deadline));
   const [hallDraft, setHallDraft] = useState(detail.event.hallId);
   const [durationDraft, setDurationDraft] = useState(detail.event.durationHours || 4);
+  const [photoDraft, setPhotoDraft] = useState({ file: null, removed: false });
   const [editing, setEditing] = useState(null);
   const [importing, setImporting] = useState(null);
   const [catalogQuery, setCatalogQuery] = useState('');
@@ -2166,6 +2185,7 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
   useEffect(() => { setModeDraft(detail.event.selectionMode || 'individual'); }, [detail.event.selectionMode]);
   useEffect(() => { setPackageDraft(detail.event.package?.id || ''); }, [detail.event.package?.id]);
   useEffect(() => { setDateDraft(localDateTime(detail.event.date)); setDeadlineDraft(localDateTime(detail.event.deadline)); setHallDraft(detail.event.hallId); setDurationDraft(detail.event.durationHours || 4); }, [detail.event.id, detail.event.date, detail.event.deadline, detail.event.hallId, detail.event.durationHours]);
+  useEffect(() => { setPhotoDraft({ file: null, removed: false }); }, [detail.event.id, detail.event.photoUrl]);
   const chooseEventDate = selected => {
     setDateDraft(selected);
     if (selected && (!deadlineDraft || moscowIso(deadlineDraft) >= moscowIso(selected))) setDeadlineDraft(deadlineBefore(selected));
@@ -2194,10 +2214,9 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
         <form onSubmit={async event => {
           event.preventDefault();
           const form = new FormData(event.currentTarget);
-          const file = form.get('photo');
-          let photoUrl = form.get('removePhoto') ? '' : detail.event.photoUrl || '';
-          if (file?.size) {
-            const uploaded = await uploadPhoto(file);
+          let photoUrl = photoDraft.removed ? '' : detail.event.photoUrl || '';
+          if (photoDraft.file) {
+            const uploaded = await uploadPhoto(photoDraft.file);
             if (!uploaded) return;
             photoUrl = uploaded.photoUrl;
           }
@@ -2209,21 +2228,20 @@ function EventAdmin({ section, detail, catalog, busy, saveEvent, removeEvent, up
           saveEvent({ title: form.get('title'), photoUrl, date: moscowIso(dateDraft), deadline: moscowIso(deadlineDraft), durationHours: durationDraft, hallId: form.get('hallId'), expectedGuests: Number(form.get('expectedGuests')), foodBudget: Math.round(Number(form.get('foodBudget') || 0) * 100), drinkBudget: Math.round(Number(form.get('drinkBudget') || 0) * 100), selectionMode: nextMode, ...(changePackage ? { packageId: nextPackage, ...(nextChoice ? { packageChoice: nextChoice } : {}) } : {}) });
         }}>
           <label>Название<input name="title" required maxLength={120} defaultValue={detail.event.title} disabled={!active} /></label>
-          <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" disabled={!active} /></label>
-          {detail.event.photoUrl && <label className="remove-photo-check"><input type="checkbox" name="removePhoto" disabled={!active} /><span>Убрать текущее фото</span></label>}
+          <EventPhotoField currentSrc={detail.event.photoUrl ? `${BASE}${detail.event.photoUrl}` : ''} file={photoDraft.file} removed={photoDraft.removed} onChange={setPhotoDraft} onError={onError} disabled={!active || busy} />
           <label>Формат заказа<select name="selectionMode" defaultValue={detail.event.selectionMode || 'individual'} disabled={!active} onChange={event => setModeDraft(event.target.value)}><option value="individual">Гости выбирают блюда сами</option><option value="package" disabled={!packages.length}>Фиксированный пакет на гостя</option></select></label>
           {modeDraft === 'package' && <label>Пакетное предложение<select name="packageId" value={selectedOffer?.id || ''} onChange={event => setPackageDraft(event.target.value)} disabled={!active}>{packages.map(offer => <option key={offer.id} value={offer.id}>{offer.name} · {money(offer.price)}{catalog?.packages?.some(item => item.id === offer.id) ? '' : ' · сохранён в банкете'}</option>)}</select></label>}
           {modeDraft === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select key={selectedOffer?.id} name="packageChoice" defaultValue={hotChoices.some(item => item.dishId === detail.event.package?.items.find(item => item.category === 'Горячее')?.dishId) ? detail.event.package.items.find(item => item.category === 'Горячее').dishId : hotChoices[0].dishId} disabled={!active}>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
           <div className="form-grid">
             <label>Длительность, часов<select name="durationHours" required value={durationDraft || ''} onChange={event => setDurationDraft(Number(event.target.value))} disabled={!active}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}{hours === durationDraft && !validDurations.includes(hours) ? ' · выберите время в календаре' : ''}</option>)}</select></label>
             <label>Зал<select name="hallId" value={hallDraft} onChange={event => setHallDraft(event.target.value)} disabled={!active}>{catalog?.halls?.map(hall => <option key={hall.id} value={hall.id}>{hall.name} · до {hall.capacity} гостей</option>)}</select></label>
-            <label>Выбор блюд до<RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" required value={deadlineDraft} onChange={setDeadlineDraft} disabled={!active} /></label>
+            <RussianDateTimeInput key={`${detail.event.id}-deadline-${detail.event.deadline}`} name="deadline" label="Выбор блюд до · МСК" required value={deadlineDraft} onChange={setDeadlineDraft} disabled={!active} />
             <label>Количество гостей<input type="number" name="expectedGuests" min="1" max={Math.min(1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.capacity || 1000, catalog?.halls?.find(hall => hall.id === hallDraft)?.seatingConfig?.type === 'fixed' ? layoutSeats(catalog.halls.find(hall => hall.id === hallDraft).seatingConfig.fixedLayout).length : 1000)} required defaultValue={detail.event.expectedGuests} disabled={!active} /></label>
             {modeDraft === 'individual' && <label>Бюджет на еду на гостя, ₽<input type="number" name="foodBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.foodBudget / 100} disabled={!active} /></label>}
             {modeDraft === 'individual' && <label>Бюджет на напитки на гостя, ₽<input type="number" name="drinkBudget" min="0" max="100000000" step="0.01" defaultValue={detail.event.drinkBudget / 100} disabled={!active} /></label>}
           </div>
           {active && <BookingMiniCalendar restaurantId={detail.event.restaurantId} hallId={hallDraft} durationHours={durationDraft} value={dateDraft} onChange={chooseEventDate} excludeEventId={detail.event.id} />}
-          {!active && <p className="muted">Дата мероприятия: {formatRussianDateTime(dateDraft)} (Москва).</p>}
+          {!active && <p className="muted">Дата мероприятия: {formatRussianDateTime(dateDraft)} МСК.</p>}
           {modeDraft === 'individual' && <small className="muted">Два независимых лимита: гость видит бюджет на еду в кусочках пирога 🥧 (1 = 10 ₽), на напитки — в бутылочках 🍾 (1 = 100 ₽). 0 — без ограничения.</small>}
           {active && <Button type="submit" disabled={busy || !dateDraft}>Сохранить параметры</Button>}
         </form>
@@ -2438,7 +2456,7 @@ function PackageDishEditor({ dish, busy, uploadPhoto, onClose, submit, remove })
     <p className="muted">Только для пакетного предложения. В обычное меню это блюдо не попадёт.</p>
     <label>Название<input name="name" required maxLength={120} defaultValue={dish.name || ''} /></label><label>Категория<input name="category" required maxLength={80} defaultValue={dish.category || ''} /></label><label>Описание<textarea name="description" maxLength={500} defaultValue={dish.description || ''} /></label><label>Вес порции<input name="weight" maxLength={40} defaultValue={dish.weight || ''} placeholder="100 г" /></label>
     {photoUrl && <div className="package-photo-preview"><img src={`${BASE}${photoUrl}`} alt="Фото блюда" /><button type="button" onClick={() => setPhotoUrl('')}>Убрать фото</button></div>}
-    <label>Фото (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
+    <label>Фото (JPEG, PNG, WebP, до 10 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
     <div className="form-grid">{[['kcal', 'Ккал'], ['protein', 'Белки, г'], ['fat', 'Жиры, г'], ['carbs', 'Углеводы, г']].map(([key, label]) => <label key={key}>{label}<input type="number" required min="0" max="10000" step={key === 'kcal' ? '1' : '0.1'} value={nutrition[key]} onChange={event => setNutrition(current => ({ ...current, [key]: event.target.value }))} /></label>)}</div>
     <label>Аллергены через запятую<input name="allergens" defaultValue={(dish.allergens || []).join(', ')} /></label><label className="check"><input type="checkbox" name="vegetarian" defaultChecked={dish.vegetarian || false} /> Без мяса</label><label className="check"><input type="checkbox" name="available" defaultChecked={dish.available !== false} /> Доступно для пакетов</label>
     {MENU_LABELS.map(label => <label className="check" key={label}><input type="checkbox" checked={labels.includes(label)} onChange={event => setLabels(current => event.target.checked ? [...current, label] : current.filter(value => value !== label))} /> {label}</label>)}
@@ -2459,7 +2477,7 @@ function EditPackage({ offer, dishes, busy, onError, onClose, submit, remove }) 
     <div className="modal-actions">{remove && <Button type="button" variant="secondary" disabled={busy} onClick={async () => { if (await ask(`Удалить пакет «${offer.name}»?`, { confirmLabel: 'Удалить' })) remove(); }}>Удалить</Button>}<Button type="button" variant="secondary" onClick={onClose}>Отмена</Button><Button type="submit" disabled={busy || !dishes.length}>Сохранить</Button></div>
   </form></Modal>;
 }
-function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, submit }) {
+function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onError, onClose, submit }) {
   const firstHall = restaurants[0]?.halls?.[0];
   const hallDefaultMode = entry => entry?.seatingConfig?.type === 'fixed' ? 'choice' : entry?.allowedSeating.includes('fixed') ? 'fixed' : entry?.allowedSeating.includes('choice') ? 'choice' : 'off';
   const [seatingMode, setSeatingMode] = useState(hallDefaultMode(firstHall));
@@ -2474,9 +2492,10 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
   const hall = halls.find(entry => entry.id === hallId) || halls[0];
   const canCustomizeSeating = hall?.seatingConfig?.type === 'flexible';
   const maxGuests = Math.min(500, hall?.capacity || 500, hall?.seatingConfig?.type === 'fixed' ? layoutSeats(hall.seatingConfig.fixedLayout).length : 500);
-  const [guestCount, setGuestCount] = useState(Math.min(12, maxGuests));
+  const [guestCount, setGuestCount] = useState(String(Math.min(12, maxGuests)));
+  const [photoDraft, setPhotoDraft] = useState({ file: null, removed: false });
   useEffect(() => { setSeatingMode(hallDefaultMode(hall)); }, [hall?.id]);
-  useEffect(() => { setGuestCount(current => Math.min(current, maxGuests)); }, [maxGuests]);
+  useEffect(() => { setGuestCount(current => current && Number(current) > maxGuests ? String(maxGuests) : current); }, [maxGuests]);
   const packages = restaurant?.packages || [];
   const selectedOffer = packages.find(offer => offer.id === packageId) || packages[0];
   const hotChoices = selectedOffer?.items.filter(item => item.choiceGroup) || [];
@@ -2505,10 +2524,9 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
         onSubmit={async (e) => {
           e.preventDefault();
           const f = new FormData(e.currentTarget);
-          const file = f.get('photo');
           let photoUrl = '';
-          if (file?.size) {
-            const uploaded = await uploadPhoto(file);
+          if (photoDraft.file) {
+            const uploaded = await uploadPhoto(photoDraft.file);
             if (!uploaded) return;
             photoUrl = uploaded.photoUrl;
           }
@@ -2539,7 +2557,7 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
             placeholder="Например, день рождения Ани"
           />
         </label>
-        <label>Фото мероприятия (JPEG, PNG, WebP, до 3 МБ)<input type="file" name="photo" accept="image/jpeg,image/png,image/webp" /></label>
+        <EventPhotoField file={photoDraft.file} removed={photoDraft.removed} onChange={setPhotoDraft} onError={onError} disabled={busy} />
         <div className="restaurant-picker" role="group" aria-label="Выбор ресторана">
           <div className="restaurant-picker-heading"><strong>Ресторан</strong><span>{restaurant ? `Выбран: ${restaurant.name}` : 'Выберите ресторан'}</span></div>
           <div className="restaurant-search"><label className="search-field"><Search size={16} /><input type="search" placeholder="Название или адрес" aria-label="Поиск ресторана" autoComplete="off" value={restaurantSearch} onKeyDown={event => { if (event.key === 'Enter') event.preventDefault(); }} onChange={event => setRestaurantSearch(event.target.value)} /></label><button type="button" className={showFavorites ? 'favorite-filter active' : 'favorite-filter'} aria-pressed={showFavorites} onClick={() => setShowFavorites(value => !value)}><Star size={16} fill={showFavorites ? 'currentColor' : 'none'} /> Избранные</button></div>
@@ -2555,15 +2573,13 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
         {selectionMode === 'package' && hotChoices.length > 0 && <label>Горячее блюдо для всех гостей<select name="packageChoice" required>{hotChoices.map(choice => <option key={choice.dishId} value={choice.dishId}>{choice.name}</option>)}</select></label>}
         <label>Зал<select name="hallId" required value={hall?.id || ''} onChange={event => setHallId(event.target.value)}>{halls.map(entry => <option key={entry.id} value={entry.id}>{entry.name} · до {entry.capacity} гостей</option>)}</select></label>
         <div className="form-grid">
-          <label>
-            Собрать выбор до
-            <RussianDateTimeInput
+          <RussianDateTimeInput
               name="deadline"
+              label="Собрать выбор до · МСК"
               required
               value={deadline}
               onChange={setDeadline}
             />
-          </label>
           <label>
             Длительность, часов
             <select name="durationHours" required value={duration || ''} onChange={event => setDuration(Number(event.target.value))}><option value="" disabled>{durations.length ? 'Выберите длительность' : 'Нет свободного времени до закрытия'}</option>{durations.map(hours => <option key={hours} value={hours}>{hours} {hours === 1 ? 'час' : hours < 5 ? 'часа' : 'часов'}{hours === duration && !validDurations.includes(hours) ? ' · выберите время в календаре' : ''}</option>)}</select>
@@ -2571,12 +2587,14 @@ function CreateEvent({ restaurants, busy, toggleFavorite, uploadPhoto, onClose, 
           <label>
             Количество гостей
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[1-9][0-9]*"
               name="guests"
-              min={1}
-              max={maxGuests}
+              title={`Введите от 1 до ${maxGuests} гостей`}
               value={guestCount}
-              onChange={event => setGuestCount(Number(event.target.value))}
+              onFocus={event => event.target.select()}
+              onChange={event => { const next = event.target.value.replace(/\D/g, '').replace(/^0+/, ''); setGuestCount(next); event.target.setCustomValidity(next && Number(next) > maxGuests ? `В зале не больше ${maxGuests} мест.` : ''); }}
               required
             />
           </label>
@@ -2667,7 +2685,7 @@ function EditDish({ item, busy, onClose, submit, uploadPhoto }) {
             placeholder="Например: филе лосося, лимон, оливковое масло, соль"
           />
         </label>
-        <label>Фото блюда или напитка (JPEG, PNG, WebP, до 3 МБ)
+        <label>Фото блюда или напитка (JPEG, PNG, WebP, до 10 МБ)
           <input type="file" name="photo" accept="image/jpeg,image/png,image/webp" />
           {item.photoUrl && <small>Текущее фото сохранится, если не выбрать новый файл.</small>}
         </label>

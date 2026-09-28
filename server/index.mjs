@@ -58,7 +58,7 @@ async function readImage(req) {
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 3 * 1024 * 1024) throw new HttpError(413, 'Фото должно быть не больше 3 МБ.');
+    if (size > 10 * 1024 * 1024) throw new HttpError(413, 'Фото должно быть не больше 10 МБ.');
     chunks.push(chunk);
   }
   const bytes = Buffer.concat(chunks);
@@ -83,7 +83,7 @@ export function createApp(options = {}) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://st.max.ru https://dev.max.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'self' https://*.max.ru https://max.ru; base-uri 'self'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://st.max.ru https://dev.max.ru; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'self' https://*.max.ru https://max.ru; base-uri 'self'; form-action 'self'");
     const sendFile = ({ body, contentType, fileName }, capability = false) => {
       res.writeHead(200, { 'Content-Type': contentType, 'Content-Disposition': `attachment; filename="${fileName}"`, 'Cache-Control': capability ? 'private, no-store' : 'no-store', ...(capability ? { 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive' } : {}) });
       res.end(body);
