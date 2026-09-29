@@ -225,8 +225,9 @@ export class Store {
         update.run(JSON.stringify(defaultSeatingConfig(hall.capacity, hall.default_seating_template, type)), hall.id);
       }
     });
+    if (previousVersion < 15) this.transaction(() => this.migrateCatalogPhotoCorrections());
     this.db.prepare("UPDATE events SET seating_config=(SELECT seating_config FROM restaurant_halls WHERE restaurant_halls.id=events.hall_id) WHERE seating_config='' AND hall_id!=''").run();
-    this.db.exec('PRAGMA user_version = 14');
+    this.db.exec('PRAGMA user_version = 15');
     this.cleanup();
   }
   seedPetr() {
@@ -375,6 +376,37 @@ export class Store {
       const offer = JSON.parse(row.package_data);
       const items = offer.items.map(item => ({ ...item, photoUrl: item.photoUrl || photoFor(item.name), description: /КБЖУ ориентировочное|уточните у ресторана/i.test(item.description || '') ? '' : item.description }));
       this.db.prepare('UPDATE events SET package_data=? WHERE id=?').run(JSON.stringify({ ...offer, items }), row.id);
+    }
+  }
+  propagateMenuPhoto(restaurantId, itemId, previousPhoto, photoUrl) {
+    if (previousPhoto === photoUrl) return;
+    const rows = this.db.prepare('SELECT event_menu.event_id,event_menu.data FROM event_menu JOIN events ON events.id=event_menu.event_id WHERE events.restaurant_id=? AND event_menu.item_id=?').all(restaurantId, itemId);
+    const update = this.db.prepare('UPDATE event_menu SET data=? WHERE event_id=? AND item_id=?');
+    for (const row of rows) {
+      const item = JSON.parse(row.data);
+      if ((item.photoUrl || '') === (previousPhoto || '')) update.run(JSON.stringify({ ...item, photoUrl }), row.event_id, itemId);
+    }
+  }
+  propagatePackagePhoto(restaurantId, dishId, previousPhoto, photoUrl) {
+    if (previousPhoto === photoUrl) return;
+    const update = this.db.prepare('UPDATE events SET package_data=? WHERE id=?');
+    for (const row of this.db.prepare("SELECT id,package_data FROM events WHERE restaurant_id=? AND selection_mode='package' AND package_data!=''").all(restaurantId)) {
+      const offer = JSON.parse(row.package_data);
+      const items = offer.items.map(item => item.dishId === dishId && (item.photoUrl || '') === (previousPhoto || '') ? { ...item, photoUrl } : item);
+      if (items.some((item, index) => item !== offer.items[index])) update.run(JSON.stringify({ ...offer, items }), row.id);
+    }
+  }
+  migrateCatalogPhotoCorrections() {
+    const defaults = new Map(PETR_MENU.map(item => [item.name, item.photoUrl]));
+    for (const row of this.db.prepare("SELECT menu_items.id,menu_items.restaurant_id,menu_items.data FROM menu_items JOIN restaurants ON restaurants.id=menu_items.restaurant_id WHERE restaurants.name='Петръ'").all()) {
+      const item = JSON.parse(row.data);
+      const originalPhoto = defaults.get(item.name);
+      if (originalPhoto && item.photoUrl && item.photoUrl !== originalPhoto) this.propagateMenuPhoto(row.restaurant_id, row.id, originalPhoto, item.photoUrl);
+    }
+    for (const row of this.db.prepare("SELECT package_dishes.id,package_dishes.restaurant_id,package_dishes.data FROM package_dishes JOIN restaurants ON restaurants.id=package_dishes.restaurant_id WHERE restaurants.name='Петръ'").all()) {
+      const dish = JSON.parse(row.data);
+      const originalPhoto = defaults.get(dish.name) || PETR_MENU.find(item => item.name.startsWith(`${dish.name} `) || dish.name.startsWith(item.name))?.photoUrl;
+      if (originalPhoto && dish.photoUrl && dish.photoUrl !== originalPhoto) this.propagatePackagePhoto(row.restaurant_id, row.id, originalPhoto, dish.photoUrl);
     }
   }
   /** v8: per-restaurant access replaces the phone-based organizer list. */
@@ -843,14 +875,18 @@ export class Store {
     }) };
   }
   editPackageDish(user, restaurantId, dishId, body) {
-    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Блюда пакетов редактирует администратор ресторана.');
-    if (!this.db.prepare('SELECT 1 FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope)) throw new HttpError(404, 'Ресторан не найден.');
-    if (!dishId && this.db.prepare('SELECT COUNT(*) AS count FROM package_dishes WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд пакетов.');
-    const old = dishId ? this.db.prepare('SELECT data FROM package_dishes WHERE id=? AND restaurant_id=?').get(dishId, restaurantId) : null;
-    if (dishId && !old) throw new HttpError(404, 'Блюдо пакета не найдено.');
-    const dish = packageDish({ ...(old ? JSON.parse(old.data) : {}), ...body }, dishId || id('package_dish'));
-    this.db.prepare('INSERT INTO package_dishes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(dish.id, restaurantId, JSON.stringify(dish));
-    return dish;
+    return this.transaction(() => {
+      if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Блюда пакетов редактирует администратор ресторана.');
+      if (!this.db.prepare('SELECT 1 FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope)) throw new HttpError(404, 'Ресторан не найден.');
+      if (!dishId && this.db.prepare('SELECT COUNT(*) AS count FROM package_dishes WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд пакетов.');
+      const old = dishId ? this.db.prepare('SELECT data FROM package_dishes WHERE id=? AND restaurant_id=?').get(dishId, restaurantId) : null;
+      if (dishId && !old) throw new HttpError(404, 'Блюдо пакета не найдено.');
+      const previous = old ? JSON.parse(old.data) : null;
+      const dish = packageDish({ ...(previous || {}), ...body }, dishId || id('package_dish'));
+      this.db.prepare('INSERT INTO package_dishes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(dish.id, restaurantId, JSON.stringify(dish));
+      if (previous) this.propagatePackagePhoto(restaurantId, dish.id, previous.photoUrl, dish.photoUrl);
+      return dish;
+    });
   }
   deletePackageDish(user, restaurantId, dishId) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Блюда пакетов редактирует администратор ресторана.');
@@ -1273,17 +1309,21 @@ export class Store {
     });
   }
   editMenu(user, restaurantId, itemId, body) {
-    if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Меню редактирует администратор ресторана.');
-    const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
-    if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
-    if (!itemId && this.db.prepare('SELECT COUNT(*) AS count FROM menu_items WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд в меню.');
-    const existing = itemId ? this.db.prepare('SELECT data FROM menu_items WHERE id=? AND restaurant_id=?').get(itemId, restaurantId) : null;
-    if (itemId && !existing) throw new HttpError(404, 'Блюдо не найдено.');
-    const value = { ...(existing ? JSON.parse(existing.data) : { emoji: '🍽️', available: true, vegetarian: false, allergens: [] }), ...body };
-    const item = menuItem(value, itemId || id('dish'));
-    this.db.prepare('INSERT INTO menu_items VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(item.id, restaurantId, JSON.stringify(item));
-    this.db.prepare('UPDATE restaurants SET sample_menu=0 WHERE id=?').run(restaurantId);
-    return item;
+    return this.transaction(() => {
+      if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Меню редактирует администратор ресторана.');
+      const restaurant = this.db.prepare('SELECT * FROM restaurants WHERE id=? AND scope=?').get(restaurantId, user.scope);
+      if (!restaurant) throw new HttpError(404, 'Ресторан не найден.');
+      if (!itemId && this.db.prepare('SELECT COUNT(*) AS count FROM menu_items WHERE restaurant_id=?').get(restaurantId).count >= 500) throw new HttpError(429, 'Достигнут предел блюд в меню.');
+      const existing = itemId ? this.db.prepare('SELECT data FROM menu_items WHERE id=? AND restaurant_id=?').get(itemId, restaurantId) : null;
+      if (itemId && !existing) throw new HttpError(404, 'Блюдо не найдено.');
+      const previous = existing ? JSON.parse(existing.data) : null;
+      const value = { ...(previous || { emoji: '🍽️', available: true, vegetarian: false, allergens: [] }), ...body };
+      const item = menuItem(value, itemId || id('dish'));
+      this.db.prepare('INSERT INTO menu_items VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(item.id, restaurantId, JSON.stringify(item));
+      if (previous) this.propagateMenuPhoto(restaurantId, item.id, previous.photoUrl, item.photoUrl);
+      this.db.prepare('UPDATE restaurants SET sample_menu=0 WHERE id=?').run(restaurantId);
+      return item;
+    });
   }
   deleteMenu(user, restaurantId, itemId) {
     if (!this.adminOf(user, restaurantId)) throw new HttpError(403, 'Меню редактирует администратор ресторана.');

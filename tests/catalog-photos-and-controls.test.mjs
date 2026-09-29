@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { fixture } from './helpers.mjs';
+import { fixture, futureMoscow } from './helpers.mjs';
 import { PETR_MENU } from '../server/petr-menu.mjs';
 import { Store } from '../server/store.mjs';
 
@@ -94,4 +94,56 @@ test('v11 catalog and banquet snapshots gain photos without replacing orders', a
     assert.ok(rows.every(row => JSON.parse(row.data).photoUrl));
   }
   assert.ok(migrated.db.prepare('SELECT data FROM event_menu WHERE event_id=?').all(event.id).every(row => JSON.parse(row.data).photoUrl));
+});
+
+test('corrected catalog photos reach existing banquets without changing their prices or event-specific photos', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const restaurant = (await f.request('/api/restaurants', { token: admin.token })).data.find(item => item.name === 'Петръ');
+  const dish = restaurant.menu.find(item => item.name === 'Лосось слабой соли');
+  const created = await f.request('/api/events', { token: admin.token, method: 'POST', body: { title: 'Банкет с исправленным фото', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 4 } });
+  assert.equal(created.status, 201);
+  const eventId = created.data.id;
+  const eventDish = async () => (await f.request(`/api/events/${eventId}`, { token: admin.token })).data.menu.find(item => item.id === dish.id);
+  assert.equal((await eventDish()).photoUrl, dish.photoUrl);
+
+  const corrected = '/api/media/00000000-0000-0000-0000-000000000001.jpg';
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/menu/${dish.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: corrected, price: dish.price + 100 } })).status, 200);
+  assert.equal((await eventDish()).photoUrl, corrected);
+  assert.equal((await eventDish()).price, dish.price);
+
+  const custom = '/api/media/00000000-0000-0000-0000-000000000002.jpg';
+  assert.equal((await f.request(`/api/events/${eventId}/menu/${dish.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: custom } })).status, 200);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/menu/${dish.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: '/api/media/00000000-0000-0000-0000-000000000003.jpg' } })).status, 200);
+  assert.equal((await eventDish()).photoUrl, custom);
+});
+
+test('migration restores restaurant photo corrections in banquets created before synchronization', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'banquet-photo-corrections-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = { databasePath: join(directory, 'banquet.sqlite'), demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', maxDemoSpaces: 10 };
+  const store = new Store(config);
+  const restaurant = store.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").get();
+  store.db.prepare("INSERT INTO users (id,scope,external_id,name,role,demo) VALUES ('max_900','live','900','Администратор','admin',0)").run();
+  const owner = store.db.prepare("SELECT * FROM users WHERE id='max_900'").get();
+  const event = store.createEvent(owner, { title: 'Банкет до исправления', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 4 });
+  const offer = JSON.parse(store.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=? ORDER BY rowid LIMIT 1').get(restaurant.id).data);
+  const choice = offer.items.find(item => item.choiceGroup)?.dishId;
+  const packageEvent = store.createEvent(owner, { title: 'Пакет до исправления', restaurantId: restaurant.id, date: futureMoscow(15), deadline: futureMoscow(10), expectedGuests: 4, selectionMode: 'package', packageId: offer.id, packageChoice: choice });
+  const row = store.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(restaurant.id).find(entry => JSON.parse(entry.data).name === 'Хлебная корзина (чиабатта, фокачча с оливками и маслинами, ржаной зерновой хлеб)');
+  const corrected = '/api/media/00000000-0000-0000-0000-000000000004.jpg';
+  store.db.prepare('UPDATE menu_items SET data=? WHERE id=?').run(JSON.stringify({ ...JSON.parse(row.data), photoUrl: corrected }), row.id);
+  const packageRow = store.db.prepare('SELECT id,data FROM package_dishes WHERE restaurant_id=?').all(restaurant.id).find(entry => JSON.parse(entry.data).name === 'Хлебная корзина');
+  const packageCorrected = '/api/media/00000000-0000-0000-0000-000000000005.jpg';
+  store.db.prepare('UPDATE package_dishes SET data=? WHERE id=?').run(JSON.stringify({ ...JSON.parse(packageRow.data), photoUrl: packageCorrected }), packageRow.id);
+  store.db.exec('PRAGMA user_version = 14');
+  store.close();
+
+  const migrated = new Store(config);
+  t.after(() => migrated.close());
+  const dish = JSON.parse(migrated.db.prepare('SELECT data FROM event_menu WHERE event_id=? AND item_id=?').get(event.id, row.id).data);
+  assert.equal(dish.photoUrl, corrected);
+  assert.equal(dish.price, JSON.parse(row.data).price);
+  const packageSnapshot = JSON.parse(migrated.db.prepare('SELECT package_data FROM events WHERE id=?').get(packageEvent.id).package_data);
+  assert.equal(packageSnapshot.items.find(item => item.dishId === packageRow.id).photoUrl, packageCorrected);
 });

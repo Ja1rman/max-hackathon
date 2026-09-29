@@ -154,8 +154,11 @@ test('package-only dishes have their own KBJU and snapshots stay stable after ed
   assert.equal(event.status, 201);
   assert.equal(event.data.package.items[0].nutrition.protein, 40);
   assert.equal((await f.request(`/api/restaurants/${petr.id}/package-dishes/${created.data.id}`, { token: admin.token, method: 'PATCH', body: { nutrition: { kcal: 360, protein: 45, fat: 10, carbs: 18 } } })).status, 200);
+  const packagePhoto = '/api/media/00000000-0000-0000-0000-000000000006.jpg';
+  assert.equal((await f.request(`/api/restaurants/${petr.id}/package-dishes/${created.data.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: packagePhoto } })).status, 200);
   const detail = await f.request(`/api/events/${event.data.id}`, { token: admin.token });
   assert.equal(detail.data.event.package.items[0].nutrition.protein, 40);
+  assert.equal(detail.data.event.package.items[0].photoUrl, packagePhoto);
   assert.equal((await f.request(`/api/restaurants/${petr.id}/package-dishes/${created.data.id}`, { token: admin.token, method: 'DELETE' })).status, 409);
   const latest = (await f.request('/api/restaurants', { token: admin.token })).data.find(restaurant => restaurant.id === petr.id);
   assert.ok(!latest.menu.some(item => item.id === created.data.id));

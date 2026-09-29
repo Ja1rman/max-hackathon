@@ -46,22 +46,14 @@
   "007": {
     "dish": "Эклер с кремом из авокадо, тартаром из лосося и соусом манго",
     "file": "007.jpg",
-    "pageId": 166149939,
-    "source": "https://commons.wikimedia.org/wiki/File:TERIYAKI_SALMON_SALAD_-_Jonny%27s_2025-05-27.jpg",
-    "artist": "Andy Li",
-    "license": "CC0",
-    "licenseUrl": "http://creativecommons.org/publicdomain/zero/1.0/deed.en",
-    "query": "salmon food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "008": {
     "dish": "Эклер с кремом из авокадо, тартаром из тунца и соусом манго",
     "file": "008.jpg",
-    "pageId": 41870680,
-    "source": "https://commons.wikimedia.org/wiki/File:Tuna_on_Marseille_fish_market.jpg",
-    "artist": "Ratki",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "tuna food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "009": {
     "dish": "Тартар из лосося на креветочном чипсе",
@@ -82,12 +74,8 @@
   "011": {
     "dish": "Креветки в панировке с соусом Коктейль",
     "file": "011.jpg",
-    "pageId": 129495256,
-    "source": "https://commons.wikimedia.org/wiki/File:A_heap_of_shrimp_shells_on_a_plate_in_Tuntorp_1.jpg",
-    "artist": "W.carter",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "shrimp food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "012": {
     "dish": "Профитроль с чернилами каракатицы с красной икрой и сливочным сыром",
@@ -172,22 +160,14 @@
   "022": {
     "dish": "Ростбиф из телятины с печёным перцем",
     "file": "022.jpg",
-    "pageId": 61937462,
-    "source": "https://commons.wikimedia.org/wiki/File:Beef_sticks_drying_in_the_sun.jpg",
-    "artist": "Basile Morin",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "beef food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "023": {
     "dish": "Копчёная куриная грудка со свежим огурцом и крем-чиз",
     "file": "023.jpg",
-    "pageId": 5811761,
-    "source": "https://commons.wikimedia.org/wiki/File:Chickens_in_market.jpg",
-    "artist": "Tomás Castelazo",
-    "license": "CC BY-SA 3.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
-    "query": "chicken food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "024": {
     "dish": "Канапе с сыром Моцарелла и вялеными томатами",
@@ -270,12 +250,8 @@
   "033": {
     "dish": "Профитроль с цыплёнком и брокколи",
     "file": "033.jpg",
-    "pageId": 21962258,
-    "source": "https://commons.wikimedia.org/wiki/File:Chicken_Egg_without_Eggshell_5859.jpg",
-    "artist": "Biswarup Ganguly",
-    "license": "CC BY 3.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/3.0",
-    "query": "chicken food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "034": {
     "dish": "Грибные шляпки с сыром сулугуни и зеленью",
@@ -380,22 +356,14 @@
   "044": {
     "dish": "Брускетта с печёной паприкой",
     "file": "044.jpg",
-    "pageId": 11788883,
-    "source": "https://commons.wikimedia.org/wiki/File:Rally_Finland_2010_-_shakedown_-_Alessandro_Bruschetta_1.jpg",
-    "artist": "kallerna",
-    "license": "CC BY-SA 3.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
-    "query": "bruschetta bruschetta"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "045": {
     "dish": "Брускетта с Мортаделлой и трюфельным кремом",
     "file": "045.jpg",
-    "pageId": 13708990,
-    "source": "https://commons.wikimedia.org/wiki/File:Chocolate_truffle_-_Delacre.jpg",
-    "artist": "M0tty",
-    "license": "CC BY-SA 3.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0",
-    "query": "truffle food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "046": {
     "dish": "Круассан",
@@ -812,12 +780,8 @@
   "092": {
     "dish": "Жульен с цыплёнком и шампиньонами в кокотнице",
     "file": "092.jpg",
-    "pageId": 156449809,
-    "source": "https://commons.wikimedia.org/wiki/File:Golden_Chicken_Milanesa_with_Crisp_Breadcrumb_Coating.jpg",
-    "artist": "Srujanabotcha",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "chicken food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "093": {
     "dish": "Фриттини из цукини и моркови с лососем слабой соли и Страчателлой",
@@ -1180,22 +1144,14 @@
   "130": {
     "dish": "Стручковая фасоль жареная",
     "file": "130.jpg",
-    "pageId": 79974839,
-    "source": "https://commons.wikimedia.org/wiki/File:Four_Different_Varieties_of_Green_Beans_(Phaseolus_vulgaris).jpg",
-    "artist": "Christopher Franz",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "green beans"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "131": {
     "dish": "Лосось, фаршированный креветками под икорным соусом (заказ от 5 кг)",
     "file": "131.jpg",
-    "pageId": 104426292,
-    "source": "https://commons.wikimedia.org/wiki/File:Bagel_with_cream_cheese,_salmon_and_vegetables_-_Sarah_Stierch.jpg",
-    "artist": "Missvain",
-    "license": "CC BY 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/4.0",
-    "query": "salmon food"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "132": {
     "dish": "Поркетта из свинины (заказ от 3 кг)",
@@ -1252,12 +1208,8 @@
   "138": {
     "dish": "Клубника",
     "file": "138.jpg",
-    "pageId": 125914690,
-    "source": "https://commons.wikimedia.org/wiki/File:Fresh_strawberry_pie.jpg",
-    "artist": "An Mai",
-    "license": "CC BY-SA 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
-    "query": "strawberry fresh fruit"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "139": {
     "dish": "Виноград",
@@ -1318,12 +1270,8 @@
   "145": {
     "dish": "Овощные палочки",
     "file": "145.jpg",
-    "pageId": 35032997,
-    "source": "https://commons.wikimedia.org/wiki/File:Fish_sticks,_fries_and_vegetable_soup_(12424231993).jpg",
-    "artist": "Pierre Fred Walter from Phnom Penh, Cambodia",
-    "license": "CC BY-SA 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0",
-    "query": "vegetable sticks"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "146": {
     "dish": "Макарошки «Мак энд Чиз»",
@@ -1418,12 +1366,8 @@
   "155": {
     "dish": "Пепперони",
     "file": "155.jpg",
-    "pageId": 106092414,
-    "source": "https://commons.wikimedia.org/wiki/File:Vegetarian_Pizza.jpg",
-    "artist": "Petar Milošević",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
-    "query": "pepperoni pizza"
+    "source": "Иллюстрация проекта",
+    "license": "Project asset"
   },
   "156": {
     "dish": "Жульен",
