@@ -118,6 +118,91 @@ test('corrected catalog photos reach existing banquets without changing their pr
   assert.equal((await eventDish()).photoUrl, custom);
 });
 
+test('catalog photo corrections reach matching package dishes and existing package banquets', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const restaurant = (await f.request('/api/restaurants', { token: admin.token })).data.find(item => item.name === 'Петръ');
+  const salmon = restaurant.menu.find(item => item.name === 'Лосось слабой соли');
+  const packageSalmon = restaurant.packageDishes.find(item => item.name === salmon.name);
+  const offer = restaurant.packages.find(item => item.items.some(dish => dish.dishId === packageSalmon.id));
+  const choice = offer.items.find(item => item.choiceGroup)?.dishId;
+  const created = await f.request('/api/events', { token: admin.token, method: 'POST', body: { title: 'Пакет с лососем', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 4, selectionMode: 'package', packageId: offer.id, packageChoice: choice } });
+  assert.equal(created.status, 201);
+  const snapshot = async () => (await f.request(`/api/events/${created.data.id}`, { token: admin.token })).data.event.package.items.find(item => item.dishId === packageSalmon.id);
+  const corrected = '/api/media/00000000-0000-0000-0000-000000000010.jpg';
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/menu/${salmon.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: corrected, price: salmon.price + 100 } })).status, 200);
+  assert.equal((await snapshot()).photoUrl, corrected);
+  assert.equal((await snapshot()).nutrition.kcal, packageSalmon.nutrition.kcal);
+  const latest = (await f.request('/api/restaurants', { token: admin.token })).data.find(item => item.id === restaurant.id);
+  assert.equal(latest.packageDishes.find(item => item.id === packageSalmon.id).photoUrl, corrected);
+  const custom = '/api/media/00000000-0000-0000-0000-000000000011.jpg';
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/package-dishes/${packageSalmon.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: custom } })).status, 200);
+  assert.equal((await f.request(`/api/restaurants/${restaurant.id}/menu/${salmon.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl: '/api/media/00000000-0000-0000-0000-000000000012.jpg' } })).status, 200);
+  assert.equal((await snapshot()).photoUrl, custom);
+  const herring = restaurant.menu.find(item => item.name.startsWith('Сельдь с обжаренным картофелем'));
+  const packageHerring = restaurant.packageDishes.find(item => item.name === 'Сельдь с картофелем и маринованным луком');
+  for (const suffix of ['014', '015']) {
+    const photoUrl = `/api/media/00000000-0000-0000-0000-000000000${suffix}.jpg`;
+    assert.equal((await f.request(`/api/restaurants/${restaurant.id}/menu/${herring.id}`, { token: admin.token, method: 'PATCH', body: { photoUrl } })).status, 200);
+    const linked = (await f.request('/api/restaurants', { token: admin.token })).data.find(item => item.id === restaurant.id);
+    assert.equal(linked.packageDishes.find(item => item.id === packageHerring.id).photoUrl, photoUrl);
+  }
+});
+
+test('v16 migration links MAX photo corrections to package offers and old package banquets', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'banquet-linked-package-photos-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = { databasePath: join(directory, 'banquet.sqlite'), demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', maxDemoSpaces: 10 };
+  const store = new Store(config);
+  const restaurant = store.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").get();
+  store.db.prepare("INSERT INTO users (id,scope,external_id,name,role,demo) VALUES ('max_900','live','900','Администратор','admin',0)").run();
+  const owner = store.db.prepare("SELECT * FROM users WHERE id='max_900'").get();
+  const offer = JSON.parse(store.db.prepare('SELECT data FROM restaurant_packages WHERE restaurant_id=? AND json_extract(data,\'$.name\') LIKE \'%5500%\'').get(restaurant.id).data);
+  const event = store.createEvent(owner, { title: 'Старое пакетное меню', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 4, selectionMode: 'package', packageId: offer.id, packageChoice: offer.items.find(item => item.choiceGroup)?.dishId });
+  const row = store.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(restaurant.id).find(entry => JSON.parse(entry.data).name === 'Лосось слабой соли');
+  const corrected = '/api/media/00000000-0000-0000-0000-000000000013.jpg';
+  store.db.prepare('UPDATE menu_items SET data=? WHERE id=?').run(JSON.stringify({ ...JSON.parse(row.data), photoUrl: corrected }), row.id);
+  store.db.exec('PRAGMA user_version = 15');
+  store.close();
+  const migrated = new Store(config);
+  t.after(() => migrated.close());
+  const packageDish = migrated.db.prepare('SELECT id,data FROM package_dishes WHERE restaurant_id=?').all(restaurant.id).find(entry => JSON.parse(entry.data).name === 'Лосось слабой соли');
+  assert.equal(JSON.parse(packageDish.data).photoUrl, corrected);
+  const snapshot = JSON.parse(migrated.db.prepare('SELECT package_data FROM events WHERE id=?').get(event.id).package_data);
+  assert.equal(snapshot.items.find(item => item.dishId === packageDish.id).photoUrl, corrected);
+});
+
+test('v17 replaces only audited mismatched MAX photos in catalog and package snapshots', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'banquet-petr-photo-review-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const config = { databasePath: join(directory, 'banquet.sqlite'), demoEnabled: true, restaurantAdminIds: ['900'], publicUrl: 'https://banquet.example', maxDemoSpaces: 10 };
+  const store = new Store(config);
+  const restaurant = store.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").get();
+  store.db.prepare("INSERT INTO users (id,scope,external_id,name,role,demo) VALUES ('max_900','live','900','Администратор','admin',0)").run();
+  const owner = store.db.prepare("SELECT * FROM users WHERE id='max_900'").get();
+  const offer = JSON.parse(store.db.prepare("SELECT data FROM restaurant_packages WHERE restaurant_id=? AND json_extract(data,'$.name') LIKE '%4500%'").get(restaurant.id).data);
+  const pike = store.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(restaurant.id).find(row => JSON.parse(row.data).name.startsWith('Филе судака по-Милански'));
+  const salmon = store.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(restaurant.id).find(row => JSON.parse(row.data).name === 'Лосось слабой соли');
+  const pikeDish = store.db.prepare('SELECT id,data FROM package_dishes WHERE restaurant_id=?').all(restaurant.id).find(row => JSON.parse(row.data).name === 'Филе судака по-Милански');
+  const badPhoto = '/api/media/fec3c0b0-bcc6-4476-a6ee-1adec64ae68c.jpg';
+  const goodPhoto = '/api/media/00000000-0000-0000-0000-000000000016.jpg';
+  const writePhoto = (table, row, photoUrl) => store.db.prepare(`UPDATE ${table} SET data=? WHERE id=?`).run(JSON.stringify({ ...JSON.parse(row.data), photoUrl }), row.id);
+  writePhoto('menu_items', pike, badPhoto);
+  writePhoto('menu_items', salmon, goodPhoto);
+  writePhoto('package_dishes', pikeDish, badPhoto);
+  const event = store.createEvent(owner, { title: 'Пакет со снимком', restaurantId: restaurant.id, date: futureMoscow(14), deadline: futureMoscow(10), expectedGuests: 4, selectionMode: 'package', packageId: offer.id, packageChoice: pikeDish.id });
+  store.db.exec('PRAGMA user_version = 16');
+  store.close();
+  const migrated = new Store(config);
+  t.after(() => migrated.close());
+  const photo = (table, id) => JSON.parse(migrated.db.prepare(`SELECT data FROM ${table} WHERE id=?`).get(id).data).photoUrl;
+  assert.equal(photo('menu_items', pike.id), '/petr-photos/099.jpg');
+  assert.equal(photo('package_dishes', pikeDish.id), '/petr-photos/099.jpg');
+  assert.equal(photo('menu_items', salmon.id), goodPhoto);
+  const snapshot = JSON.parse(migrated.db.prepare('SELECT package_data FROM events WHERE id=?').get(event.id).package_data);
+  assert.equal(snapshot.items.find(item => item.dishId === pikeDish.id).photoUrl, '/petr-photos/099.jpg');
+});
+
 test('migration restores restaurant photo corrections in banquets created before synchronization', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'banquet-photo-corrections-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -14,6 +14,29 @@ const secret = () => randomBytes(32).toString('base64url');
 const id = prefix => `${prefix}_${randomUUID()}`;
 const iso = value => new Date(value).toISOString();
 const MAX_MONEY = 100_000_000_00;
+const PACKAGE_PHOTO_MATCHES = {
+  'Сельдь с картофелем и маринованным луком': 71,
+  'Куриный рулет с вялеными томатами': 77,
+  'Тёплый салат с кальмаром': 121,
+  'Салат с тёплыми хрустящими баклажанами': 114,
+  'Салат с копчёной куриной грудкой': 116,
+  'Нисуаз с консервированным тунцом': 120,
+  'Треска в пергаменте': 100,
+  'Бифштекс из говядины': 105,
+  'Свиная шея': 107,
+};
+const PETR_PHOTO_REPLACEMENTS = {
+  28: '/api/media/18c4b572-a032-4b15-9891-941045b7db45.jpg',
+  54: '/api/media/8b45ee84-cba0-4f96-bc8f-8fbab2241ebe.jpg',
+  58: '/api/media/0fae0788-84aa-40aa-ba19-3927a9fa66ee.jpg',
+  63: '/api/media/815e64fd-404b-4172-a16d-f78e599696d6.jpg',
+  98: '/api/media/733e153b-0332-4f53-99a9-bb214d5d4d9c.jpg',
+  99: '/api/media/fec3c0b0-bcc6-4476-a6ee-1adec64ae68c.jpg',
+  114: '/api/media/48345164-7b99-4436-96ab-a6927a709abc.webp',
+  137: '/api/media/e9f61366-d705-49a5-b249-dc674a04c0de.jpg',
+  140: '/api/media/4d0109df-c74e-4624-ad52-0fe0290e8b9f.jpg',
+  141: '/api/media/e1d93495-d4d9-4545-9911-b4b646ad876a.jpg',
+};
 
 export const SAMPLE_MENU = [
   { name: 'Буррата с томатами', description: 'Сладкие томаты, базилик, оливковое масло и нежная буррата', category: 'Закуски', price: 69000, weight: '230 г', emoji: '🍅', allergens: ['Молоко'], vegetarian: true, nutrition: { kcal: 340, protein: 17, fat: 26, carbs: 10 } },
@@ -43,6 +66,10 @@ function integer(value, label, min = 0, max = MAX_MONEY) {
 }
 function grams(value, label) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1000 || Math.round(value * 10) !== value * 10) throw new HttpError(400, `${label}: укажите число от 0 до 1000 с точностью 0,1 г.`);
+  return value;
+}
+function calories(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 10000 || Math.abs(value * 10 - Math.round(value * 10)) > 1e-6) throw new HttpError(400, 'Калории: укажите число от 0 до 10000 с точностью 0,1.');
   return value;
 }
 function date(value, label) {
@@ -89,7 +116,7 @@ function packageDish(value, dishId) {
     description: string(value.description ?? '', 'Описание', 500, true), weight: string(value.weight ?? '', 'Вес', 40, true),
     photoUrl: value.photoUrl || '', allergens: value.allergens ?? [], vegetarian: value.vegetarian ?? false,
     labels: value.labels ?? [], available: value.available ?? true, packageOnly: true,
-    nutrition: { kcal: integer(nutrition.kcal, 'Калории', 0, 10000), protein: grams(nutrition.protein, 'Белки'), fat: grams(nutrition.fat, 'Жиры'), carbs: grams(nutrition.carbs, 'Углеводы') },
+    nutrition: { kcal: calories(nutrition.kcal), protein: grams(nutrition.protein, 'Белки'), fat: grams(nutrition.fat, 'Жиры'), carbs: grams(nutrition.carbs, 'Углеводы') },
   };
   if (typeof dish.photoUrl !== 'string' || (dish.photoUrl && !/^\/api\/media\/[a-f0-9-]{36}\.(?:jpg|png|webp)$/.test(dish.photoUrl) && !/^\/(?:petr|temp)-photos\/\d{3}\.jpg$/.test(dish.photoUrl))) throw new HttpError(400, 'Загрузите фото через API сервиса.');
   if (!Array.isArray(dish.allergens) || dish.allergens.length > 20) throw new HttpError(400, 'Аллергены: список до 20 значений.');
@@ -226,8 +253,10 @@ export class Store {
       }
     });
     if (previousVersion < 15) this.transaction(() => this.migrateCatalogPhotoCorrections());
+    if (previousVersion < 16) this.transaction(() => this.migrateLinkedPackagePhotos());
+    if (previousVersion < 17) this.transaction(() => this.replaceMismatchedPetrPhotos());
     this.db.prepare("UPDATE events SET seating_config=(SELECT seating_config FROM restaurant_halls WHERE restaurant_halls.id=events.hall_id) WHERE seating_config='' AND hall_id!=''").run();
-    this.db.exec('PRAGMA user_version = 15');
+    this.db.exec('PRAGMA user_version = 17');
     this.cleanup();
   }
   seedPetr() {
@@ -348,18 +377,7 @@ export class Store {
     const petr = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Петръ'").get();
     if (!petr) return;
     const byName = new Map(PETR_MENU.map(item => [item.name, item]));
-    const packagePhotoMatches = {
-      'Сельдь с картофелем и маринованным луком': 71,
-      'Куриный рулет с вялеными томатами': 77,
-      'Тёплый салат с кальмаром': 121,
-      'Салат с тёплыми хрустящими баклажанами': 114,
-      'Салат с копчёной куриной грудкой': 116,
-      'Нисуаз с консервированным тунцом': 120,
-      'Треска в пергаменте': 100,
-      'Бифштекс из говядины': 105,
-      'Свиная шея': 107,
-    };
-    const photoFor = name => byName.get(name)?.photoUrl || PETR_MENU[packagePhotoMatches[name] - 1]?.photoUrl || PETR_MENU.find(item => item.name.startsWith(`${name} `) || name.startsWith(item.name))?.photoUrl || '';
+    const photoFor = name => byName.get(name)?.photoUrl || PETR_MENU[PACKAGE_PHOTO_MATCHES[name] - 1]?.photoUrl || PETR_MENU.find(item => item.name.startsWith(`${name} `) || name.startsWith(item.name))?.photoUrl || '';
     const update = (table, key, rows) => {
       for (const row of rows) {
         const item = JSON.parse(row.data);
@@ -394,6 +412,44 @@ export class Store {
       const offer = JSON.parse(row.package_data);
       const items = offer.items.map(item => item.dishId === dishId && (item.photoUrl || '') === (previousPhoto || '') ? { ...item, photoUrl } : item);
       if (items.some((item, index) => item !== offer.items[index])) update.run(JSON.stringify({ ...offer, items }), row.id);
+    }
+  }
+  propagateLinkedPackagePhotos(restaurantId, catalogItem, previousPhoto) {
+    if (!previousPhoto || previousPhoto === catalogItem.photoUrl) return;
+    const isPetr = this.db.prepare('SELECT name FROM restaurants WHERE id=?').get(restaurantId)?.name === 'Петръ';
+    const update = this.db.prepare('UPDATE package_dishes SET data=? WHERE id=?');
+    for (const row of this.db.prepare('SELECT id,data FROM package_dishes WHERE restaurant_id=?').all(restaurantId)) {
+      const dish = JSON.parse(row.data);
+      const sameDish = dish.name === catalogItem.name || catalogItem.name.startsWith(`${dish.name} `) || dish.name.startsWith(`${catalogItem.name} `) || (isPetr && PETR_MENU[PACKAGE_PHOTO_MATCHES[dish.name] - 1]?.name === catalogItem.name);
+      if (!sameDish || dish.photoUrl !== previousPhoto) continue;
+      update.run(JSON.stringify({ ...dish, photoUrl: catalogItem.photoUrl }), row.id);
+      this.propagatePackagePhoto(restaurantId, dish.id, previousPhoto, catalogItem.photoUrl);
+    }
+  }
+  migrateLinkedPackagePhotos() {
+    const defaults = new Map(PETR_MENU.map(item => [item.name, item.photoUrl]));
+    for (const petr of this.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").all()) {
+      for (const row of this.db.prepare('SELECT data FROM menu_items WHERE restaurant_id=?').all(petr.id)) {
+        const item = JSON.parse(row.data);
+        const originalPhoto = defaults.get(item.name);
+        if (originalPhoto && item.photoUrl !== originalPhoto) this.propagateLinkedPackagePhotos(petr.id, item, originalPhoto);
+      }
+    }
+  }
+  replaceMismatchedPetrPhotos() {
+    const update = this.db.prepare('UPDATE menu_items SET data=? WHERE id=?');
+    for (const petr of this.db.prepare("SELECT id FROM restaurants WHERE name='Петръ'").all()) {
+      for (const row of this.db.prepare('SELECT id,data FROM menu_items WHERE restaurant_id=?').all(petr.id)) {
+        const item = JSON.parse(row.data);
+        const defaultItem = PETR_MENU.find(entry => entry.name === item.name);
+        if (!defaultItem) continue;
+        const number = Number.parseInt(defaultItem.photoUrl.match(/(\d{3})\.jpg$/)?.[1] || '0', 10);
+        if (item.photoUrl !== PETR_PHOTO_REPLACEMENTS[number]) continue;
+        const corrected = { ...item, photoUrl: defaultItem.photoUrl };
+        update.run(JSON.stringify(corrected), row.id);
+        this.propagateMenuPhoto(petr.id, item.id, item.photoUrl, corrected.photoUrl);
+        this.propagateLinkedPackagePhotos(petr.id, corrected, item.photoUrl);
+      }
     }
   }
   migrateCatalogPhotoCorrections() {
@@ -1320,7 +1376,10 @@ export class Store {
       const value = { ...(previous || { emoji: '🍽️', available: true, vegetarian: false, allergens: [] }), ...body };
       const item = menuItem(value, itemId || id('dish'));
       this.db.prepare('INSERT INTO menu_items VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(item.id, restaurantId, JSON.stringify(item));
-      if (previous) this.propagateMenuPhoto(restaurantId, item.id, previous.photoUrl, item.photoUrl);
+      if (previous) {
+        this.propagateMenuPhoto(restaurantId, item.id, previous.photoUrl, item.photoUrl);
+        this.propagateLinkedPackagePhotos(restaurantId, item, previous.photoUrl);
+      }
       this.db.prepare('UPDATE restaurants SET sample_menu=0 WHERE id=?').run(restaurantId);
       return item;
     });
