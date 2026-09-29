@@ -1240,14 +1240,14 @@ function App() {
                       <div hidden={displayTab !== 'menu'}>
                         {detail.event.selectionMode === 'package'
                           ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} />
-                          : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView active={displayTab === 'menu'} save={saveMySelection} />}
+                          : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView save={saveMySelection} />}
                       </div>
                       {displayTab === 'seat' && <SeatPicker detail={detail} busy={busy} canSelect={detail.seating?.mode === 'choice' && detail.event.status === 'collecting' && (session.demo || session.phoneVerified)} choose={chooseMySeat} />}
                     </>
                   ) : displayTab === "menu" ? (
                     detail.event.selectionMode === 'package'
                       ? <PackageView offer={detail.event.package} guests={detail.event.expectedGuests} />
-                      : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView={false} active save={saveMySelection} />
+                      : <GuestMenu key={selected} detail={detail} busy={busy} canSelect={detail.canSelect && (session.demo || session.phoneVerified)} guestView={false} save={saveMySelection} />
                   ) : displayTab === "seating" ? (
                     <SeatingAdmin
                       key={selected}
@@ -2001,10 +2001,8 @@ function PackageView({ offer, guests }) {
     {categories.map(category => <div className="package-category" key={category}><h3>{category}</h3>{offer.items.filter(item => item.category === category).map((item, index) => <div className="package-item package-item-rich" key={`${category}-${index}`}>{item.photoUrl && <img src={`${BASE}${item.photoUrl}`} alt="" />}<div><strong>{item.name}</strong><small>Только для пакетного предложения · {item.grams} г</small>{item.description && <p>{item.description}</p>}<small>К {item.nutrition?.kcal ?? '—'} · Б {item.nutrition?.protein ?? '—'} · Ж {item.nutrition?.fat ?? '—'} · У {item.nutrition?.carbs ?? '—'}</small>{item.labels?.length > 0 && <small>{item.labels.join(' · ')}</small>}</div></div>)}</div>)}
   </section>;
 }
-function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) {
+function GuestMenu({ detail, busy, save, canSelect, guestView }) {
   const selection = detail.selection;
-  const checkoutRef = useRef(null);
-  const [showCheckoutJump, setShowCheckoutJump] = useState(false);
   const [items, setItems] = useState(() =>
       Object.fromEntries(
         (selection?.items || []).map((i) => [i.menuItemId, i.quantity]),
@@ -2055,22 +2053,6 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
       window.WebApp?.disableClosingConfirmation?.();
     };
   }, [dirty]);
-  useEffect(() => {
-    const card = checkoutRef.current;
-    if (!active || !card) {
-      setShowCheckoutJump(false);
-      return;
-    }
-    if (typeof IntersectionObserver === 'undefined') {
-      const update = () => setShowCheckoutJump(card.getBoundingClientRect().bottom < 0);
-      window.addEventListener('scroll', update, { passive: true });
-      update();
-      return () => window.removeEventListener('scroll', update);
-    }
-    const observer = new IntersectionObserver(([entry]) => setShowCheckoutJump(!entry.isIntersecting), { threshold: 0.1 });
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, [active]);
   return (
     <>
       <div className="menu-heading">
@@ -2087,7 +2069,7 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
       </div>
       {guestView && <BudgetHelp guest />}
       {budgeted && <BudgetMeter foodBudget={limits.pie} drinkBudget={limits.bottle} spent={spent} guestView={guestView} />}
-      <section className="selection-bottom" ref={checkoutRef} aria-label="Оформление заказа">
+      <section className="selection-bottom" aria-label="Оформление заказа">
         <div className="selection-summary">
           <strong>Ваш заказ</strong>
           {chosen.length ? (
@@ -2188,7 +2170,6 @@ function GuestMenu({ detail, busy, save, canSelect, guestView, active = true }) 
           ))}
       </div>
       {!visible.length && <p className="muted">По выбранным фильтрам блюд нет. Снимите одну из пометок.</p>}
-      {active && showCheckoutJump && <button type="button" className="checkout-jump" onClick={() => checkoutRef.current?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' })}><ArrowUp size={17} /> К заказу</button>}
     </>
   );
 }
