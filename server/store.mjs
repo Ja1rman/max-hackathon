@@ -255,8 +255,9 @@ export class Store {
     if (previousVersion < 15) this.transaction(() => this.migrateCatalogPhotoCorrections());
     if (previousVersion < 16) this.transaction(() => this.migrateLinkedPackagePhotos());
     if (previousVersion < 17) this.transaction(() => this.replaceMismatchedPetrPhotos());
+    if (previousVersion < 18) this.transaction(() => this.syncDemoPetrHalls());
     this.db.prepare("UPDATE events SET seating_config=(SELECT seating_config FROM restaurant_halls WHERE restaurant_halls.id=events.hall_id) WHERE seating_config='' AND hall_id!=''").run();
-    this.db.exec('PRAGMA user_version = 17');
+    this.db.exec('PRAGMA user_version = 18');
     this.cleanup();
   }
   seedPetr() {
@@ -283,6 +284,44 @@ export class Store {
     const hallId = id('hall');
     this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,seating_config) VALUES (?,?,?,?,?,?,?)').run(hallId, restaurantId, 'Основной зал', 1000, JSON.stringify(DEFAULT_WINDOWS), JSON.stringify(SEATING_CHOICES), JSON.stringify(defaultSeatingConfig(1000)));
     return hallId;
+  }
+  copyHalls(sourceRestaurantId, restaurantId) {
+    const halls = this.db.prepare('SELECT name,capacity,windows,allowed_seating,default_seating_template,seating_config FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(sourceRestaurantId);
+    const add = this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,default_seating_template,seating_config) VALUES (?,?,?,?,?,?,?,?)');
+    for (const hall of halls) add.run(id('hall'), restaurantId, hall.name, hall.capacity, hall.windows, hall.allowed_seating, hall.default_seating_template, hall.seating_config);
+    if (!halls.length) this.ensureHall(restaurantId);
+  }
+  syncDemoPetrHalls() {
+    const source = this.db.prepare("SELECT id FROM restaurants WHERE scope='live' AND name='Петръ'").get();
+    if (!source) return;
+    const sourceHalls = this.db.prepare('SELECT name,capacity,windows,allowed_seating,default_seating_template,seating_config FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(source.id);
+    if (!sourceHalls.length) return;
+    const first = sourceHalls[0];
+    const firstConfig = JSON.parse(first.seating_config);
+    const firstSeats = firstConfig.type === 'fixed' ? layoutSeats(firstConfig.fixedLayout) : [];
+    const firstSeatIds = new Set(firstSeats.map(seat => seat.id));
+    const firstWindows = JSON.parse(first.windows);
+    const oldConfig = JSON.stringify(defaultSeatingConfig(1000));
+    const oldWindows = JSON.stringify(DEFAULT_WINDOWS);
+    const add = this.db.prepare('INSERT INTO restaurant_halls (id,restaurant_id,name,capacity,windows,allowed_seating,default_seating_template,seating_config) VALUES (?,?,?,?,?,?,?,?)');
+    const update = this.db.prepare('UPDATE restaurant_halls SET name=?,capacity=?,windows=?,allowed_seating=?,default_seating_template=?,seating_config=? WHERE id=?');
+    const updateEvent = this.db.prepare('UPDATE events SET seating_layout=?,seating_config=? WHERE id=?');
+    for (const restaurant of this.db.prepare("SELECT id FROM restaurants WHERE scope!='live' AND name='Петръ · демо'").all()) {
+      const halls = this.db.prepare('SELECT * FROM restaurant_halls WHERE restaurant_id=? ORDER BY rowid').all(restaurant.id);
+      if (halls.length !== 1) continue;
+      const [old] = halls;
+      if (old.name !== 'Основной зал' || old.capacity !== 1000 || old.windows !== oldWindows || old.seating_config !== oldConfig) continue;
+      const events = this.db.prepare('SELECT id,date,duration_hours,expected_guests,revision,seating_mode,seating_layout,seating_config FROM events WHERE hall_id=?').all(old.id);
+      if (events.some(event => event.expected_guests > first.capacity || firstConfig.type === 'fixed' && event.expected_guests > firstSeats.length || !this.hallWindow({ windows: firstWindows }, event.date, event.duration_hours))) continue;
+      for (const event of events) {
+        if (event.revision !== 0 || event.seating_mode !== 'choice' || event.seating_config !== oldConfig || event.seating_layout !== JSON.stringify(generateLayout('rounds', event.expected_guests))) continue;
+        if (firstConfig.type !== 'fixed') continue;
+        if (this.db.prepare('SELECT seat_id FROM seat_assignments WHERE event_id=?').all(event.id).some(row => !firstSeatIds.has(row.seat_id))) continue;
+        updateEvent.run(JSON.stringify(firstConfig.fixedLayout), first.seating_config, event.id);
+      }
+      update.run(first.name, first.capacity, first.windows, first.allowed_seating, first.default_seating_template, first.seating_config, old.id);
+      for (const hall of sourceHalls.slice(1)) add.run(id('hall'), restaurant.id, hall.name, hall.capacity, hall.windows, hall.allowed_seating, hall.default_seating_template, hall.seating_config);
+    }
   }
   migrateBookingsAndPackages() {
     for (const restaurant of this.db.prepare('SELECT id FROM restaurants').all()) this.ensureHall(restaurant.id);
@@ -551,7 +590,7 @@ export class Store {
       const offer = JSON.parse(row.data), offerId = id('package');
       addPackage.run(offerId, restaurantId, JSON.stringify({ ...offer, id: offerId, items: offer.items.map(item => ({ ...item, dishId: dishIds.get(item.dishId) })) }));
     }
-    this.ensureHall(restaurantId);
+    this.copyHalls(source.id, restaurantId);
     return restaurantId;
   }
   isSuperAdmin(user) {
@@ -741,12 +780,12 @@ export class Store {
         const packages = this.restaurants(this.hydrate(owner))[0].packages;
         if (packages.length) {
           const offer = packages[0];
-          const fixed = this.createEvent(owner, { title: 'Корпоратив в «Петръ» · пакет', restaurantId, date: demoDate(18), deadline: demoDate(13), expectedGuests: 10, durationHours: 4, selectionMode: 'package', packageId: offer.id, packageChoice: offer.items.find(item => item.choiceGroup)?.dishId, seating: { mode: 'choice', template: 'rounds' } });
+          const fixed = this.createEvent(owner, { title: 'Корпоратив в «Петръ» · пакет', restaurantId, date: demoDate(18), deadline: demoDate(13), expectedGuests: 10, durationHours: 4, selectionMode: 'package', packageId: offer.id, packageChoice: offer.items.find(item => item.choiceGroup)?.dishId, seating: { mode: 'choice' } });
           this.db.prepare('UPDATE events SET created_at=? WHERE id=?').run(iso(Date.now() - 60_000), fixed.id);
           this.db.prepare('INSERT INTO guests VALUES (?,?,0,?,?)').run(fixed.id, `${scope}_guest`, '', iso(Date.now()));
           for (let index = 0; index < 6; index++) this.db.prepare('INSERT INTO guest_invites (id,event_id,name,phone,created_at) VALUES (?,?,?,?,?)').run(id('invite'), fixed.id, ['Мария Волкова','Дмитрий Соколов','Анна Морозова','Алексей Петров','Екатерина Смирнова','Ольга Зайцева'][index], `7999000100${index}`, iso(Date.now()));
         }
-        const event = this.createEvent(owner, { title: 'День рождения Александры в «Петръ»', restaurantId, date: demoDate(14), deadline: demoDate(10), expectedGuests: 12, durationHours: 4, foodBudget: 250000, drinkBudget: 60000, seating: { mode: 'choice', template: 'rounds' } });
+        const event = this.createEvent(owner, { title: 'День рождения Александры в «Петръ»', restaurantId, date: demoDate(14), deadline: demoDate(10), expectedGuests: 12, durationHours: 4, foodBudget: 250000, drinkBudget: 60000, seating: { mode: 'choice' } });
         const menu = this.eventMenu(event.id);
         for (const [index, [name, notes, indexes]] of [
           // Starters (0, 1) are on the shared table, so guests order mains, desserts and drinks.

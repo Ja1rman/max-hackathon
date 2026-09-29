@@ -20,15 +20,7 @@
   "selectionQuantity": 1,
   "overBudgetQuantity": 5,
   "selectionNotes": "Без лука, пожалуйста",
-  "seating": {
-    "mode": "choice",
-    "layout": {
-      "tables": [
-        { "id": "t1", "shape": "round", "label": "1", "x": 60, "y": 60, "w": 120, "h": 120, "rotation": 0, "seats": 6 },
-        { "id": "t2", "shape": "rect", "label": "Президиум", "x": 260, "y": 60, "w": 300, "h": 70, "rotation": 0, "seats": 4, "sides": ["top"] }
-      ]
-    }
-  },
+  "seating": { "mode": "choice" },
   "seatId": "t1-2",
   "menuItem": {
     "name": "Суп дня (проверка API)",

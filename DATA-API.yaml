@@ -302,7 +302,7 @@ checks:                                   # обязательные прове�
       required_fields: [items, "items[0].menuItemId", "items[0].quantity", "items[0].total"]
 
   - id: seating_layout
-    name: Организатор задаёт схему рассадки
+    name: Организатор включает выбор мест по схеме зала
     required: true
     method: PUT
     path: /events/{eventId}/seating
@@ -316,7 +316,7 @@ checks:                                   # обязательные прове�
       content_type: application/json
       type: object
       required_fields: [mode, layout.tables, seatCount, occupied, names]
-      values: { mode: choice, seatCount: 10 }
+      values: { mode: choice }
 
   # --- Гость: приглашение, выбор блюд и места ---
   - id: invite_preview

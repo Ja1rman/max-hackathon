@@ -77,6 +77,45 @@ test('a 24/7 hall accepts a banquet across midnight and reports bookings on both
   assert.equal((await f.request(`/api/events/${first.data.id}`, { token: owner.token })).data.seating.mode, 'choice', 'existing event keeps its own seating mode');
 });
 
+test('new and existing Petr demos use the live hall configuration and fixed chair map', async t => {
+  const f = await fixture(t);
+  const admin = await f.login(900);
+  const live = (await f.request('/api/restaurants', { token: admin.token })).data.find(item => item.name === 'Петръ');
+  const oldDemo = await f.demo({ role: 'organizer' });
+  const oldRestaurant = (await f.request('/api/restaurants', { token: oldDemo.token })).data[0];
+  assert.equal(oldRestaurant.halls[0].seatingConfig.type, 'flexible');
+
+  const windows = Array.from({ length: 7 }, (_, weekday) => ({ weekday, start: '00:00', end: '24:00' }));
+  const seatingConfig = { ...live.halls[0].seatingConfig, type: 'fixed', fixedLayout: generateLayout('rounds', 24) };
+  const updated = await f.request(`/api/restaurants/${live.id}/halls/${live.halls[0].id}`, { token: admin.token, method: 'PATCH', body: { capacity: 30, windows, seatingConfig } });
+  assert.equal(updated.status, 200);
+  const second = await f.request(`/api/restaurants/${live.id}/halls`, { token: admin.token, method: 'POST', body: { name: 'Малый зал', capacity: 12, windows, seatingConfig: { ...seatingConfig, fixedLayout: generateLayout('rounds', 12) } } });
+  assert.equal(second.status, 201);
+
+  f.store.transaction(() => f.store.syncDemoPetrHalls());
+  const migrated = (await f.request('/api/restaurants', { token: oldDemo.token })).data[0];
+  assert.equal(migrated.halls.length, 2);
+  assert.equal(migrated.halls[0].id, oldRestaurant.halls[0].id);
+  assert.deepEqual(migrated.halls[0].seatingConfig, updated.data.seatingConfig);
+  assert.deepEqual(migrated.halls[0].windows, windows);
+  const oldEvent = (await f.request('/api/events', { token: oldDemo.token })).data.find(item => item.selectionMode === 'individual');
+  const oldDetail = (await f.request(`/api/events/${oldEvent.id}`, { token: oldDemo.token })).data;
+  assert.equal(oldDetail.seating.canCustomize, false);
+  assert.deepEqual(oldDetail.seating.layout, updated.data.seatingConfig.fixedLayout);
+  assert.equal(oldDetail.seating.occupied.length, 3);
+
+  const newDemo = await f.demo({ role: 'organizer' });
+  const cloned = (await f.request('/api/restaurants', { token: newDemo.token })).data[0];
+  assert.equal(cloned.halls.length, 2);
+  assert.notEqual(cloned.halls[0].id, live.halls[0].id);
+  assert.deepEqual(cloned.halls.map(hall => hall.seatingConfig), [updated.data.seatingConfig, second.data.seatingConfig]);
+  assert.deepEqual(cloned.halls.map(hall => hall.windows), [windows, windows]);
+  const newEvent = (await f.request('/api/events', { token: newDemo.token })).data.find(item => item.selectionMode === 'individual');
+  const newDetail = (await f.request(`/api/events/${newEvent.id}`, { token: newDemo.token })).data;
+  assert.equal(newDetail.seating.canCustomize, false);
+  assert.deepEqual(newDetail.seating.layout, updated.data.seatingConfig.fixedLayout);
+});
+
 test('restaurant fixed chair map is copied to banquets; only approved table sizes can be arranged', async t => {
   const f = await fixture(t);
   const admin = await f.login(900);
