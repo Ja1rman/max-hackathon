@@ -13,9 +13,9 @@
 | Базовый адрес API | `https://mail.lonelycraft.ru/banquet/api/v1` |
 | Swagger UI | [mail.lonelycraft.ru/banquet/swagger/](https://mail.lonelycraft.ru/banquet/swagger/) |
 | OpenAPI 3.1 | [openapi.yaml](openapi.yaml), опубликован: `https://mail.lonelycraft.ru/banquet/openapi.yaml` |
-| Сценарий обязательных проверок | [DATA-API.yaml](DATA-API.yaml) |
-| Тестовые данные | [fixtures/api-checks.json](fixtures/api-checks.json) |
-| Тестовые учётные записи и пошаговая проверка | [docs/TESTING.md](docs/TESTING.md) |
+| Сценарий обязательных проверок | [DATA-API.yaml](DATA-API.yaml), опубликован: `https://mail.lonelycraft.ru/banquet/DATA-API.yaml` |
+| Тестовые данные | [fixtures/api-checks.json](fixtures/api-checks.json), опубликованы: `https://mail.lonelycraft.ru/banquet/fixtures/api-checks.json` |
+| Тестовые учётные записи и пошаговая проверка | [docs/TESTING.md](docs/TESTING.md), опубликована: `https://mail.lonelycraft.ru/banquet/docs/TESTING.md` |
 
 Тестовые учётные записи для всех четырёх ролей (организатор, гость, администратор ресторана, администратор сервиса) выдаёт `POST /auth/demo` в изолированном демо-пространстве, без доступа к реальным данным.
 
